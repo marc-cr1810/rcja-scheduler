@@ -70,8 +70,7 @@ pub struct Division {
     pub color: Option<[u8; 3]>, // RGB color
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 pub enum FieldKind {
     #[default]
     Competition,

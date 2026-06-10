@@ -40,6 +40,18 @@ pub enum DivisionSubTab {
     Interviews,
 }
 
+#[derive(PartialEq, Clone, Copy)]
+pub enum VolunteerSubTab {
+    Availability,
+    WorkloadHeatmap,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+pub enum TeamSubTab {
+    List,
+    GapAnalysis,
+}
+
 pub enum SolverMessage {
     Progress { 
         restart: usize, 

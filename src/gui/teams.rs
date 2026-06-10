@@ -7,6 +7,19 @@ impl AppState {
         ui.heading("Teams Management");
         ui.add_space(10.0);
 
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.active_team_sub_tab, super::TeamSubTab::List, "👥 Team List");
+            ui.selectable_value(&mut self.active_team_sub_tab, super::TeamSubTab::GapAnalysis, "⚖ Gap Analysis");
+        });
+        ui.add_space(10.0);
+
+        match self.active_team_sub_tab {
+            super::TeamSubTab::List => self.draw_team_list(ui),
+            super::TeamSubTab::GapAnalysis => self.draw_team_gap_analysis(ui),
+        }
+    }
+
+    fn draw_team_list(&mut self, ui: &mut egui::Ui) {
         // CSV Import Frame (Always accessible)
         egui::Frame::none()
             .fill(Color32::from_rgb(30, 37, 50))
@@ -194,5 +207,103 @@ impl AppState {
                 self.status_message = "Team deleted.".to_string();
             }
         }
+    }
+
+    fn draw_team_gap_analysis(&mut self, ui: &mut egui::Ui) {
+        if self.schedule.is_none() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
+                ui.label(RichText::new("No Schedule Generated").size(16.0).color(Color32::from_rgb(107, 114, 128)).strong());
+                ui.label("Gap analysis requires a generated schedule to calculate time between activities.");
+            });
+            return;
+        }
+
+        ui.label(RichText::new("TEAM ACTIVITY GAP ANALYSIS").strong().color(Color32::from_rgb(156, 163, 175)));
+        ui.label("Review wait times and busy periods for each team.");
+        ui.add_space(10.0);
+
+        let sched = self.schedule.as_ref().unwrap();
+        let slots = &self.config.time_slots;
+        let teams = &self.config.teams;
+
+        if teams.is_empty() || slots.is_empty() { return; }
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            egui::Grid::new("gap_analysis_grid")
+                .num_columns(6)
+                .spacing([15.0, 8.0])
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.label(RichText::new("Team").strong());
+                    ui.label(RichText::new("Division").strong());
+                    ui.label(RichText::new("Activities").strong());
+                    ui.label(RichText::new("Day Range").strong());
+                    ui.label(RichText::new("Min Gap").strong());
+                    ui.label(RichText::new("Max Gap").strong());
+                    ui.end_row();
+
+                    for team in teams {
+                        let mut team_activities: Vec<_> = sched.assignments.iter()
+                            .filter(|a| a.activity.teams().contains(&team.name.as_str()))
+                            .filter_map(|a| {
+                                let slot = slots.iter().find(|s| s.id == a.time_slot_id)?;
+                                let start_m = crate::gui::helpers::parse_time_to_minutes(&slot.start_time);
+                                Some((slot.day.clone(), start_m, a.activity.duration_minutes()))
+                            })
+                            .collect();
+                        
+                        team_activities.sort_by(|a, b| {
+                            if a.0 != b.0 {
+                                // Try to sort by day index in config
+                                let pos_a = slots.iter().position(|s| s.day == a.0).unwrap_or(0);
+                                let pos_b = slots.iter().position(|s| s.day == b.0).unwrap_or(0);
+                                pos_a.cmp(&pos_b)
+                            } else {
+                                a.1.cmp(&b.1)
+                            }
+                        });
+
+                        ui.label(&team.name);
+                        ui.label(self.config.divisions.iter().find(|d| d.id == team.division_id).map(|d| d.name.as_str()).unwrap_or("Unknown"));
+                        ui.label(team_activities.len().to_string());
+
+                        if let (Some(first), Some(last)) = (team_activities.first(), team_activities.last()) {
+                            let day_range = if first.0 == last.0 {
+                                format!("{} ({} - {})", first.0, crate::gui::helpers::format_minutes_to_time(first.1), crate::gui::helpers::format_minutes_to_time(last.1 + last.2))
+                            } else {
+                                format!("{} - {}", first.0, last.0)
+                            };
+                            ui.label(day_range);
+
+                            let mut min_gap = u32::MAX;
+                            let mut max_gap = 0;
+                            
+                            for i in 0..team_activities.len().saturating_sub(1) {
+                                let a1 = &team_activities[i];
+                                let a2 = &team_activities[i+1];
+                                if a1.0 == a2.0 {
+                                    let gap = a2.1 - (a1.1 + a1.2);
+                                    if gap < min_gap { min_gap = gap; }
+                                    if gap > max_gap { max_gap = gap; }
+                                }
+                            }
+
+                            if min_gap == u32::MAX {
+                                ui.label("-");
+                                ui.label("-");
+                            } else {
+                                ui.label(RichText::new(format!("{}m", min_gap)).color(if min_gap < 15 { Color32::from_rgb(248, 113, 113) } else { Color32::WHITE }));
+                                ui.label(RichText::new(format!("{}m", max_gap)).color(if max_gap > 180 { Color32::from_rgb(251, 191, 36) } else { Color32::WHITE }));
+                            }
+                        } else {
+                            ui.label("No activities");
+                            ui.label("-");
+                            ui.label("-");
+                        }
+                        ui.end_row();
+                    }
+                });
+        });
     }
 }

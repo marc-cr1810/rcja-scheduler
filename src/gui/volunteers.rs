@@ -6,9 +6,22 @@ use std::collections::HashMap;
 
 impl AppState {
     pub(super) fn draw_volunteers(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Volunteers & Availabilities");
+        ui.heading("Volunteers Management");
         ui.add_space(10.0);
 
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.active_volunteer_sub_tab, super::VolunteerSubTab::Availability, "📅 Availability Grid");
+            ui.selectable_value(&mut self.active_volunteer_sub_tab, super::VolunteerSubTab::WorkloadHeatmap, "🔥 Workload Heatmap");
+        });
+        ui.add_space(10.0);
+
+        match self.active_volunteer_sub_tab {
+            super::VolunteerSubTab::Availability => self.draw_volunteer_availability(ui),
+            super::VolunteerSubTab::WorkloadHeatmap => self.draw_volunteer_heatmap(ui),
+        }
+    }
+
+    fn draw_volunteer_availability(&mut self, ui: &mut egui::Ui) {
         let divisions_list: Vec<(String, String)> = self.config.divisions.iter()
             .map(|d| (d.id.clone(), d.name.clone()))
             .collect();
@@ -324,6 +337,87 @@ impl AppState {
             self.clear_schedule();
             self.update_diagnostics();
             self.status_message = "Volunteer deleted.".to_string();
+        }
+    }
+
+    fn draw_volunteer_heatmap(&mut self, ui: &mut egui::Ui) {
+        if self.schedule.is_none() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
+                ui.label(RichText::new("No Schedule Generated").size(16.0).color(Color32::from_rgb(107, 114, 128)).strong());
+                ui.label("The workload heatmap requires a generated schedule to visualize assignments.");
+            });
+            return;
+        }
+
+        ui.label(RichText::new("VOLUNTEER WORKLOAD HEATMAP").strong().color(Color32::from_rgb(156, 163, 175)));
+        ui.label("Visualization of shift density across the tournament.");
+        ui.add_space(10.0);
+
+        let sched = self.schedule.as_ref().unwrap();
+        let slots = &self.config.time_slots;
+        let volunteers = &self.config.volunteers;
+
+        if volunteers.is_empty() || slots.is_empty() { return; }
+
+        let mut unique_days = Vec::new();
+        for slot in slots {
+            if !unique_days.contains(&slot.day) {
+                unique_days.push(slot.day.clone());
+            }
+        }
+
+        for day in unique_days {
+            ui.add_space(15.0);
+            ui.label(RichText::new(&day).strong().size(14.0).color(Color32::from_rgb(129, 140, 248)));
+            ui.add_space(5.0);
+
+            let day_slots: Vec<_> = slots.iter().filter(|s| s.day == day).collect();
+            if day_slots.is_empty() { continue; }
+
+            egui::ScrollArea::horizontal()
+                .id_source(format!("heatmap_scroll_{}", day))
+                .show(ui, |ui| {
+                    egui::Grid::new(format!("heatmap_grid_{}", day))
+                        .spacing([2.0, 2.0])
+                        .show(ui, |ui| {
+                            // Header row
+                            ui.label("");
+                            for slot in &day_slots {
+                                ui.label(RichText::new(&slot.start_time).size(9.0).strong());
+                            }
+                            ui.label(RichText::new("Total").size(9.0).strong());
+                            ui.end_row();
+
+                            for vol in volunteers {
+                                ui.label(RichText::new(&vol.name).size(11.0));
+                                
+                                let mut day_total = 0;
+                                for slot in &day_slots {
+                                    let is_assigned = sched.assignments.iter().any(|a| a.time_slot_id == slot.id && a.volunteer_ids.contains(&vol.id));
+                                    let is_available = vol.availabilities.contains(&slot.id);
+                                    
+                                    let (bg, text) = if is_assigned {
+                                        day_total += 1;
+                                        (Color32::from_rgb(79, 70, 229), Color32::WHITE)
+                                    } else if is_available {
+                                        (Color32::from_rgb(31, 41, 55), Color32::from_rgb(107, 114, 128))
+                                    } else {
+                                        (Color32::from_rgb(17, 24, 39), Color32::from_rgb(55, 65, 81))
+                                    };
+
+                                    let (rect, _resp) = ui.allocate_at_least(egui::vec2(35.0, 18.0), egui::Sense::hover());
+                                    ui.painter().rect_filled(rect, 2.0, bg);
+                                    if is_assigned {
+                                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "ON", egui::FontId::proportional(9.0), text);
+                                    }
+                                }
+                                
+                                ui.label(RichText::new(day_total.to_string()).strong().color(if day_total > 5 { Color32::from_rgb(248, 113, 113) } else { Color32::WHITE }));
+                                ui.end_row();
+                            }
+                        });
+                });
         }
     }
 }

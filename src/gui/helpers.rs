@@ -33,7 +33,8 @@ pub(crate) fn draw_stat_card(ui: &mut egui::Ui, title: &str, value: &str, color:
         });
 }
 
-pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment, config: &TournamentConfig, current_slot_id: &str, w: f32, h: f32, conflicts: &[AssignmentConflict]) {
+pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment, config: &TournamentConfig, current_slot_id: &str, w: f32, h: f32, conflicts: &[AssignmentConflict]) -> bool {
+    let mut conflict_clicked = false;
     let div_id = assign.activity.division_id();
     let (mut bg_color, mut border_color) = get_competition_colors(div_id, config);
     let is_continuation = current_slot_id != assign.time_slot_id;
@@ -99,7 +100,10 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
                 let color = if has_error { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(251, 191, 36) };
                 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let resp = ui.label(RichText::new(icon).color(color).strong());
+                    let resp = ui.add(egui::Button::new(RichText::new(icon).color(color).strong()).frame(false));
+                    if resp.clicked() {
+                        conflict_clicked = true;
+                    }
                     resp.on_hover_ui(|ui| {
                         ui.vertical(|ui| {
                             for c in conflicts {
@@ -194,6 +198,8 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
                 }
             });
         });
+
+    conflict_clicked
 }
 
 pub(crate) fn get_competition_colors(div_id: &str, config: &TournamentConfig) -> (Color32, Color32) {

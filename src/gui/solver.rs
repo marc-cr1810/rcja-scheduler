@@ -426,6 +426,54 @@ impl AppState {
         ui.add_space(20.0);
 
         if self.schedule.is_some() {
+            // ── Timeline View Settings ──────────────────────────────────────────
+            egui::Frame::none()
+                .fill(Color32::from_rgb(30, 37, 50))
+                .rounding(8.0)
+                .inner_margin(12.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("🔍 Timeline Settings:").strong().color(Color32::from_rgb(156, 163, 175)));
+                        ui.add_space(10.0);
+                        
+                        ui.label("Zoom:");
+                        ui.add(egui::Slider::new(&mut self.timeline_zoom, 1.0..=10.0).text("px/min"));
+                        
+                        ui.add_space(20.0);
+                        ui.label("Filter Fields:");
+                        let mut comp = self.timeline_filter_field_kinds.contains(&FieldKind::Competition);
+                        if ui.checkbox(&mut comp, "Competition").changed() {
+                            if comp { self.timeline_filter_field_kinds.insert(FieldKind::Competition); }
+                            else { self.timeline_filter_field_kinds.remove(&FieldKind::Competition); }
+                        }
+                        let mut intv = self.timeline_filter_field_kinds.contains(&FieldKind::Interview);
+                        if ui.checkbox(&mut intv, "Interviews").changed() {
+                            if intv { self.timeline_filter_field_kinds.insert(FieldKind::Interview); }
+                            else { self.timeline_filter_field_kinds.remove(&FieldKind::Interview); }
+                        }
+
+                        ui.add_space(20.0);
+                        if ui.button("Reset Filters").clicked() {
+                            self.timeline_filter_divisions.clear();
+                            self.timeline_filter_field_kinds = [FieldKind::Competition, FieldKind::Interview].into_iter().collect();
+                            self.timeline_zoom = 3.5;
+                        }
+                    });
+
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Filter Divisions:");
+                        for div in &self.config.divisions {
+                            let mut active = !self.timeline_filter_divisions.contains(&div.id);
+                            if ui.checkbox(&mut active, &div.name).changed() {
+                                if active { self.timeline_filter_divisions.remove(&div.id); }
+                                else { self.timeline_filter_divisions.insert(div.id.clone()); }
+                            }
+                        }
+                    });
+                });
+            ui.add_space(15.0);
+
             // ── Manual Editing Controls ─────────────────────────────────────────
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Schedule Management:").strong().color(Color32::from_rgb(156, 163, 175)));
@@ -579,17 +627,17 @@ impl AppState {
     fn draw_all_games_timeline(&mut self, ui: &mut egui::Ui) {
         if self.schedule.is_none() { return; }
 
-        ui.add_space(6.0);
-        ui.label(RichText::new("SCHEDULE TIMELINE VISUALIZER").strong().color(Color32::from_rgb(156, 163, 175)));
-        ui.add_space(10.0);
+        let fields_list: Vec<crate::model::Field> = self.config.fields.iter()
+            .filter(|f| self.timeline_filter_field_kinds.contains(&f.kind))
+            .cloned()
+            .collect();
 
-        let fields_list: Vec<crate::model::Field> = self.config.fields.clone();
         let mut sorted_fields = fields_list.iter().collect::<Vec<_>>();
         sorted_fields.sort_by_key(|f| match f.kind {
             FieldKind::Competition => 0,
             FieldKind::Interview => 1,
         });
-        
+
         let slots_list = self.config.time_slots.clone();
 
         // Group slots by day
@@ -597,7 +645,7 @@ impl AppState {
         for slot in &slots_list {
             slots_by_day.entry(slot.day.clone()).or_default().push(slot.clone());
         }
-        
+
         let mut days: Vec<String> = slots_by_day.keys().cloned().collect();
         days.sort_by_key(|day| {
             slots_list.iter().position(|s| &s.day == day).unwrap_or(0)
@@ -641,14 +689,14 @@ impl AppState {
             }
 
             if day_start_min >= day_end_min { continue; }
-            
+
             // Ensure at least 4 hours are shown to avoid "tiny slivers"
             if day_end_min - day_start_min < 240 {
                 day_end_min = day_start_min + 240;
             }
 
             let total_min = day_end_min - day_start_min;
-            let pixels_per_minute = 3.5;
+            let pixels_per_minute = self.timeline_zoom;
             let col_width = 170.0;
             let col_spacing = 15.0;
             let time_col_width = 55.0;
@@ -724,24 +772,24 @@ impl AppState {
                         // Drop highlights and move logic
                         if let Some(dragged_idx) = self.dragged_assignment {
                             let pointer_pos = ui.input(|i| i.pointer.interact_pos().unwrap_or(egui::Pos2::ZERO));
-                            
+
                             for (f_idx, field) in sorted_fields.iter().enumerate() {
                                 let x = time_col_width + f_idx as f32 * (col_width + col_spacing);
                                 for slot in day_slots {
                                     if slot.kind != field.kind { continue; }
-                                    
+
                                     let start_m = parse_time_to_minutes(&slot.start_time);
                                     let y = (start_m - day_start_min) as f32 * pixels_per_minute;
                                     let h = slot.duration_minutes() as f32 * pixels_per_minute;
-                                    
+
                                     let cell_rect = egui::Rect::from_min_size(
                                         rect.min + egui::vec2(x, timeline_padding_top + y),
                                         egui::vec2(col_width, h)
                                     );
-                                    
+
                                     if cell_rect.contains(pointer_pos) {
                                         painter.rect_stroke(cell_rect, 4.0, Stroke::new(2.5, Color32::from_rgb(251, 146, 60)));
-                                        
+
                                         if ui.input(|i| i.pointer.any_released()) {
                                             move_request = Some((dragged_idx, slot.id.clone(), Some(field.id.clone())));
                                         }
@@ -753,19 +801,19 @@ impl AppState {
                         for kind in [FieldKind::Competition, FieldKind::Interview] {
                             let mut kind_slots: Vec<&crate::model::TimeSlot> = day_slots.iter().filter(|s| s.kind == kind).collect();
                             if kind_slots.is_empty() { continue; }
-                            
+
                             kind_slots.sort_by_key(|s| parse_time_to_minutes(&s.start_time));
-                            
+
                             let kind_field_indices: Vec<usize> = sorted_fields.iter().enumerate()
                                 .filter(|(_, f)| f.kind == kind)
                                 .map(|(i, _)| i)
                                 .collect();
-                                
+
                             if kind_field_indices.is_empty() { continue; }
-                            
+
                             let min_f_idx = *kind_field_indices.iter().min().unwrap();
                             let max_f_idx = *kind_field_indices.iter().max().unwrap();
-                            
+
                             let break_x_min = time_col_width + min_f_idx as f32 * (col_width + col_spacing);
                             let break_x_max = time_col_width + max_f_idx as f32 * (col_width + col_spacing) + col_width;
 
@@ -797,6 +845,8 @@ impl AppState {
 
                         if let Some(ref sched) = self.schedule {
                             for (idx, assign) in sched.assignments.iter().enumerate() {
+                                if self.timeline_filter_divisions.contains(assign.activity.division_id()) { continue; }
+
                                 if let Some(ref f_id) = assign.field_id
                                     && let Some(slot) = slots_list.iter().find(|s| s.id == assign.time_slot_id)
                                         && &slot.day == day
@@ -807,31 +857,34 @@ impl AppState {
                                                 let h = dur as f32 * pixels_per_minute;
                                                 let x = time_col_width + f_idx as f32 * (col_width + col_spacing) + 4.0;
                                                 let w = col_width - 8.0;
-                                                
+
                                                 let mut card_rect = egui::Rect::from_min_size(rect.min + egui::vec2(x, timeline_padding_top + y), egui::vec2(w, h));
-                                                
+
                                                 let sense = if !self.schedule_locked { egui::Sense::drag() } else { egui::Sense::hover() };
                                                 let response = ui.interact(card_rect, ui.id().with(idx), sense);
-                                                
+
                                                 if response.drag_started() {
                                                     self.dragged_assignment = Some(idx);
                                                     self.drag_accumulated_offset = egui::Vec2::ZERO;
                                                 }
-                                                
+
                                                 if self.dragged_assignment == Some(idx) {
                                                     self.drag_accumulated_offset += response.drag_delta();
                                                     card_rect = card_rect.translate(self.drag_accumulated_offset);
                                                 }
-                                                
+
                                                 let mut child_ui = ui.child_ui(card_rect, egui::Layout::top_down(egui::Align::Min));
                                                 let conflicts: &[AssignmentConflict] = self.assignment_conflicts.get(&idx).map(|v| v.as_slice()).unwrap_or(&[]);
-                                                draw_schedule_cell(&mut child_ui, assign, &self.config, &slot.id, w, h, conflicts);
+                                                if draw_schedule_cell(&mut child_ui, assign, &self.config, &slot.id, w, h, conflicts) {
+                                                    self.status_message = "Review detailed conflicts in the Dashboard or below the solver.".to_string();
+                                                }
                                             }
                             }
                         }
                     });
                 });
         }
+
 
         if let Some(ref sched) = self.schedule {
             let open_space_assignments: Vec<(usize, &crate::model::ScheduleAssignment)> = sched.assignments.iter()
@@ -887,7 +940,9 @@ impl AppState {
                                 card_rect = card_rect.translate(self.drag_accumulated_offset);
                             }
                             let mut child_ui = ui.child_ui(card_rect, egui::Layout::top_down(egui::Align::Min));
-                            draw_schedule_cell(&mut child_ui, assign, &self.config, &assign.time_slot_id, 145.0, 48.0, conflicts);
+                            if draw_schedule_cell(&mut child_ui, assign, &self.config, &assign.time_slot_id, 145.0, 48.0, conflicts) {
+                                self.status_message = "Review detailed conflicts in the Dashboard or below the solver.".to_string();
+                            }
                         }
                     });
                     ui.add_space(5.0);
@@ -923,7 +978,6 @@ impl AppState {
         }
 
         // Reserve a stable width before entering the scroll area to prevent layout feedback loops.
-        // Do NOT call ui.available_width() inside scroll area children.
         let panel_width = ui.available_width().max(400.0);
 
         egui::ScrollArea::vertical()
@@ -937,7 +991,7 @@ impl AppState {
                     let header_bg = if is_finals { Color32::from_rgb(67, 52, 10) } else { Color32::from_rgb(30, 37, 50) };
                     let header_accent = if is_finals { Color32::from_rgb(251, 191, 36) } else { accent };
 
-                    // Round header — use allocate_exact_size to avoid available_width feedback
+                    // Round header
                     egui::Frame::none()
                         .fill(header_bg)
                         .rounding(egui::Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
@@ -975,13 +1029,12 @@ impl AppState {
                                         ui.label(RichText::new("Day / Time").size(10.5).color(Color32::from_rgb(107, 114, 128)).strong());
                                     });
                                     ui.allocate_ui(egui::vec2(160.0, 16.0), |ui| {
-
-                                            ui.label(RichText::new("Field / Arena").size(10.5).color(Color32::from_rgb(107, 114, 128)).strong());
-                                        });
-                                        ui.label(RichText::new(if is_h2h { "Match" } else { "Team" })
-                                            .size(10.5).color(Color32::from_rgb(107, 114, 128)).strong());
+                                        ui.label(RichText::new("Field / Arena").size(10.5).color(Color32::from_rgb(107, 114, 128)).strong());
                                     });
+                                    ui.label(RichText::new(if is_h2h { "Match" } else { "Team" })
+                                        .size(10.5).color(Color32::from_rgb(107, 114, 128)).strong());
                                 });
+                            });
 
                             for (m_idx, m) in row.matches.iter().enumerate() {
                                 let row_bg = if m_idx % 2 == 0 { Color32::from_rgb(17, 22, 32) } else { Color32::from_rgb(20, 26, 38) };

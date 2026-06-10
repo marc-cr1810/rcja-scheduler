@@ -96,6 +96,8 @@ pub struct AppState {
     pub active_vol_day: String,
     pub schedule_view_tab: ScheduleViewTab,
     pub active_division_sub_tab: super::DivisionSubTab,
+    pub active_volunteer_sub_tab: super::VolunteerSubTab,
+    pub active_team_sub_tab: super::TeamSubTab,
 
     // Manual Editing state
     pub schedule_locked: bool,
@@ -106,6 +108,11 @@ pub struct AppState {
     pub is_exporting: bool,
     pub export_progress: f32,
     pub export_rx: Option<std::sync::mpsc::Receiver<super::ExportMessage>>,
+
+    // Timeline View Settings
+    pub timeline_zoom: f32,
+    pub timeline_filter_divisions: HashSet<String>,
+    pub timeline_filter_field_kinds: HashSet<crate::model::FieldKind>,
 }
 
 impl Default for AppState {
@@ -187,12 +194,17 @@ impl Default for AppState {
             active_vol_day: String::new(),
             schedule_view_tab: ScheduleViewTab::AllGames,
             active_division_sub_tab: super::DivisionSubTab::Rounds,
+            active_volunteer_sub_tab: super::VolunteerSubTab::Availability,
+            active_team_sub_tab: super::TeamSubTab::List,
             schedule_locked: true,
             dragged_assignment: None,
             drag_accumulated_offset: egui::Vec2::ZERO,
             is_exporting: false,
             export_progress: 0.0,
             export_rx: None,
+            timeline_zoom: 3.5,
+            timeline_filter_divisions: HashSet::new(),
+            timeline_filter_field_kinds: [crate::model::FieldKind::Competition, crate::model::FieldKind::Interview].into_iter().collect(),
         };
 
         state.update_diagnostics();
