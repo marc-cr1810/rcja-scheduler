@@ -33,6 +33,13 @@ pub enum ScheduleViewTab {
     Division(String),
 }
 
+#[derive(PartialEq, Clone, Copy)]
+pub enum DivisionSubTab {
+    Rounds,
+    Teams,
+    Interviews,
+}
+
 pub enum SolverMessage {
     Progress { 
         restart: usize, 

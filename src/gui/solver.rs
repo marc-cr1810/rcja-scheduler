@@ -530,12 +530,7 @@ impl AppState {
                     self.draw_all_games_timeline(ui);
                 }
                 ScheduleViewTab::Division(div_id) => {
-                    if let Some(rows) = self.division_rounds.get(&div_id) {
-                        let div = self.config.divisions.iter().find(|d| d.id == div_id);
-                        let div_name = div.map(|d| d.name.as_str()).unwrap_or(div_id.as_str());
-                        let is_h2h = div.map(|d| d.mode == SchedulingMode::HeadToHead).unwrap_or(true);
-                        self.draw_division_rounds(ui, div_name, &div_id, rows, is_h2h);
-                    }
+                    self.draw_division_view(ui, &div_id);
                 }
             }
 
@@ -914,38 +909,14 @@ impl AppState {
     }
 
     /// Draws the round-by-round table for a single division.
-    fn draw_division_rounds(
+    fn draw_division_rounds_table(
         &self,
         ui: &mut egui::Ui,
-        div_name: &str,
         div_id: &str,
         rows: &[RoundRow],
         is_h2h: bool,
+        accent: Color32,
     ) {
-        let (_, accent) = get_competition_colors(div_id, &self.config);
-
-        ui.add_space(8.0);
-
-        // Division header
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("●").size(16.0).color(accent));
-            ui.label(RichText::new(div_name).strong().size(15.0).color(Color32::WHITE));
-            ui.label(RichText::new(if is_h2h { " · Head-to-Head" } else { " · Individual Run" })
-                .size(11.0).color(Color32::from_rgb(107, 114, 128)));
-        });
-
-        // Subtitle: explain round count so users understand n teams → n-1 rounds per RR cycle
-        if is_h2h {
-            let rr_rounds: Vec<&RoundRow> = rows.iter().filter(|r| !r.matches.iter().any(|m| m.is_final)).collect();
-            let finals_rounds: Vec<&RoundRow> = rows.iter().filter(|r| r.matches.iter().any(|m| m.is_final)).collect();
-            let parts: Vec<String> = [
-                if rr_rounds.is_empty() { None } else { Some(format!("{} round-robin round{}", rr_rounds.len(), if rr_rounds.len() == 1 { "" } else { "s" })) },
-                if finals_rounds.is_empty() { None } else { Some(format!("{} finals stage{}", finals_rounds.len(), if finals_rounds.len() == 1 { "" } else { "s" })) },
-            ].into_iter().flatten().collect();
-            ui.label(RichText::new(parts.join(" + ")).size(11.0).color(Color32::from_rgb(107, 114, 128)).italics());
-        }
-        ui.add_space(8.0);
-
         if rows.is_empty() {
             ui.label(RichText::new("No matches scheduled yet.").color(Color32::from_rgb(107, 114, 128)).italics());
             return;
@@ -1063,6 +1034,191 @@ impl AppState {
 }
 
 impl AppState {
+    fn draw_division_view(&mut self, ui: &mut egui::Ui, div_id: &str) {
+        let div = self.config.divisions.iter().find(|d| d.id == div_id).cloned();
+        if div.is_none() { return; }
+        let div = div.unwrap();
+        let div_name = &div.name;
+        let is_h2h = div.mode == SchedulingMode::HeadToHead;
+        let (_, accent) = get_competition_colors(div_id, &self.config);
+
+        ui.add_space(8.0);
+        // Header
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("●").size(16.0).color(accent));
+            ui.label(RichText::new(div_name).strong().size(15.0).color(Color32::WHITE));
+            ui.label(RichText::new(if is_h2h { " · Head-to-Head" } else { " · Individual Run" })
+                .size(11.0).color(Color32::from_rgb(107, 114, 128)));
+        });
+
+        // Subtitle: explain round count
+        if is_h2h {
+            if let Some(rows) = self.division_rounds.get(div_id) {
+                let rr_rounds: Vec<&RoundRow> = rows.iter().filter(|r| !r.matches.iter().any(|m| m.is_final)).collect();
+                let finals_rounds: Vec<&RoundRow> = rows.iter().filter(|r| r.matches.iter().any(|m| m.is_final)).collect();
+                let parts: Vec<String> = [
+                    if rr_rounds.is_empty() { None } else { Some(format!("{} round-robin round{}", rr_rounds.len(), if rr_rounds.len() == 1 { "" } else { "s" })) },
+                    if finals_rounds.is_empty() { None } else { Some(format!("{} finals stage{}", finals_rounds.len(), if finals_rounds.len() == 1 { "" } else { "s" })) },
+                ].into_iter().flatten().collect();
+                if !parts.is_empty() {
+                    ui.label(RichText::new(parts.join(" + ")).size(11.0).color(Color32::from_rgb(107, 114, 128)).italics());
+                }
+            }
+        }
+        ui.add_space(8.0);
+
+        // Sub-tabs
+        ui.horizontal(|ui| {
+            let tabs = [
+                (crate::gui::DivisionSubTab::Rounds, "🔄 Rounds"),
+                (crate::gui::DivisionSubTab::Teams, "👥 Teams"),
+                (crate::gui::DivisionSubTab::Interviews, "💬 Interviews"),
+            ];
+            for (tab, label) in tabs {
+                let is_active = self.active_division_sub_tab == tab;
+                let text_color = if is_active { Color32::WHITE } else { Color32::from_rgb(156, 163, 175) };
+                let bg_color = if is_active { Color32::from_rgb(79, 70, 229) } else { Color32::from_rgb(31, 41, 55) };
+                
+                let btn = egui::Button::new(RichText::new(label).strong().color(text_color))
+                    .fill(bg_color)
+                    .rounding(4.0)
+                    .min_size(egui::vec2(100.0, 26.0));
+                
+                if ui.add(btn).clicked() {
+                    self.active_division_sub_tab = tab;
+                }
+                ui.add_space(6.0);
+            }
+        });
+        ui.add_space(10.0);
+
+        match self.active_division_sub_tab {
+            crate::gui::DivisionSubTab::Rounds => {
+                if let Some(rows) = self.division_rounds.get(div_id).cloned() {
+                    self.draw_division_rounds_table(ui, div_id, &rows, is_h2h, accent);
+                } else {
+                    ui.label(RichText::new("No rounds scheduled yet.").italics().color(Color32::from_rgb(107, 114, 128)));
+                }
+            }
+            crate::gui::DivisionSubTab::Teams => {
+                self.draw_division_teams(ui, div_id, accent);
+            }
+            crate::gui::DivisionSubTab::Interviews => {
+                self.draw_division_interviews(ui, div_id, accent);
+            }
+        }
+    }
+
+    fn draw_division_teams(&self, ui: &mut egui::Ui, div_id: &str, accent: Color32) {
+        let div_teams: Vec<&crate::model::Team> = self.config.teams.iter().filter(|t| t.division_id == div_id).collect();
+        if div_teams.is_empty() {
+            ui.label(RichText::new("No teams in this division.").italics().color(Color32::from_rgb(107, 114, 128)));
+            return;
+        }
+
+        let panel_width = ui.available_width().max(400.0);
+
+        egui::ScrollArea::vertical()
+            .id_source(format!("div_teams_scroll_{}", div_id))
+            .show(ui, |ui| {
+                for team in div_teams {
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(26, 32, 44))
+                        .rounding(6.0)
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(55, 65, 81)))
+                        .inner_margin(8.0)
+                        .show(ui, |ui| {
+                            ui.set_min_width(panel_width - 16.0);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(&team.name).strong().color(Color32::WHITE));
+                                ui.label(RichText::new(format!("({})", team.organization)).size(10.0).color(Color32::from_rgb(156, 163, 175)));
+                            });
+                            ui.add_space(4.0);
+                            
+                            // Find matches for this team
+                            if let Some(ref sched) = self.schedule {
+                                let mut team_matches: Vec<&crate::model::ScheduleAssignment> = sched.assignments.iter()
+                                    .filter(|a| a.activity.teams().contains(&team.name.as_str()))
+                                    .collect();
+                                
+                                // Sort team matches chronologically
+                                team_matches.sort_by_key(|a| {
+                                    let slot = self.config.time_slots.iter().find(|s| s.id == a.time_slot_id);
+                                    slot.map(|s| (s.day.clone(), parse_time_to_minutes(&s.start_time)))
+                                });
+
+                                if team_matches.is_empty() {
+                                    ui.label(RichText::new("No activities scheduled.").small().italics().color(Color32::from_rgb(107, 114, 128)));
+                                } else {
+                                    for assign in team_matches {
+                                        let slot = self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id);
+                                        let field = assign.field_id.as_ref().and_then(|f_id| self.config.fields.iter().find(|f| f.id == *f_id));
+                                        let time_str = slot.map_or("?".to_string(), |s| format!("{} {}", &s.day[..3], s.start_time));
+                                        let field_name = field.map_or("Interview Table / Open Space".to_string(), |f| f.name.clone());
+                                        
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(format!("⏰ {} | 📍 {}", time_str, field_name)).size(11.0).color(Color32::from_rgb(209, 213, 219)));
+                                            ui.label(RichText::new(assign.activity.label()).size(11.0).color(accent).strong());
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                    ui.add_space(8.0);
+                }
+            });
+    }
+
+    fn draw_division_interviews(&self, ui: &mut egui::Ui, div_id: &str, accent: Color32) {
+        if let Some(ref sched) = self.schedule {
+            let mut interviews: Vec<&crate::model::ScheduleAssignment> = sched.assignments.iter()
+                .filter(|a| a.activity.division_id() == div_id && matches!(a.activity, crate::model::Activity::Interview { .. }))
+                .collect();
+            
+            // Sort interviews chronologically
+            interviews.sort_by_key(|a| {
+                let slot = self.config.time_slots.iter().find(|s| s.id == a.time_slot_id);
+                slot.map(|s| (s.day.clone(), parse_time_to_minutes(&s.start_time)))
+            });
+
+            if interviews.is_empty() {
+                ui.label(RichText::new("No interviews scheduled for this division.").italics().color(Color32::from_rgb(107, 114, 128)));
+                return;
+            }
+
+            let panel_width = ui.available_width().max(400.0);
+
+            egui::ScrollArea::vertical()
+                .id_source(format!("div_interviews_scroll_{}", div_id))
+                .show(ui, |ui| {
+                    for assign in interviews {
+                        let slot = self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id);
+                        let field = assign.field_id.as_ref().and_then(|f_id| self.config.fields.iter().find(|f| f.id == *f_id));
+                        let time_str = slot.map_or("?".to_string(), |s| format!("{} {}", s.day, s.start_time));
+                        let field_name = field.map_or("Interview Table / Open Space".to_string(), |f| f.name.clone());
+
+                        egui::Frame::none()
+                            .fill(Color32::from_rgb(26, 32, 44))
+                            .rounding(6.0)
+                            .stroke(Stroke::new(1.0, Color32::from_rgb(55, 65, 81)))
+                            .inner_margin(8.0)
+                            .show(ui, |ui| {
+                                ui.set_min_width(panel_width - 16.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(assign.activity.label()).strong().color(Color32::WHITE));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(RichText::new(format!("⏰ {} | 📍 {}", time_str, field_name)).color(accent).strong());
+                                    });
+                                });
+                            });
+                        ui.add_space(6.0);
+                    }
+                });
+        } else {
+            ui.label(RichText::new("Schedule not generated yet.").italics().color(Color32::from_rgb(107, 114, 128)));
+        }
+    }
+
     pub fn solve_and_schedule(&mut self) {
         let (tx, rx) = std::sync::mpsc::channel();
         self.solver_rx = Some(rx);

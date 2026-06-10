@@ -95,6 +95,7 @@ pub struct AppState {
     pub status_message: String,
     pub active_vol_day: String,
     pub schedule_view_tab: ScheduleViewTab,
+    pub active_division_sub_tab: super::DivisionSubTab,
 
     // Manual Editing state
     pub schedule_locked: bool,
@@ -180,6 +181,7 @@ impl Default for AppState {
             status_message: String::new(),
             active_vol_day: String::new(),
             schedule_view_tab: ScheduleViewTab::AllGames,
+            active_division_sub_tab: super::DivisionSubTab::Rounds,
             schedule_locked: true,
             dragged_assignment: None,
             drag_accumulated_offset: egui::Vec2::ZERO,
