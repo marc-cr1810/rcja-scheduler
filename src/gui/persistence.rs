@@ -456,12 +456,19 @@ fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title
     let color_gray = style::Color::Rgb(107, 114, 128); // Gray for secondary info
     let color_border = style::Color::Rgb(226, 232, 240); // Light border color
 
-    // Load system font
-    let font_dir = "/usr/share/fonts/truetype/ubuntu";
-    let font_family = genpdf::fonts::from_files(font_dir, "Ubuntu", None).ok()
-        .or_else(|| genpdf::fonts::from_files("/usr/share/fonts/truetype/liberation", "LiberationSans", None).ok())
-        .or_else(|| genpdf::fonts::from_files("/usr/share/fonts/truetype/dejavu", "DejaVuSans", None).ok())
-        .or_else(|| genpdf::fonts::from_files("/usr/share/fonts/truetype/freefont", "FreeSans", None).ok());
+    // Load system font (Cross-platform)
+    let font_family = if cfg!(windows) {
+        let win_font_dir = "C:\\Windows\\Fonts";
+        genpdf::fonts::from_files(win_font_dir, "Arial", None).ok()
+            .or_else(|| genpdf::fonts::from_files(win_font_dir, "Segoe UI", None).ok())
+            .or_else(|| genpdf::fonts::from_files(win_font_dir, "Times New Roman", None).ok())
+    } else {
+        let font_dir = "/usr/share/fonts/truetype/ubuntu";
+        genpdf::fonts::from_files(font_dir, "Ubuntu", None).ok()
+            .or_else(|| genpdf::fonts::from_files("/usr/share/fonts/truetype/liberation", "LiberationSans", None).ok())
+            .or_else(|| genpdf::fonts::from_files("/usr/share/fonts/truetype/dejavu", "DejaVuSans", None).ok())
+            .or_else(|| genpdf::fonts::from_files("/usr/share/fonts/truetype/freefont", "FreeSans", None).ok())
+    };
 
     let font_family = match font_family {
         Some(f) => f,
