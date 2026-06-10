@@ -1,7 +1,7 @@
 mod activity;
 mod evaluator;
 mod solver;
-mod utils;
+pub mod utils;
 mod internal;
 mod fast_evaluator;
 

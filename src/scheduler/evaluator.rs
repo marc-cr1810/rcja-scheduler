@@ -180,7 +180,6 @@ pub fn evaluate_schedule_cost(
             }
 
             if let Some(volunteer) = config.volunteers.iter().find(|v| v.id == *volunteer_id) {
-                let start_minutes = config.time_slots.iter().find(|s| s.id == *slot_id).map(|s| s.start_minutes()).unwrap_or(0);
                 let duration = activity.duration_minutes();
                 
                 // Availability check: must be available for ALL slots that overlap with this time range
@@ -188,7 +187,7 @@ pub fn evaluate_schedule_cost(
                     if slot.day.to_lowercase() == config.time_slots.iter().find(|s| s.id == *slot_id).unwrap().day.to_lowercase() {
                         let s_start = slot.start_minutes();
                         let s_end = s_start + slot.duration_minutes();
-                        if start_minutes < s_end && s_start < start_minutes + duration
+                        if start_min < s_end && s_start < start_min + duration
                             && !volunteer.availabilities.contains(&slot.id) {
                                 hard_conflicts += 1.0 * multiplier;
                                 break;
@@ -613,8 +612,12 @@ pub fn find_conflicted_assignment_indices(config: &TournamentConfig, schedule: &
                 vol_slot.entry((*b_idx, vol_id.clone())).or_default().push(i);
             }
             if let Some(vol) = config.volunteers.iter().find(|v| v.id == *vol_id) {
+                // Attendance
+                if matches!(vol.attendance_status, crate::model::AttendanceStatus::NoShow) {
+                    conflicted[i] = true;
+                }
+
                 // Availability
-                let start_minutes = config.time_slots.iter().find(|s| s.id == *slot_id).unwrap().start_minutes();
                 let duration = activity.duration_minutes();
                 let day = config.time_slots.iter().find(|s| s.id == *slot_id).unwrap().day.to_lowercase();
                 
@@ -622,7 +625,7 @@ pub fn find_conflicted_assignment_indices(config: &TournamentConfig, schedule: &
                     if slot.day.to_lowercase() == day {
                         let s_start = slot.start_minutes();
                         let s_end = s_start + slot.duration_minutes();
-                        if start_minutes < s_end && s_start < start_minutes + duration
+                        if start_min < s_end && s_start < start_min + duration
                             && !vol.availabilities.contains(&slot.id) {
                                 conflicted[i] = true;
                                 break;
@@ -805,6 +808,14 @@ pub fn get_assignment_conflicts(config: &TournamentConfig, schedule: &Schedule) 
                 vol_slot.entry((*b_idx, vol_id.clone())).or_default().push(i);
             }
             if let Some(vol) = config.volunteers.iter().find(|v| v.id == *vol_id) {
+                // Attendance
+                if matches!(vol.attendance_status, crate::model::AttendanceStatus::NoShow) {
+                    result.entry(i).or_default().push(AssignmentConflict {
+                        severity: ConflictSeverity::Error,
+                        message: format!("Volunteer Attendance: '{}' is marked as a NO-SHOW.", vol.name),
+                    });
+                }
+
                 // Availability
                 for slot_overlap_id in &occupied_slots {
                     if !vol.availabilities.contains(slot_overlap_id) {

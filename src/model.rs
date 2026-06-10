@@ -128,6 +128,14 @@ pub fn parse_time_minutes(time_str: &str) -> Option<u32> {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum AttendanceStatus {
+    #[default]
+    Pending,
+    CheckedIn,
+    NoShow,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Volunteer {
     pub id: String,
@@ -135,6 +143,8 @@ pub struct Volunteer {
     pub availabilities: Vec<String>, // list of time slot IDs
     pub capabilities: Option<Vec<String>>, // list of division IDs they can judge. None means can judge anything.
     pub conflict_organizations: Vec<String>, // list of organization names they cannot judge
+    #[serde(default)]
+    pub attendance_status: AttendanceStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

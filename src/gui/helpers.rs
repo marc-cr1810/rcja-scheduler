@@ -33,8 +33,8 @@ pub(crate) fn draw_stat_card(ui: &mut egui::Ui, title: &str, value: &str, color:
         });
 }
 
-pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment, config: &TournamentConfig, current_slot_id: &str, w: f32, h: f32, conflicts: &[AssignmentConflict]) -> bool {
-    let mut conflict_clicked = false;
+pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment, config: &TournamentConfig, current_slot_id: &str, w: f32, h: f32, conflicts: &[AssignmentConflict], assign_idx: usize) -> Option<usize> {
+    let mut substitution_requested = None;
     let div_id = assign.activity.division_id();
     let (mut bg_color, mut border_color) = get_competition_colors(div_id, config);
     let is_continuation = current_slot_id != assign.time_slot_id;
@@ -64,7 +64,14 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
 
     let cell_w = w.max(10.0);
     let cell_h = h.max(10.0);
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(cell_w, cell_h), egui::Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(cell_w, cell_h), egui::Sense::click());
+
+    if response.clicked() {
+        // Option to open substitution if there's a conflict
+        if !conflicts.is_empty() {
+            substitution_requested = Some(assign_idx);
+        }
+    }
 
     ui.painter().rect_stroke(
         rect,
@@ -96,20 +103,24 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
 
             if !conflicts.is_empty() {
                 let has_error = conflicts.iter().any(|c| matches!(c.severity, ConflictSeverity::Error));
-                let icon = if has_error { "❌" } else { "⚠" };
-                let color = if has_error { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(251, 191, 36) };
+                let is_no_show = conflicts.iter().any(|c| c.message.contains("NO-SHOW"));
+                
+                let icon = if is_no_show { "🏃" } else if has_error { "❌" } else { "⚠" };
+                let color = if is_no_show || has_error { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(251, 191, 36) };
                 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let resp = ui.add(egui::Button::new(RichText::new(icon).color(color).strong()).frame(false));
                     if resp.clicked() {
-                        conflict_clicked = true;
+                        substitution_requested = Some(assign_idx);
                     }
                     resp.on_hover_ui(|ui| {
                         ui.vertical(|ui| {
                             for c in conflicts {
-                                let c_icon = if matches!(c.severity, ConflictSeverity::Error) { "❌" } else { "⚠" };
+                                let c_icon = if c.message.contains("NO-SHOW") { "🏃" } else if matches!(c.severity, ConflictSeverity::Error) { "❌" } else { "⚠" };
                                 ui.label(format!("{} {}", c_icon, c.message));
                             }
+                            ui.add_space(4.0);
+                            ui.label(RichText::new("Click to find substitute").italics().color(Color32::from_rgb(156, 163, 175)));
                         });
                     });
                 });
@@ -152,7 +163,7 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
     });
 
     response.on_hover_ui(|ui| {
-            ui.vertical(|ui| {
+        ui.vertical(|ui| {
                 ui.heading(format!("{}{}", assign.activity.label(), if is_continuation { " (Continuation)" } else { "" }));
                 let div_name = config.divisions.iter().find(|d| d.id == div_id).map_or(div_id, |d| &d.name);
                 ui.label(format!("Division: {}", div_name));
@@ -199,7 +210,7 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
             });
         });
 
-    conflict_clicked
+    substitution_requested
 }
 
 pub(crate) fn get_competition_colors(div_id: &str, config: &TournamentConfig) -> (Color32, Color32) {

@@ -118,6 +118,8 @@ pub struct AppState {
     pub vol_roster_search: String,
     pub vol_roster_sort_by: VolRosterSort,
     pub vol_roster_show_only_conflicts: bool,
+
+    pub active_substitution: Option<usize>, // Index of assignment in schedule
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -221,6 +223,8 @@ impl Default for AppState {
             vol_roster_search: String::new(),
             vol_roster_sort_by: VolRosterSort::Name,
             vol_roster_show_only_conflicts: false,
+
+            active_substitution: None,
         };
 
         state.update_diagnostics();
@@ -422,8 +426,10 @@ impl AppState {
             name: "David (Soccer Ref)".to_string(),
             availabilities: (1..=12).map(|i| format!("sat_slot_{}", i)).collect(),
             capabilities: Some(vec!["soccer_open".to_string(), "simple_simon".to_string()]),
-            conflict_organizations: vec!["Tech Academy".to_string()],
-        });
+            conflict_organizations: Vec::new(),
+            attendance_status: crate::model::AttendanceStatus::Pending,
+            });
+
 
         self.config.volunteers.push(Volunteer {
             id: "v_sarah".to_string(),
@@ -431,6 +437,7 @@ impl AppState {
             availabilities: (1..=8).map(|i| format!("sat_slot_{}", i)).collect(),
             capabilities: Some(vec!["soccer_open".to_string(), "simple_simon".to_string()]),
             conflict_organizations: Vec::new(),
+            attendance_status: crate::model::AttendanceStatus::Pending,
         });
 
         self.config.volunteers.push(Volunteer {
@@ -439,6 +446,7 @@ impl AppState {
             availabilities: (1..=12).map(|i| format!("sat_slot_{}", i)).collect(),
             capabilities: Some(vec!["soccer_open".to_string()]),
             conflict_organizations: Vec::new(),
+            attendance_status: crate::model::AttendanceStatus::Pending,
         });
 
         self.config.volunteers.push(Volunteer {
@@ -447,6 +455,7 @@ impl AppState {
             availabilities: (5..=12).map(|i| format!("sat_slot_{}", i)).collect(),
             capabilities: Some(vec!["simple_simon".to_string()]),
             conflict_organizations: Vec::new(),
+            attendance_status: crate::model::AttendanceStatus::Pending,
         });
 
         self.config.volunteers.push(Volunteer {
@@ -455,6 +464,7 @@ impl AppState {
             availabilities: (1..=12).map(|i| format!("sat_slot_{}", i)).collect(),
             capabilities: None, // can judge anything
             conflict_organizations: Vec::new(),
+            attendance_status: crate::model::AttendanceStatus::Pending,
         });
 
         self.config.volunteers.push(Volunteer {
@@ -463,6 +473,7 @@ impl AppState {
             availabilities: (1..=10).map(|i| format!("sat_slot_{}", i)).collect(),
             capabilities: None,
             conflict_organizations: Vec::new(),
+            attendance_status: crate::model::AttendanceStatus::Pending,
         });
 
         self.config.volunteers.push(Volunteer {
@@ -471,6 +482,7 @@ impl AppState {
             availabilities: (1..=12).map(|i| format!("sat_slot_{}", i)).collect(),
             capabilities: None,
             conflict_organizations: Vec::new(),
+            attendance_status: crate::model::AttendanceStatus::Pending,
         });
 
         self.clear_schedule();
