@@ -228,6 +228,37 @@ impl Activity {
         }
     }
 
+    pub fn export_label(&self) -> String {
+        let clean_name = |name: &str, div_id: &str| -> String {
+            let prefix = format!("{} ", div_id);
+            if name.starts_with(&prefix) {
+                name[prefix.len()..].to_string()
+            } else {
+                name.to_string()
+            }
+        };
+
+        match self {
+            Activity::Match { team_a, team_b, is_final, division_id, .. } => {
+                let clean_a = clean_name(team_a, division_id);
+                let clean_b = clean_name(team_b, division_id);
+                if *is_final {
+                    format!("[FINAL] {} vs {}", clean_a, clean_b)
+                } else {
+                    format!("{} vs {}", clean_a, clean_b)
+                }
+            }
+            Activity::Run { team, run_number, division_id, .. } => {
+                let clean_t = clean_name(team, division_id);
+                format!("{} Run #{}", clean_t, run_number)
+            }
+            Activity::Interview { team, division_id, .. } => {
+                let clean_t = clean_name(team, division_id);
+                format!("{} Interview", clean_t)
+            }
+        }
+    }
+
     pub fn stage(&self) -> usize {
         match self {
             Activity::Match { id, .. } => {

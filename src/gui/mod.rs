@@ -52,9 +52,16 @@ pub enum SolverMessage {
     Done(Option<Schedule>),
 }
 
+pub enum ExportMessage {
+    Progress(f32),
+    Done(String),
+    Error(String),
+}
+
 impl eframe::App for AppState {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_solver_messages(ctx);
+        self.handle_export_messages(ctx);
         setup_custom_style(ctx);
 
         // TOP PANEL
@@ -85,12 +92,34 @@ impl eframe::App for AppState {
                         if ui.button("💾 Save").clicked() {
                             self.save_config();
                         }
-                        if self.schedule.is_some()
-                            && ui.button("📊 Export Schedule CSV").clicked() {
+                        if self.schedule.is_some() {
+                            let export_btn = egui::Button::new("📤 Full Export (CSV & PDF)");
+                            if ui.add_enabled(!self.is_exporting, export_btn).clicked() {
+                                self.export_full_tournament();
+                            }
+                            if ui.button("📊 Export Master CSV").clicked() {
                                 self.export_to_csv();
                             }
+                        }
                     });
                 });
+
+                if self.is_exporting {
+                    ui.add_space(6.0);
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(30, 41, 59))
+                        .rounding(4.0)
+                        .inner_margin(6.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("📄 Generating tournament documents...").strong().color(Color32::from_rgb(129, 140, 248)));
+                                ui.add(egui::ProgressBar::new(self.export_progress)
+                                    .show_percentage()
+                                    .animate(true)
+                                    .desired_width(ui.available_width() - 20.0));
+                            });
+                        });
+                }
                 ui.add_space(8.0);
             });
         });
@@ -191,6 +220,31 @@ impl eframe::App for AppState {
 }
 
 impl AppState {
+    fn handle_export_messages(&mut self, ctx: &egui::Context) {
+        if let Some(ref rx) = self.export_rx {
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    ExportMessage::Progress(p) => {
+                        self.export_progress = p;
+                    }
+                    ExportMessage::Done(msg) => {
+                        self.status_message = msg;
+                        self.is_exporting = false;
+                        self.export_rx = None;
+                        break;
+                    }
+                    ExportMessage::Error(err) => {
+                        self.status_message = format!("Export failed: {}", err);
+                        self.is_exporting = false;
+                        self.export_rx = None;
+                        break;
+                    }
+                }
+            }
+            ctx.request_repaint();
+        }
+    }
+
     fn handle_solver_messages(&mut self, ctx: &egui::Context) {
         if let Some(ref rx) = self.solver_rx {
             while let Ok(msg) = rx.try_recv() {

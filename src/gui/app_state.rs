@@ -101,6 +101,11 @@ pub struct AppState {
     pub schedule_locked: bool,
     pub dragged_assignment: Option<usize>,
     pub drag_accumulated_offset: egui::Vec2,
+
+    // Export progress
+    pub is_exporting: bool,
+    pub export_progress: f32,
+    pub export_rx: Option<std::sync::mpsc::Receiver<super::ExportMessage>>,
 }
 
 impl Default for AppState {
@@ -185,6 +190,9 @@ impl Default for AppState {
             schedule_locked: true,
             dragged_assignment: None,
             drag_accumulated_offset: egui::Vec2::ZERO,
+            is_exporting: false,
+            export_progress: 0.0,
+            export_rx: None,
         };
 
         state.update_diagnostics();
