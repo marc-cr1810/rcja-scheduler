@@ -1122,49 +1122,108 @@ impl AppState {
             .id_source(format!("div_teams_scroll_{}", div_id))
             .show(ui, |ui| {
                 for team in div_teams {
+                    // Find activities for this team
+                    let mut team_activities: Vec<&crate::model::ScheduleAssignment> = Vec::new();
+                    if let Some(ref sched) = self.schedule {
+                        team_activities = sched.assignments.iter()
+                            .filter(|a| a.activity.teams().contains(&team.name.as_str()))
+                            .collect();
+                        
+                        // Sort chronologically
+                        team_activities.sort_by_key(|a| {
+                            let slot = self.config.time_slots.iter().find(|s| s.id == a.time_slot_id);
+                            slot.map(|s| (s.day.clone(), parse_time_to_minutes(&s.start_time)))
+                        });
+                    }
+
+                    // Team header
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(26, 32, 44))
-                        .rounding(6.0)
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(55, 65, 81)))
-                        .inner_margin(8.0)
+                        .fill(Color32::from_rgb(30, 37, 50))
+                        .rounding(egui::Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
+                        .inner_margin(egui::Margin::symmetric(12.0, 6.0))
                         .show(ui, |ui| {
-                            ui.set_min_width(panel_width - 16.0);
+                            ui.set_min_width(panel_width - 4.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(&team.name).strong().color(Color32::WHITE));
-                                ui.label(RichText::new(format!("({})", team.organization)).size(10.0).color(Color32::from_rgb(156, 163, 175)));
+                                ui.label(RichText::new("👥").size(13.0).color(accent));
+                                ui.label(RichText::new(&team.name).strong().size(13.0).color(Color32::WHITE));
+                                ui.add_space(8.0);
+                                ui.label(RichText::new(format!("({})", team.organization)).size(11.0).color(Color32::from_rgb(156, 163, 175)));
                             });
-                            ui.add_space(4.0);
-                            
-                            // Find matches for this team
-                            if let Some(ref sched) = self.schedule {
-                                let mut team_matches: Vec<&crate::model::ScheduleAssignment> = sched.assignments.iter()
-                                    .filter(|a| a.activity.teams().contains(&team.name.as_str()))
-                                    .collect();
-                                
-                                // Sort team matches chronologically
-                                team_matches.sort_by_key(|a| {
-                                    let slot = self.config.time_slots.iter().find(|s| s.id == a.time_slot_id);
-                                    slot.map(|s| (s.day.clone(), parse_time_to_minutes(&s.start_time)))
+                        });
+
+                    // Activities body
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(17, 22, 32))
+                        .rounding(egui::Rounding { nw: 0.0, ne: 0.0, sw: 6.0, se: 6.0 })
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(38, 46, 60)))
+                        .show(ui, |ui| {
+                            ui.set_min_width(panel_width - 4.0);
+
+                            // Column headers
+                            egui::Frame::none()
+                                .fill(Color32::from_rgb(22, 28, 40))
+                                .inner_margin(egui::Margin::symmetric(12.0, 5.0))
+                                .show(ui, |ui| {
+                                    ui.set_min_width(panel_width - 8.0);
+                                    ui.horizontal(|ui| {
+                                        ui.allocate_ui(egui::vec2(90.0, 16.0), |ui| {
+                                            ui.label(RichText::new("Day / Time").size(10.5).color(Color32::from_rgb(107, 114, 128)).strong());
+                                        });
+                                        ui.allocate_ui(egui::vec2(160.0, 16.0), |ui| {
+                                            ui.label(RichText::new("Field / Arena").size(10.5).color(Color32::from_rgb(107, 114, 128)).strong());
+                                        });
+                                        ui.label(RichText::new("Activity").size(10.5).color(Color32::from_rgb(107, 114, 128)).strong());
+                                    });
                                 });
 
-                                if team_matches.is_empty() {
-                                    ui.label(RichText::new("No activities scheduled.").small().italics().color(Color32::from_rgb(107, 114, 128)));
-                                } else {
-                                    for assign in team_matches {
-                                        let slot = self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id);
-                                        let field = assign.field_id.as_ref().and_then(|f_id| self.config.fields.iter().find(|f| f.id == *f_id));
-                                        let time_str = slot.map_or("?".to_string(), |s| format!("{} {}", &s.day[..3], s.start_time));
-                                        let field_name = field.map_or("Interview Table / Open Space".to_string(), |f| f.name.clone());
-                                        
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new(format!("⏰ {} | 📍 {}", time_str, field_name)).size(11.0).color(Color32::from_rgb(209, 213, 219)));
-                                            ui.label(RichText::new(assign.activity.label()).size(11.0).color(accent).strong());
-                                        });
+                            if team_activities.is_empty() {
+                                egui::Frame::none()
+                                    .inner_margin(egui::Margin::symmetric(12.0, 7.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new("No activities scheduled.").small().italics().color(Color32::from_rgb(107, 114, 128)));
+                                    });
+                            } else {
+                                for (a_idx, assign) in team_activities.iter().enumerate() {
+                                    let row_bg = if a_idx % 2 == 0 { Color32::from_rgb(17, 22, 32) } else { Color32::from_rgb(20, 26, 38) };
+
+                                    if a_idx > 0 {
+                                        let sep_size = egui::vec2(panel_width - 32.0, 1.0);
+                                        let (sep_rect, _) = ui.allocate_exact_size(sep_size, egui::Sense::hover());
+                                        ui.painter().rect_filled(sep_rect, 0.0, Color32::from_rgb(38, 46, 60));
                                     }
+
+                                    egui::Frame::none()
+                                        .fill(row_bg)
+                                        .inner_margin(egui::Margin::symmetric(12.0, 7.0))
+                                        .show(ui, |ui| {
+                                            ui.set_min_width(panel_width - 8.0);
+                                            
+                                            let slot = self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id);
+                                            let field = assign.field_id.as_ref().and_then(|f_id| self.config.fields.iter().find(|f| f.id == *f_id));
+                                            let day_short = slot.map_or("???".to_string(), |s| if s.day.len() > 3 { s.day[..3].to_string() } else { s.day.clone() });
+                                            let time_str = slot.map_or("—".to_string(), |s| s.start_time.clone());
+                                            let field_name = field.map_or("—".to_string(), |f| f.name.clone());
+                                            
+                                            ui.horizontal(|ui| {
+                                                // Day / Time
+                                                ui.allocate_ui(egui::vec2(90.0, 20.0), |ui| {
+                                                    ui.label(RichText::new(format!("{} {}", day_short, time_str))
+                                                        .size(12.0).color(Color32::from_rgb(209, 213, 219)).monospace());
+                                                });
+                                                // Field
+                                                ui.allocate_ui(egui::vec2(160.0, 20.0), |ui| {
+                                                    let field_color = if field_name == "—" { Color32::from_rgb(107, 114, 128) } else { Color32::from_rgb(156, 163, 175) };
+                                                    ui.label(RichText::new(&field_name).size(11.5).color(field_color));
+                                                });
+                                                // Activity
+                                                let label = assign.activity.label();
+                                                ui.label(RichText::new(label).size(11.5).color(accent).strong());
+                                            });
+                                        });
                                 }
                             }
                         });
-                    ui.add_space(8.0);
+                    ui.add_space(12.0);
                 }
             });
     }
@@ -1191,28 +1250,83 @@ impl AppState {
             egui::ScrollArea::vertical()
                 .id_source(format!("div_interviews_scroll_{}", div_id))
                 .show(ui, |ui| {
-                    for assign in interviews {
-                        let slot = self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id);
-                        let field = assign.field_id.as_ref().and_then(|f_id| self.config.fields.iter().find(|f| f.id == *f_id));
-                        let time_str = slot.map_or("?".to_string(), |s| format!("{} {}", s.day, s.start_time));
-                        let field_name = field.map_or("Interview Table / Open Space".to_string(), |f| f.name.clone());
+                    // Interviews header
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(30, 37, 50))
+                        .rounding(egui::Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
+                        .inner_margin(egui::Margin::symmetric(12.0, 6.0))
+                        .show(ui, |ui| {
+                            ui.set_min_width(panel_width - 4.0);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("💬").size(13.0).color(accent));
+                                ui.label(RichText::new("Interviews").strong().size(13.0).color(Color32::WHITE));
+                            });
+                        });
 
-                        egui::Frame::none()
-                            .fill(Color32::from_rgb(26, 32, 44))
-                            .rounding(6.0)
-                            .stroke(Stroke::new(1.0, Color32::from_rgb(55, 65, 81)))
-                            .inner_margin(8.0)
-                            .show(ui, |ui| {
-                                ui.set_min_width(panel_width - 16.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(assign.activity.label()).strong().color(Color32::WHITE));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(format!("⏰ {} | 📍 {}", time_str, field_name)).color(accent).strong());
+                    // Interviews body
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(17, 22, 32))
+                        .rounding(egui::Rounding { nw: 0.0, ne: 0.0, sw: 6.0, se: 6.0 })
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(38, 46, 60)))
+                        .show(ui, |ui| {
+                            ui.set_min_width(panel_width - 4.0);
+
+                            // Column headers
+                            egui::Frame::none()
+                                .fill(Color32::from_rgb(22, 28, 40))
+                                .inner_margin(egui::Margin::symmetric(12.0, 5.0))
+                                .show(ui, |ui| {
+                                    ui.set_min_width(panel_width - 8.0);
+                                    ui.horizontal(|ui| {
+                                        ui.allocate_ui(egui::vec2(90.0, 16.0), |ui| {
+                                            ui.label(RichText::new("Day / Time").size(10.5).color(Color32::from_rgb(107, 114, 128)).strong());
+                                        });
+                                        ui.allocate_ui(egui::vec2(160.0, 16.0), |ui| {
+                                            ui.label(RichText::new("Field / Arena").size(10.5).color(Color32::from_rgb(107, 114, 128)).strong());
+                                        });
+                                        ui.label(RichText::new("Activity").size(10.5).color(Color32::from_rgb(107, 114, 128)).strong());
                                     });
                                 });
-                            });
-                        ui.add_space(6.0);
-                    }
+
+                            for (a_idx, assign) in interviews.iter().enumerate() {
+                                let row_bg = if a_idx % 2 == 0 { Color32::from_rgb(17, 22, 32) } else { Color32::from_rgb(20, 26, 38) };
+
+                                if a_idx > 0 {
+                                    let sep_size = egui::vec2(panel_width - 32.0, 1.0);
+                                    let (sep_rect, _) = ui.allocate_exact_size(sep_size, egui::Sense::hover());
+                                    ui.painter().rect_filled(sep_rect, 0.0, Color32::from_rgb(38, 46, 60));
+                                }
+
+                                egui::Frame::none()
+                                    .fill(row_bg)
+                                    .inner_margin(egui::Margin::symmetric(12.0, 7.0))
+                                    .show(ui, |ui| {
+                                        ui.set_min_width(panel_width - 8.0);
+                                        
+                                        let slot = self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id);
+                                        let field = assign.field_id.as_ref().and_then(|f_id| self.config.fields.iter().find(|f| f.id == *f_id));
+                                        let day_short = slot.map_or("???".to_string(), |s| if s.day.len() > 3 { s.day[..3].to_string() } else { s.day.clone() });
+                                        let time_str = slot.map_or("—".to_string(), |s| s.start_time.clone());
+                                        let field_name = field.map_or("—".to_string(), |f| f.name.clone());
+                                        
+                                        ui.horizontal(|ui| {
+                                            // Day / Time
+                                            ui.allocate_ui(egui::vec2(90.0, 20.0), |ui| {
+                                                ui.label(RichText::new(format!("{} {}", day_short, time_str))
+                                                    .size(12.0).color(Color32::from_rgb(209, 213, 219)).monospace());
+                                            });
+                                            // Field
+                                            ui.allocate_ui(egui::vec2(160.0, 20.0), |ui| {
+                                                let field_color = if field_name == "—" { Color32::from_rgb(107, 114, 128) } else { Color32::from_rgb(156, 163, 175) };
+                                                ui.label(RichText::new(&field_name).size(11.5).color(field_color));
+                                            });
+                                            // Activity
+                                            let label = assign.activity.label();
+                                            ui.label(RichText::new(label).size(11.5).color(accent).strong());
+                                        });
+                                    });
+                            }
+                        });
                 });
         } else {
             ui.label(RichText::new("Schedule not generated yet.").italics().color(Color32::from_rgb(107, 114, 128)));
