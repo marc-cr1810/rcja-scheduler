@@ -113,6 +113,18 @@ pub struct AppState {
     pub timeline_zoom: f32,
     pub timeline_filter_divisions: HashSet<String>,
     pub timeline_filter_field_kinds: HashSet<crate::model::FieldKind>,
+
+    // Volunteer Roster UI State
+    pub vol_roster_search: String,
+    pub vol_roster_sort_by: VolRosterSort,
+    pub vol_roster_show_only_conflicts: bool,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+pub enum VolRosterSort {
+    Name,
+    Shifts,
+    Conflicts,
 }
 
 impl Default for AppState {
@@ -205,6 +217,10 @@ impl Default for AppState {
             timeline_zoom: 3.5,
             timeline_filter_divisions: HashSet::new(),
             timeline_filter_field_kinds: [crate::model::FieldKind::Competition, crate::model::FieldKind::Interview].into_iter().collect(),
+
+            vol_roster_search: String::new(),
+            vol_roster_sort_by: VolRosterSort::Name,
+            vol_roster_show_only_conflicts: false,
         };
 
         state.update_diagnostics();

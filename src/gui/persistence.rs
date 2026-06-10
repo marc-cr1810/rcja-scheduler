@@ -90,6 +90,53 @@ impl AppState {
         }
     }
 
+    pub fn export_volunteer_rosters_to_csv(&mut self) {
+        if let Some(ref schedule) = self.schedule {
+            let mut csv = String::from("Volunteer,Time,Day,Field,Activity,Division\n");
+            
+            let mut volunteers = self.config.volunteers.clone();
+            volunteers.sort_by_key(|v| v.name.clone());
+
+            for vol in volunteers {
+                let mut vol_assigns: Vec<_> = schedule.assignments.iter()
+                    .filter(|a| a.volunteer_ids.contains(&vol.id))
+                    .collect();
+                
+                vol_assigns.sort_by_key(|a| {
+                    let slot = self.config.time_slots.iter().find(|s| s.id == a.time_slot_id);
+                    slot.map(|s| (s.day.clone(), crate::gui::helpers::parse_time_to_minutes(&s.start_time)))
+                });
+
+                for assign in vol_assigns {
+                    let slot = self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id).unwrap();
+                    let field = assign.field_id.as_ref().and_then(|fid| self.config.fields.iter().find(|f| f.id == *fid));
+                    let div = self.config.divisions.iter().find(|d| d.id == assign.activity.division_id());
+                    
+                    csv.push_str(&format!(
+                        "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
+                        vol.name, slot.start_time, slot.day, field.map_or("", |f| &f.name), assign.activity.export_label(), div.map_or("", |d| &d.name)
+                    ));
+                }
+            }
+            
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("CSV", &["csv"])
+                .set_title("Export Volunteer Rosters As")
+                .save_file()
+            {
+                if let Ok(mut file) = File::create(&path) {
+                    if file.write_all(csv.as_bytes()).is_ok() {
+                        self.status_message = format!("Volunteer rosters exported to '{}'", path.display());
+                    } else {
+                        self.status_message = "Failed to write CSV".to_string();
+                    }
+                } else {
+                    self.status_message = "Failed to create file".to_string();
+                }
+            }
+        }
+    }
+
     pub fn export_full_tournament(&mut self) {
         if self.schedule.is_none() {
             self.status_message = "No schedule to export!".to_string();

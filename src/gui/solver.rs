@@ -1,4 +1,4 @@
-use crate::gui::{AppState, ScheduleViewTab, SolverMessage, Tab};
+use crate::gui::{AppState, ScheduleViewTab, SolverMessage, Tab, VolRosterSort};
 use crate::model::{FairnessMode, SchedulingMode, SpecialistMode, FieldKind};
 use crate::validator::DiagnosticSeverity;
 use crate::gui::helpers::{draw_schedule_cell, get_competition_colors, parse_time_to_minutes};
@@ -583,43 +583,210 @@ impl AppState {
             }
 
             // ── Volunteer rosters (always shown below tabs) ────────────────────
-            ui.add_space(25.0);
-            ui.label(RichText::new("VOLUNTEER ASSIGNMENT ROSTERS").strong().color(Color32::from_rgb(156, 163, 175)));
-            ui.add_space(8.0);
-
-            if let Some(ref sched) = self.schedule {
-                for vol in &self.config.volunteers {
-                    let vol_assigns: Vec<&crate::model::ScheduleAssignment> = sched
-                        .assignments
-                        .iter()
-                        .filter(|a| a.volunteer_ids.contains(&vol.id))
-                        .collect();
-
-                    if !vol_assigns.is_empty() {
-                        egui::CollapsingHeader::new(RichText::new(format!("👤 {} ({} shifts)", vol.name, vol_assigns.len())).strong().color(Color32::WHITE))
-                            .id_source(format!("vol_roster_{}", vol.id))
-                            .show(ui, |ui| {
-                                for assign in &vol_assigns {
-                                    let slot = self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id);
-                                    let field = assign.field_id.as_ref().and_then(|f_id| self.config.fields.iter().find(|f| f.id == *f_id));
-                                    let slot_time = slot.map_or("".to_string(), |s| format!("{} {} - {}", s.day, s.start_time, s.end_time));
-                                    let location = field.map_or("Open Space / Interview Table", |f| f.name.as_str());
-                                    ui.label(RichText::new(format!(
-                                        "  ⏰ {} | 📍 {} | {}",
-                                        slot_time, location, assign.activity.label()
-                                    )).color(Color32::from_rgb(209, 213, 219)));
-                                }
-                            });
-                        ui.add_space(4.0);
-                    }
-                }
-            }
+            self.draw_volunteer_assignment_rosters(ui);
         } else {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
                 ui.label(RichText::new("No Schedule Generated Yet").size(16.0).color(Color32::from_rgb(107, 114, 128)).strong());
                 ui.label("Review configuration warnings and click 'Generate Schedule' to create your tournament roster.");
             });
+        }
+    }
+
+    fn draw_volunteer_assignment_rosters(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(25.0);
+
+        let mut vol_to_clear = None;
+        let mut vol_to_view = None;
+        let mut unassign_all = false;
+        let mut do_export = false;
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("VOLUNTEER ASSIGNMENT ROSTERS").strong().color(Color32::from_rgb(156, 163, 175)));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if !self.vol_roster_search.is_empty() {
+                    if ui.button("Clear").clicked() {
+                        self.vol_roster_search.clear();
+                    }
+                }
+                ui.add(egui::TextEdit::singleline(&mut self.vol_roster_search)
+                    .hint_text("🔍 Search volunteers...")
+                    .desired_width(180.0));
+            });
+        });
+        ui.add_space(8.0);
+
+        if let Some(ref sched) = self.schedule {
+            // ── Tools & Sorting ──
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Sort by:").size(11.0).color(Color32::from_rgb(156, 163, 175)));
+                ui.selectable_value(&mut self.vol_roster_sort_by, VolRosterSort::Name, "Name");
+                ui.selectable_value(&mut self.vol_roster_sort_by, VolRosterSort::Shifts, "Shifts");
+                ui.selectable_value(&mut self.vol_roster_sort_by, VolRosterSort::Conflicts, "Conflicts");
+                
+                ui.add_space(20.0);
+                ui.checkbox(&mut self.vol_roster_show_only_conflicts, "Show Only with Conflicts");
+            });
+            ui.add_space(12.0);
+
+            // ── Summary Stats ──
+            let mut total_shifts = 0;
+            let mut active_vols = 0;
+            let mut max_shifts = 0;
+            let mut min_shifts = usize::MAX;
+            
+            let mut vol_data: Vec<_> = self.config.volunteers.iter().map(|vol| {
+                let assign_indices: Vec<usize> = sched.assignments.iter().enumerate()
+                    .filter(|(_, a)| a.volunteer_ids.contains(&vol.id))
+                    .map(|(idx, _)| idx)
+                    .collect();
+                
+                let has_conflict = assign_indices.iter().any(|idx| {
+                    self.assignment_conflicts.get(idx).map_or(false, |c| !c.is_empty())
+                });
+
+                (vol, assign_indices, has_conflict)
+            }).collect();
+
+            for (_, assign_indices, _) in &vol_data {
+                let count = assign_indices.len();
+                if count > 0 {
+                    total_shifts += count;
+                    active_vols += 1;
+                    max_shifts = max_shifts.max(count);
+                    min_shifts = min_shifts.min(count);
+                }
+            }
+            if min_shifts == usize::MAX { min_shifts = 0; }
+
+            ui.horizontal(|ui| {
+                crate::gui::helpers::draw_stat_card(ui, "Total Assignments", &total_shifts.to_string(), Color32::from_rgb(129, 140, 248));
+                crate::gui::helpers::draw_stat_card(ui, "Active Volunteers", &active_vols.to_string(), Color32::from_rgb(52, 211, 153));
+                let avg = if active_vols > 0 { total_shifts as f32 / active_vols as f32 } else { 0.0 };
+                crate::gui::helpers::draw_stat_card(ui, "Avg Shifts/Vol", &format!("{:.1}", avg), Color32::from_rgb(251, 191, 36));
+                crate::gui::helpers::draw_stat_card(ui, "Shift Range", &format!("{} - {}", min_shifts, max_shifts), Color32::from_rgb(167, 139, 250));
+            });
+            ui.add_space(15.0);
+
+            // ── Bulk Roster Tools ──
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Bulk Tools:").strong().color(Color32::WHITE));
+                if ui.button("📋 Copy Names").on_hover_text("Copy all volunteer names to clipboard (one per line)").clicked() {
+                    let mut names: Vec<_> = self.config.volunteers.iter().map(|v| v.name.as_str()).collect();
+                    names.sort();
+                    ui.output_mut(|o| o.copied_text = names.join("\n"));
+                    self.status_message = "Volunteer names copied to clipboard.".to_string();
+                }
+                
+                if ui.button("🗑 Unassign All").on_hover_text("Clear ALL volunteer assignments for the entire schedule").clicked() {
+                    unassign_all = true;
+                }
+
+                if ui.button("📊 Export Rosters (CSV)").on_hover_text("Export a CSV with individual volunteer schedules").clicked() {
+                    do_export = true;
+                }
+            });
+            ui.add_space(15.0);
+
+            // ── Filtering & Sorting Logic ──
+            let search = self.vol_roster_search.to_lowercase();
+            vol_data.retain(|(vol, assign_indices, has_conflict)| {
+                if !search.is_empty() && !vol.name.to_lowercase().contains(&search) {
+                    return false;
+                }
+                if self.vol_roster_show_only_conflicts && !*has_conflict {
+                    return false;
+                }
+                !assign_indices.is_empty()
+            });
+
+            match self.vol_roster_sort_by {
+                VolRosterSort::Name => vol_data.sort_by(|a, b| a.0.name.cmp(&b.0.name)),
+                VolRosterSort::Shifts => vol_data.sort_by(|a, b| b.1.len().cmp(&a.1.len())),
+                VolRosterSort::Conflicts => vol_data.sort_by(|a, b| b.2.cmp(&a.2)),
+            }
+
+            for (vol, vol_assign_indices, has_conflict) in vol_data {
+                let header_text = format!("👤 {} ({} shifts)", vol.name, vol_assign_indices.len());
+                let header_color = if has_conflict { Color32::from_rgb(248, 113, 113) } else { Color32::WHITE };
+                
+                egui::CollapsingHeader::new(RichText::new(header_text).strong().color(header_color))
+                    .id_source(format!("vol_roster_{}", vol.id))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button(RichText::new("🗑 Clear All Shifts").color(Color32::from_rgb(248, 113, 113))).on_hover_text("Remove this volunteer from all assigned activities").clicked() {
+                                vol_to_clear = Some(vol.id.clone());
+                            }
+                            if ui.button("📅 View Availability").clicked() {
+                                vol_to_view = Some(vol.id.clone());
+                            }
+                        });
+                        ui.add_space(4.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+
+                        for &idx in &vol_assign_indices {
+                            let assign = &sched.assignments[idx];
+                            let slot = self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id);
+                            let field = assign.field_id.as_ref().and_then(|f_id| self.config.fields.iter().find(|f| f.id == *f_id));
+                            let slot_time = slot.map_or("".to_string(), |s| format!("{} {} - {}", s.day, s.start_time, s.end_time));
+                            let location = field.map_or("Open Space / Interview Table", |f| f.name.as_str());
+                            
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!(
+                                    "  ⏰ {} | 📍 {} | {}",
+                                    slot_time, location, assign.activity.label()
+                                )).color(Color32::from_rgb(209, 213, 219)));
+                                
+                                if let Some(conflicts) = self.assignment_conflicts.get(&idx) {
+                                    if !conflicts.is_empty() {
+                                        let has_error = conflicts.iter().any(|c| matches!(c.severity, crate::scheduler::ConflictSeverity::Error));
+                                        let icon = if has_error { "❌" } else { "⚠" };
+                                        let color = if has_error { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(251, 191, 36) };
+                                        ui.label(RichText::new(icon).color(color).strong()).on_hover_ui(|ui| {
+                                            ui.vertical(|ui| {
+                                                for c in conflicts {
+                                                    ui.label(format!("- {}", c.message));
+                                                }
+                                            });
+                                        });
+                                    }
+                                }
+                            });
+                        }
+                    });
+                ui.add_space(4.0);
+            }
+        }
+
+        // Execute deferred actions after the main borrow of `self.schedule` is over
+        if unassign_all {
+            if let Some(ref mut s) = self.schedule {
+                for a in &mut s.assignments {
+                    a.volunteer_ids.clear();
+                }
+            }
+            self.re_evaluate_schedule();
+            self.status_message = "All volunteer assignments cleared.".to_string();
+        }
+
+        if do_export {
+            self.export_volunteer_rosters_to_csv();
+        }
+
+        if let Some(vol_id) = vol_to_clear {
+            if let Some(ref mut s) = self.schedule {
+                for a in &mut s.assignments {
+                    a.volunteer_ids.retain(|id| id != &vol_id);
+                }
+            }
+            self.re_evaluate_schedule();
+            self.status_message = format!("Cleared all shifts for volunteer.");
+        }
+
+        if let Some(_vol_id) = vol_to_view {
+            self.active_tab = Tab::Volunteers;
+            self.active_volunteer_sub_tab = crate::gui::VolunteerSubTab::Availability;
         }
     }
 

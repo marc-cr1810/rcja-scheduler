@@ -14,7 +14,7 @@ use crate::scheduler::SolverParams;
 use eframe::egui::{self, Color32, RichText};
 
 use helpers::setup_custom_style;
-pub use app_state::AppState;
+pub use app_state::{AppState, VolRosterSort};
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Tab {
