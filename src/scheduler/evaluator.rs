@@ -180,6 +180,13 @@ pub fn evaluate_schedule_cost(
             }
 
             if let Some(volunteer) = config.volunteers.iter().find(|v| v.id == *volunteer_id) {
+                // Attendance check
+                if let Some(slot) = config.time_slots.iter().find(|s| s.id == *slot_id) {
+                    if matches!(volunteer.status_for_day(&slot.day), crate::model::AttendanceStatus::NoShow) {
+                        hard_conflicts += 10.0 * multiplier;
+                    }
+                }
+
                 let duration = activity.duration_minutes();
                 
                 // Availability check: must be available for ALL slots that overlap with this time range
@@ -613,7 +620,8 @@ pub fn find_conflicted_assignment_indices(config: &TournamentConfig, schedule: &
             }
             if let Some(vol) = config.volunteers.iter().find(|v| v.id == *vol_id) {
                 // Attendance
-                if matches!(vol.attendance_status, crate::model::AttendanceStatus::NoShow) {
+                let slot = config.time_slots.iter().find(|s| s.id == *slot_id).unwrap();
+                if matches!(vol.status_for_day(&slot.day), crate::model::AttendanceStatus::NoShow) {
                     conflicted[i] = true;
                 }
 
@@ -809,10 +817,11 @@ pub fn get_assignment_conflicts(config: &TournamentConfig, schedule: &Schedule) 
             }
             if let Some(vol) = config.volunteers.iter().find(|v| v.id == *vol_id) {
                 // Attendance
-                if matches!(vol.attendance_status, crate::model::AttendanceStatus::NoShow) {
+                let slot = config.time_slots.iter().find(|s| s.id == *slot_id).unwrap();
+                if matches!(vol.status_for_day(&slot.day), crate::model::AttendanceStatus::NoShow) {
                     result.entry(i).or_default().push(AssignmentConflict {
                         severity: ConflictSeverity::Error,
-                        message: format!("Volunteer Attendance: '{}' is marked as a NO-SHOW.", vol.name),
+                        message: format!("Volunteer Attendance: '{}' is marked as a NO-SHOW for {}.", vol.name, slot.day),
                     });
                 }
 

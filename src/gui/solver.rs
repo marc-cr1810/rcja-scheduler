@@ -605,7 +605,7 @@ impl AppState {
         let mut vol_to_view = None;
         let mut unassign_all = false;
         let mut do_export = false;
-        let mut attendance_toggle = None;
+        let mut attendance_toggle: Option<(String, String, AttendanceStatus)> = None; // (vol_id, day, next_status)
 
         ui.horizontal(|ui| {
             ui.label(RichText::new("VOLUNTEER ASSIGNMENT ROSTERS").strong().color(Color32::from_rgb(156, 163, 175)));
@@ -716,7 +716,7 @@ impl AppState {
                 let header_text = format!("👤 {} ({} shifts)", vol.name, vol_assign_indices.len());
                 let mut header_color = if has_conflict { Color32::from_rgb(248, 113, 113) } else { Color32::WHITE };
                 
-                if matches!(vol.attendance_status, AttendanceStatus::NoShow) {
+                if vol.attendance_status.values().any(|s| matches!(s, AttendanceStatus::NoShow)) {
                     header_color = Color32::from_rgb(185, 28, 28);
                 }
 
@@ -767,21 +767,45 @@ impl AppState {
                             }
                         });
 
-                    // Attendance Toggle
+                    // Attendance Toggles (Per Day)
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let (btn_text, btn_color) = match vol.attendance_status {
-                            AttendanceStatus::Pending => ("⏳ Pending", Color32::from_rgb(251, 191, 36)),
-                            AttendanceStatus::CheckedIn => ("✅ Present", Color32::from_rgb(52, 211, 153)),
-                            AttendanceStatus::NoShow => ("❌ No-Show", Color32::from_rgb(248, 113, 113)),
-                        };
+                        // Find unique days this volunteer is active
+                        let mut active_days = Vec::new();
+                        for slot_id in &vol.availabilities {
+                            if let Some(slot) = self.config.time_slots.iter().find(|s| &s.id == slot_id) {
+                                if !active_days.contains(&slot.day) {
+                                    active_days.push(slot.day.clone());
+                                }
+                            }
+                        }
+                        // Sort days by order they appear in config.time_slots
+                        active_days.sort_by_key(|day| {
+                            self.config.time_slots.iter().position(|s| &s.day == day).unwrap_or(0)
+                        });
 
-                        if ui.add(egui::Button::new(RichText::new(btn_text).size(10.0).strong().color(Color32::BLACK)).fill(btn_color)).clicked() {
-                            let next_status = match vol.attendance_status {
-                                AttendanceStatus::Pending => AttendanceStatus::CheckedIn,
-                                AttendanceStatus::CheckedIn => AttendanceStatus::NoShow,
-                                AttendanceStatus::NoShow => AttendanceStatus::Pending,
+                        for day in active_days.iter().rev() {
+                            let status = vol.status_for_day(day);
+                            let (btn_text, btn_color) = match status {
+                                AttendanceStatus::Pending => ("⏳", Color32::from_rgb(251, 191, 36)),
+                                AttendanceStatus::CheckedIn => ("✅", Color32::from_rgb(52, 211, 153)),
+                                AttendanceStatus::NoShow => ("❌", Color32::from_rgb(248, 113, 113)),
                             };
-                            attendance_toggle = Some((vol.id.clone(), next_status));
+                            
+                            let label = format!("{}: {}", &day[..3], btn_text);
+                            let btn = egui::Button::new(RichText::new(label).size(12.0).strong().color(Color32::BLACK))
+                                .fill(btn_color)
+                                .min_size(egui::vec2(65.0, 24.0))
+                                .rounding(6.0);
+
+                            if ui.add(btn).clicked() {
+                                let next_status = match status {
+                                    AttendanceStatus::Pending => AttendanceStatus::CheckedIn,
+                                    AttendanceStatus::CheckedIn => AttendanceStatus::NoShow,
+                                    AttendanceStatus::NoShow => AttendanceStatus::Pending,
+                                };
+                                attendance_toggle = Some((vol.id.clone(), day.clone(), next_status));
+                            }
+                            ui.add_space(4.0);
                         }
                     });
                 });
@@ -790,9 +814,9 @@ impl AppState {
         }
 
         // Execute deferred actions after the main borrow of `self.schedule` is over
-        if let Some((vol_id, next_status)) = attendance_toggle {
+        if let Some((vol_id, day, next_status)) = attendance_toggle {
             if let Some(v_mut) = self.config.volunteers.iter_mut().find(|v| v.id == vol_id) {
-                v_mut.attendance_status = next_status;
+                v_mut.attendance_status.insert(day, next_status);
             }
             self.re_evaluate_schedule();
         }
@@ -868,8 +892,8 @@ impl AppState {
                     let mut viable_subs = Vec::new();
                     
                     for vol in &self.config.volunteers {
-                        // 1. Not a No-Show
-                        if matches!(vol.attendance_status, AttendanceStatus::NoShow) { continue; }
+                        // 1. Not a No-Show for THIS day
+                        if matches!(vol.status_for_day(&slot.day), AttendanceStatus::NoShow) { continue; }
                         
                         // 2. Already assigned here?
                         if assign.volunteer_ids.contains(&vol.id) { continue; }
@@ -895,14 +919,20 @@ impl AppState {
                         }
                         if has_coi { continue; }
 
-                        // 6. Double-booking check
-                        let is_double_booked = sched.assignments.iter().enumerate()
-                            .any(|(i, a)| i != assign_idx && a.time_slot_id == *slot_id && a.volunteer_ids.contains(&vol.id));
+                        // 6. Double-booking check (handling multi-slot activities)
+                        let target_occupied = crate::scheduler::get_occupied_slots(&self.config, slot_id, activity.duration_minutes());
+                        let is_double_booked = sched.assignments.iter().enumerate().any(|(i, a)| {
+                            if i == assign_idx || !a.volunteer_ids.contains(&vol.id) {
+                                return false;
+                            }
+                            let other_occupied = crate::scheduler::get_occupied_slots(&self.config, &a.time_slot_id, a.activity.duration_minutes());
+                            target_occupied.iter().any(|s_id| other_occupied.contains(s_id))
+                        });
                         if is_double_booked { continue; }
 
                         // Calculate current shift count for sorting
                         let shift_count = sched.assignments.iter().filter(|a| a.volunteer_ids.contains(&vol.id)).count();
-                        viable_subs.push((vol.id.clone(), vol.name.clone(), vol.attendance_status, shift_count));
+                        viable_subs.push((vol.id.clone(), vol.name.clone(), vol.status_for_day(&slot.day), shift_count));
                     }
 
                     viable_subs.sort_by_key(|(_, _, _, count)| *count);
@@ -965,12 +995,15 @@ impl AppState {
     fn apply_substitution(&mut self, assign_idx: usize, new_vol_id: String) {
         if let Some(ref mut sched) = self.schedule {
             let assign = &mut sched.assignments[assign_idx];
+            let slot_id = assign.time_slot_id.clone();
+            let slot = self.config.time_slots.iter().find(|s| s.id == slot_id).unwrap();
+            let day = slot.day.clone();
             
             // Find a no-show to replace, or just add if there's room
             let mut replaced = false;
             for vol_id in &mut assign.volunteer_ids {
                 if let Some(vol) = self.config.volunteers.iter().find(|v| v.id == *vol_id) {
-                    if matches!(vol.attendance_status, AttendanceStatus::NoShow) {
+                    if matches!(vol.status_for_day(&day), AttendanceStatus::NoShow) {
                         *vol_id = new_vol_id.clone();
                         replaced = true;
                         break;
@@ -990,9 +1023,13 @@ impl AppState {
     fn clear_no_shows_from_assignment(&mut self, assign_idx: usize) {
         if let Some(ref mut sched) = self.schedule {
             let assign = &mut sched.assignments[assign_idx];
+            let slot_id = assign.time_slot_id.clone();
+            let slot = self.config.time_slots.iter().find(|s| s.id == slot_id).unwrap();
+            let day = slot.day.clone();
+
             let vols = self.config.volunteers.clone();
             assign.volunteer_ids.retain(|id| {
-                vols.iter().find(|v| &v.id == id).map_or(true, |v| !matches!(v.attendance_status, AttendanceStatus::NoShow))
+                vols.iter().find(|v| &v.id == id).map_or(true, |v| !matches!(v.status_for_day(&day), AttendanceStatus::NoShow))
             });
         }
         self.active_substitution = None;

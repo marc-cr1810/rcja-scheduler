@@ -101,7 +101,7 @@ impl AppState {
                                 availabilities: Vec::new(),
                                 capabilities: if self.new_vol_caps.is_empty() { None } else { Some(self.new_vol_caps.clone()) },
                                 conflict_organizations: self.new_vol_conflicts_list.clone(),
-                                attendance_status: crate::model::AttendanceStatus::Pending,
+                                attendance_status: std::collections::HashMap::new(),
                             });
 
                             self.new_vol_name.clear();

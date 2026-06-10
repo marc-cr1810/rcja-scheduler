@@ -136,6 +136,8 @@ pub enum AttendanceStatus {
     NoShow,
 }
 
+use std::collections::HashMap;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Volunteer {
     pub id: String,
@@ -144,7 +146,13 @@ pub struct Volunteer {
     pub capabilities: Option<Vec<String>>, // list of division IDs they can judge. None means can judge anything.
     pub conflict_organizations: Vec<String>, // list of organization names they cannot judge
     #[serde(default)]
-    pub attendance_status: AttendanceStatus,
+    pub attendance_status: HashMap<String, AttendanceStatus>,
+}
+
+impl Volunteer {
+    pub fn status_for_day(&self, day: &str) -> AttendanceStatus {
+        self.attendance_status.get(day).cloned().unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
