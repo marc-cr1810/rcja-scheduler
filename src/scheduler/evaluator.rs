@@ -444,7 +444,7 @@ pub fn evaluate_schedule_cost(
         let sum: f64 = match_fields.iter().sum();
         let mean = sum / match_fields.len() as f64;
         let sq_diff_sum: f64 = match_fields.iter().map(|&c| (c - mean).powi(2)).sum();
-        soft_penalties += sq_diff_sum * field_balance_weight;
+        soft_penalties += (sq_diff_sum / match_fields.len() as f64) * field_balance_weight;
     }
 
     let interview_fields: Vec<f64> = interview_field_counts.values().cloned().collect();
@@ -452,7 +452,7 @@ pub fn evaluate_schedule_cost(
         let sum: f64 = interview_fields.iter().sum();
         let mean = sum / interview_fields.len() as f64;
         let sq_diff_sum: f64 = interview_fields.iter().map(|&c| (c - mean).powi(2)).sum();
-        soft_penalties += sq_diff_sum * field_balance_weight;
+        soft_penalties += (sq_diff_sum / interview_fields.len() as f64) * field_balance_weight;
     }
 
     let all_fields: Vec<f64> = total_field_counts.values().cloned().collect();
@@ -461,7 +461,7 @@ pub fn evaluate_schedule_cost(
         let mean = sum / all_fields.len() as f64;
         let sq_diff_sum: f64 = all_fields.iter().map(|&c| (c - mean).powi(2)).sum();
         // Additional nudge to balance total load across all fields
-        soft_penalties += sq_diff_sum * (field_balance_weight * 0.5);
+        soft_penalties += (sq_diff_sum / all_fields.len() as f64) * (field_balance_weight * 0.5);
     }
 
     let mut volunteer_counts = HashMap::new();
@@ -496,7 +496,7 @@ pub fn evaluate_schedule_cost(
             FairnessMode::Balanced => 10.0,
             FairnessMode::Strict => 20.0,
         };
-        soft_penalties += sq_diff_sum * fairness_weight;
+        soft_penalties += (sq_diff_sum / active_vols.len() as f64) * fairness_weight;
     }
 
     if round_order_weight >= 0.0 {

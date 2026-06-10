@@ -539,11 +539,10 @@ impl<'a> FastEvaluator<'a> {
 }
 
 fn calculate_variance(counts: &[u32]) -> f64 {
-    let active: Vec<f64> = counts.iter().map(|&c| c as f64).filter(|&c| c > 0.0).collect();
-    if active.is_empty() { return 0.0; }
-    let sum: f64 = active.iter().sum();
-    let mean = sum / active.len() as f64;
-    active.iter().map(|&c| (c - mean).powi(2)).sum::<f64>() / active.len() as f64
+    if counts.is_empty() { return 0.0; }
+    let sum: u32 = counts.iter().sum();
+    let mean = sum as f64 / counts.len() as f64;
+    counts.iter().map(|&c| (c as f64 - mean).powi(2)).sum::<f64>() / counts.len() as f64
 }
 
 fn calculate_variance_f64(values: &[f64]) -> f64 {

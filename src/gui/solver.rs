@@ -1069,6 +1069,9 @@ impl AppState {
         self.solve_status = "Solving...".to_string();
         self.solve_message = "Starting solver thread...".to_string();
         self.solve_progress = 0.0;
+        self.solver_max_iter_reported = 0;
+        self.solver_current_restart_idx = 0;
+        self.solver_restarts_progress.clear();
 
         let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         self.solver_cancel_flag = Some(cancel_flag.clone());

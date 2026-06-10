@@ -188,15 +188,33 @@ impl AppState {
         if let Some(ref rx) = self.solver_rx {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
-                    SolverMessage::Progress { restart, total_restarts, iteration, total_iterations, hard, soft } => {
-                        let total_steps = total_restarts * total_iterations;
-                        let current_step = restart * total_iterations + iteration;
-                        self.solve_progress = current_step as f32 / total_steps as f32;
+                    SolverMessage::Progress { restart: restart_idx, total_restarts, iteration, total_iterations, hard, soft } => {
+                        // Ensure we have enough slots in the progress vector
+                        if self.solver_restarts_progress.len() != total_restarts {
+                            self.solver_restarts_progress = vec![0; total_restarts];
+                        }
                         
-                        self.solve_message = format!(
-                            "Solving... Restart {}/{} | Iteration {}/{} | Hard: {}, Soft: {}",
-                            restart + 1, total_restarts, iteration, total_iterations, hard, soft
-                        );
+                        // Update this restart's progress
+                        if iteration > self.solver_restarts_progress[restart_idx] {
+                            self.solver_restarts_progress[restart_idx] = iteration;
+                        }
+
+                        // Calculate total aggregated progress across all parallel threads
+                        let total_work = total_restarts * total_iterations;
+                        let completed_work: usize = self.solver_restarts_progress.iter().sum();
+                        self.solve_progress = (completed_work as f32 / total_work as f32).clamp(0.0, 1.0);
+                        
+                        // Use high-water mark for the text display so it doesn't jump back and forth between threads
+                        // We show the stats for the restart that is furthest along.
+                        if restart_idx >= self.solver_current_restart_idx || iteration > self.solver_max_iter_reported {
+                            self.solver_current_restart_idx = restart_idx;
+                            self.solver_max_iter_reported = iteration;
+                            
+                            self.solve_message = format!(
+                                "Solving... Parallel Attempt {}/{} | Iteration {}/{} | Hard: {}, Soft: {}",
+                                restart_idx + 1, total_restarts, iteration, total_iterations, hard, soft
+                            );
+                        }
                     }
                     SolverMessage::Done(result) => {
                         let was_cancelled = self.solver_cancel_flag.as_ref()

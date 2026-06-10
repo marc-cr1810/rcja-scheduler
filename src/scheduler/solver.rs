@@ -26,7 +26,7 @@ pub fn solve_schedule(
 
     let best_result = (0..params.num_restarts)
         .into_par_iter()
-        .filter_map(|_restart_idx| {
+        .filter_map(|restart_idx| {
             // Check for cancellation
             if let Some(ref flag) = params.cancel_flag
                 && flag.load(Ordering::Relaxed) {
@@ -47,8 +47,7 @@ pub fn solve_schedule(
 
             for iter in 0..params.max_iterations {
                 if iter % 500 == 0 {
-                    let done = restarts_completed.load(Ordering::Relaxed);
-                    (progress_callback)(done, params.num_restarts, iter, params.max_iterations, current_cost.0, current_cost.1);
+                    (progress_callback)(restart_idx, params.num_restarts, iter, params.max_iterations, current_cost.0, current_cost.1);
                     
                     if let Some(ref flag) = params.cancel_flag
                         && flag.load(Ordering::Relaxed) {
@@ -95,8 +94,7 @@ pub fn solve_schedule(
             }
 
             restarts_completed.fetch_add(1, Ordering::Relaxed);
-            let done = restarts_completed.load(Ordering::Relaxed);
-            (progress_callback)(done, params.num_restarts, params.max_iterations, params.max_iterations, best_local_cost.0, best_local_cost.1);
+            (progress_callback)(restart_idx, params.num_restarts, params.max_iterations, params.max_iterations, best_local_cost.0, best_local_cost.1);
 
             Some((best_local_schedule, best_local_cost))
         })
