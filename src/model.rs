@@ -155,6 +155,49 @@ impl Volunteer {
     }
 }
 
+/// Identifies what kind of match this is and, for round-robin matches, which
+/// cycle/round it belongs to. This replaces the old practice of sniffing the
+/// match `id` string (`_gf`, `_sf_`, `_c0_r1`, …) for semantics.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MatchStage {
+    RoundRobin { cycle: usize, round: usize },
+    EighthFinal,
+    QuarterFinal,
+    SemiFinal,
+    ThirdPlace,
+    GrandFinal,
+}
+
+impl MatchStage {
+    /// Numeric ordering used by the solver to enforce stage progression.
+    /// RR=0, EF=1, QF=2, SF=3, 3rd-place=4, GF=5.
+    pub fn stage_num(&self) -> usize {
+        match self {
+            MatchStage::RoundRobin { .. } => 0,
+            MatchStage::EighthFinal => 1,
+            MatchStage::QuarterFinal => 2,
+            MatchStage::SemiFinal => 3,
+            MatchStage::ThirdPlace => 4,
+            MatchStage::GrandFinal => 5,
+        }
+    }
+
+    pub fn label(&self) -> Option<&'static str> {
+        match self {
+            MatchStage::RoundRobin { .. } => None,
+            MatchStage::EighthFinal => Some("Eighth Finals"),
+            MatchStage::QuarterFinal => Some("Quarter Finals"),
+            MatchStage::SemiFinal => Some("Semi Finals"),
+            MatchStage::ThirdPlace => Some("3rd Place Playoff"),
+            MatchStage::GrandFinal => Some("Grand Final"),
+        }
+    }
+
+    pub fn is_final(&self) -> bool {
+        !matches!(self, MatchStage::RoundRobin { .. })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Activity {
     Match {
@@ -163,7 +206,7 @@ pub enum Activity {
         team_b: String,
         division_id: String,
         duration_minutes: u32,
-        is_final: bool,
+        stage: MatchStage,
     },
     Run {
         id: String,
@@ -214,6 +257,10 @@ impl Activity {
         }
     }
 
+    pub fn is_final(&self) -> bool {
+        matches!(self, Activity::Match { stage, .. } if stage.is_final())
+    }
+
     pub fn label(&self) -> String {
         let clean_name = |name: &str, div_id: &str| -> String {
             let prefix = format!("{} ", div_id);
@@ -225,10 +272,10 @@ impl Activity {
         };
 
         match self {
-            Activity::Match { team_a, team_b, is_final, division_id, .. } => {
+            Activity::Match { team_a, team_b, stage, division_id, .. } => {
                 let clean_a = clean_name(team_a, division_id);
                 let clean_b = clean_name(team_b, division_id);
-                if *is_final {
+                if stage.is_final() {
                     format!("🏆 {} vs {}", clean_a, clean_b)
                 } else {
                     format!("⚽ {} vs {}", clean_a, clean_b)
@@ -256,10 +303,10 @@ impl Activity {
         };
 
         match self {
-            Activity::Match { team_a, team_b, is_final, division_id, .. } => {
+            Activity::Match { team_a, team_b, stage, division_id, .. } => {
                 let clean_a = clean_name(team_a, division_id);
                 let clean_b = clean_name(team_b, division_id);
-                if *is_final {
+                if stage.is_final() {
                     format!("[FINAL] {} vs {}", clean_a, clean_b)
                 } else {
                     format!("{} vs {}", clean_a, clean_b)
@@ -278,43 +325,21 @@ impl Activity {
 
     pub fn stage(&self) -> usize {
         match self {
-            Activity::Match { id, .. } => {
-                if id.contains("_ef_") {
-                    1
-                } else if id.contains("_qf_") {
-                    2
-                } else if id.contains("_sf_") {
-                    3
-                } else if id.contains("_3pl") {
-                    4
-                } else if id.contains("_gf")  {
-                    5
-                } else {
-                    0
-                }
-            }
+            Activity::Match { stage, .. } => stage.stage_num(),
             _ => 0,
         }
     }
 
     pub fn stage_label(&self) -> Option<&'static str> {
         match self {
-            Activity::Match { id, .. } => {
-                if id.contains("_ef_") { return Some("Eighth Finals"); }
-                if id.contains("_qf_") { return Some("Quarter Finals"); }
-                if id.contains("_sf_") { return Some("Semi Finals"); }
-                if id.contains("_3pl") { return Some("3rd Place Playoff"); }
-                if id.contains("_gf")  { return Some("Grand Final"); }
-                None
-            }
+            Activity::Match { stage, .. } => stage.label(),
             _ => None,
         }
     }
 
     pub fn round_label(&self) -> String {
         match self {
-            Activity::Match { is_final, .. } if !*is_final => {
-                // RR match
+            Activity::Match { stage: MatchStage::RoundRobin { .. }, .. } => {
                 format!("Round {}", self.round_index() + 1)
             }
             Activity::Run { run_number, .. } => {
@@ -325,29 +350,14 @@ impl Activity {
     }
 
     pub fn round_index(&self) -> usize {
-        let stage = self.stage();
-        if stage > 0 {
-            // Finals stages: EF=1, QF=2, SF=3, 3PL=4, GF=5
-            // Offset by a large number to ensure they come after any RR cycles
-            return 10000 + stage * 100;
-        }
-
         match self {
-            Activity::Match { id, .. } => {
-                // Expected pattern: something_c{cycle}_r{round}
-                if let Some(c_pos) = id.rfind("_c") {
-                    let after_c = &id[c_pos + 2..];
-                    if let Some(r_pos) = after_c.find("_r") {
-                        let round_str = &after_c[r_pos + 2..];
-                        if let Ok(round) = round_str.parse::<usize>() {
-                            if let Ok(cycle) = after_c[..r_pos].parse::<usize>() {
-                                return cycle * 100 + round;
-                            }
-                            return round;
-                        }
-                    }
-                }
-                0
+            Activity::Match { stage: MatchStage::RoundRobin { cycle, round }, .. } => {
+                cycle * 100 + round
+            }
+            Activity::Match { stage, .. } => {
+                // Finals stages: EF=1, QF=2, SF=3, 3PL=4, GF=5.
+                // Offset by a large number so they sort after any RR cycles.
+                10000 + stage.stage_num() * 100
             }
             Activity::Run { run_number, .. } => *run_number,
             Activity::Interview { .. } => 0,
@@ -411,4 +421,92 @@ pub struct TournamentConfig {
     pub fairness_mode: FairnessMode,
     #[serde(default)]
     pub day_configs: Vec<DayGenConfig>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_robin_stage_round_index() {
+        let a = Activity::Match {
+            id: "div1_m_3_c2_r1".into(),
+            team_a: "A".into(),
+            team_b: "B".into(),
+            division_id: "div1".into(),
+            duration_minutes: 20,
+            stage: MatchStage::RoundRobin { cycle: 2, round: 1 },
+        };
+        assert_eq!(a.stage(), 0);
+        assert!(!a.is_final());
+        // round_index = cycle * 100 + round
+        assert_eq!(a.round_index(), 201);
+        assert_eq!(a.stage_label(), None);
+    }
+
+    #[test]
+    fn finals_stage_ordering_and_labels() {
+        let mk = |stage: MatchStage| Activity::Match {
+            id: "x".into(), team_a: "A".into(), team_b: "B".into(),
+            division_id: "d".into(), duration_minutes: 20, stage,
+        };
+        // Numeric stage ordering EF<QF<SF<3PL<GF, all distinct from RR(0).
+        assert_eq!(mk(MatchStage::EighthFinal).stage(), 1);
+        assert_eq!(mk(MatchStage::QuarterFinal).stage(), 2);
+        assert_eq!(mk(MatchStage::SemiFinal).stage(), 3);
+        assert_eq!(mk(MatchStage::ThirdPlace).stage(), 4);
+        assert_eq!(mk(MatchStage::GrandFinal).stage(), 5);
+
+        // Finals sort after any round-robin cycle.
+        assert!(mk(MatchStage::EighthFinal).round_index() > 10_000);
+        assert!(mk(MatchStage::GrandFinal).round_index() > mk(MatchStage::SemiFinal).round_index());
+
+        assert_eq!(mk(MatchStage::GrandFinal).stage_label(), Some("Grand Final"));
+        assert!(mk(MatchStage::GrandFinal).is_final());
+
+        // A team named with a finals-looking substring must NOT be misclassified
+        // (the old id-substring detection would have broken on this).
+        let tricky = Activity::Match {
+            id: "div_gf_team".into(), team_a: "Team _sf_ FC".into(), team_b: "B".into(),
+            division_id: "d".into(), duration_minutes: 20,
+            stage: MatchStage::RoundRobin { cycle: 0, round: 0 },
+        };
+        assert_eq!(tricky.stage(), 0);
+        assert!(!tricky.is_final());
+    }
+
+    #[test]
+    fn config_json_round_trip() {
+        let mut config = TournamentConfig {
+            competition_name: "Test Cup".into(),
+            ..Default::default()
+        };
+        config.divisions.push(Division {
+            id: "d1".into(), name: "Div 1".into(), mode: SchedulingMode::HeadToHead,
+            games_per_team: 2, volunteers_required: 2, duration_minutes: 20,
+            allowed_fields: None, interviews_enabled: true, interview_volunteers_required: 1,
+            interview_duration_minutes: 10, finals_enabled: true,
+            finals_rounds: Some(FinalsRounds::Semis), finals_duration_minutes: Some(25),
+            finals_third_place_playoff: true, color: Some([10, 20, 30]),
+        });
+        config.teams.push(Team { name: "Alpha".into(), division_id: "d1".into(), organization: "Org".into() });
+        config.time_slots.push(TimeSlot {
+            id: "s1".into(), day: "Saturday".into(), start_time: "09:00".into(),
+            end_time: "09:20".into(), kind: FieldKind::Competition,
+        });
+        config.volunteers.push(Volunteer {
+            id: "v1".into(), name: "Vol".into(), availabilities: vec!["s1".into()],
+            capabilities: Some(vec!["d1".into()]), conflict_organizations: vec![],
+            attendance_status: Default::default(),
+        });
+
+        let json = serde_json::to_string(&config).expect("serialize");
+        let restored: TournamentConfig = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(restored.competition_name, config.competition_name);
+        assert_eq!(restored.divisions, config.divisions);
+        assert_eq!(restored.teams, config.teams);
+        assert_eq!(restored.time_slots, config.time_slots);
+        assert_eq!(restored.volunteers, config.volunteers);
+    }
 }

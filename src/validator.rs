@@ -166,7 +166,7 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
             .iter()
             .filter(|f| {
                 let dummy_activity = if div.mode == crate::model::SchedulingMode::HeadToHead {
-                    Activity::Match { id: "dummy".to_string(), team_a: "A".to_string(), team_b: "B".to_string(), division_id: div.id.clone(), duration_minutes: div.duration_minutes, is_final: false }
+                    Activity::Match { id: "dummy".to_string(), team_a: "A".to_string(), team_b: "B".to_string(), division_id: div.id.clone(), duration_minutes: div.duration_minutes, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }
                 } else {
                     Activity::Run { id: "dummy".to_string(), team: "A".to_string(), division_id: div.id.clone(), run_number: 1, duration_minutes: div.duration_minutes }
                 };

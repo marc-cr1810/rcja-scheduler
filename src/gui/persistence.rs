@@ -33,16 +33,21 @@ impl AppState {
     }
 
     fn save_to_path(&mut self, path: std::path::PathBuf) {
-        if let Ok(json) = serde_json::to_string_pretty(&self.config) {
-            if let Ok(mut file) = File::create(&path) {
-                if file.write_all(json.as_bytes()).is_ok() {
-                    self.status_message = format!("Config saved to '{}'", path.display());
-                } else {
-                    self.status_message = "Failed to write file".to_string();
-                }
-            } else {
-                self.status_message = "Failed to create file".to_string();
+        let json = match serde_json::to_string_pretty(&self.config) {
+            Ok(json) => json,
+            Err(e) => {
+                self.status_message = format!("Failed to serialize config: {}", e);
+                return;
             }
+        };
+        if let Ok(mut file) = File::create(&path) {
+            if file.write_all(json.as_bytes()).is_ok() {
+                self.status_message = format!("Config saved to '{}'", path.display());
+            } else {
+                self.status_message = "Failed to write file".to_string();
+            }
+        } else {
+            self.status_message = "Failed to create file".to_string();
         }
     }
 
@@ -470,10 +475,7 @@ fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title
             .or_else(|| genpdf::fonts::from_files("/usr/share/fonts/truetype/freefont", "FreeSans", None).ok())
     };
 
-    let font_family = match font_family {
-        Some(f) => f,
-        None => return None,
-    };
+    let font_family = font_family?;
 
     let mut doc = genpdf::Document::new(font_family);
     doc.set_title(format!("Schedule: {}", title));

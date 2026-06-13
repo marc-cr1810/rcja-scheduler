@@ -484,3 +484,72 @@ fn decompile_schedule(
     }).collect();
     Schedule { assignments }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{
+        DayGenConfig, Division, Field, FieldKind, SchedulingMode, Team, TimeSlot, TournamentConfig,
+    };
+
+    fn slot(id: &str, start_min: u32) -> TimeSlot {
+        let fmt = |m: u32| format!("{:02}:{:02}", m / 60, m % 60);
+        TimeSlot {
+            id: id.into(),
+            day: "Saturday".into(),
+            start_time: fmt(start_min),
+            end_time: fmt(start_min + 20),
+            kind: FieldKind::Competition,
+        }
+    }
+
+    fn small_config() -> TournamentConfig {
+        let mut config = TournamentConfig::default();
+        config.divisions.push(Division {
+            id: "d1".into(), name: "Div 1".into(), mode: SchedulingMode::HeadToHead,
+            games_per_team: 2, volunteers_required: 0, duration_minutes: 20,
+            allowed_fields: None, interviews_enabled: false, interview_volunteers_required: 0,
+            interview_duration_minutes: 0, finals_enabled: false, finals_rounds: None,
+            finals_duration_minutes: None, finals_third_place_playoff: false, color: None,
+        });
+        for t in ["A", "B", "C", "D"] {
+            config.teams.push(Team { name: t.into(), division_id: "d1".into(), organization: t.into() });
+        }
+        config.fields.push(Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: None });
+        config.fields.push(Field { id: "f2".into(), name: "Field 2".into(), kind: FieldKind::Competition, allowed_divisions: None });
+        // 10 competition slots, 09:00 .. in 20-minute steps.
+        config.time_slots = (0..10).map(|i| slot(&format!("s{i}"), 9 * 60 + i * 20)).collect();
+        config.day_configs.push(DayGenConfig { day: "Saturday".into(), ..Default::default() });
+        config
+    }
+
+    #[test]
+    fn solves_small_tournament_without_hard_conflicts() {
+        let config = small_config();
+        let activities = super::super::generate_activities(&config);
+        assert!(!activities.is_empty());
+
+        let params = SolverParams { max_iterations: 30_000, num_restarts: 3, ..SolverParams::default() };
+        let schedule = solve_schedule(&config, &params, |_, _, _, _, _, _| {})
+            .expect("solver returned a schedule");
+
+        // Every generated activity is placed exactly once.
+        assert_eq!(schedule.assignments.len(), activities.len());
+        for a in &schedule.assignments {
+            assert!(a.field_id.is_some(), "every activity should get a field");
+        }
+
+        // With ample slots/fields and no volunteer requirements, a conflict-free
+        // schedule must be reachable.
+        let (hard, _soft) = crate::scheduler::evaluate_schedule_cost(&config, &schedule, &params);
+        assert_eq!(hard, 0.0, "expected no hard conflicts, got {hard}");
+    }
+
+    #[test]
+    fn empty_config_yields_empty_schedule() {
+        let config = TournamentConfig::default();
+        let params = SolverParams::default();
+        let schedule = solve_schedule(&config, &params, |_, _, _, _, _, _| {}).expect("some schedule");
+        assert!(schedule.assignments.is_empty());
+    }
+}

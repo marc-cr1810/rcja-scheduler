@@ -1,4 +1,4 @@
-use crate::model::{Activity, SchedulingMode, TournamentConfig};
+use crate::model::{Activity, MatchStage, SchedulingMode, TournamentConfig};
 use super::utils::sanitize_name;
 
 pub fn generate_activities(config: &TournamentConfig) -> Vec<Activity> {
@@ -85,8 +85,11 @@ fn generate_head_to_head_matches(
         let mut cycle_matches = generate_circle_round_robin(division_id, teams, duration_minutes);
         
         for m in &mut cycle_matches {
-            if let Activity::Match { id, .. } = m {
+            if let Activity::Match { id, stage, .. } = m {
                 *id = id.replacen("_c0_r", &format!("_c{}_r", cycle), 1);
+                if let MatchStage::RoundRobin { cycle: c, .. } = stage {
+                    *c = cycle;
+                }
             }
         }
         
@@ -114,42 +117,29 @@ fn generate_finals_matches(
     let mut matches = Vec::new();
     let prefix = format!("{} ", division_id);
 
+    let push_match = |matches: &mut Vec<Activity>, id: String, team_a: String, team_b: String, stage: MatchStage| {
+        matches.push(Activity::Match {
+            id,
+            team_a,
+            team_b,
+            division_id: division_id.to_string(),
+            duration_minutes,
+            stage,
+        });
+    };
+
     match rounds {
         crate::model::FinalsRounds::Grand => {
-            matches.push(Activity::Match {
-                id: format!("{}_gf", division_id),
-                team_a: format!("{}1st Place", prefix),
-                team_b: format!("{}2nd Place", prefix),
-                division_id: division_id.to_string(),
-                duration_minutes,
-                is_final: true,
-            });
+            push_match(&mut matches, format!("{}_gf", division_id),
+                format!("{}1st Place", prefix), format!("{}2nd Place", prefix), MatchStage::GrandFinal);
         }
         crate::model::FinalsRounds::Semis => {
-            matches.push(Activity::Match {
-                id: format!("{}_sf_1", division_id),
-                team_a: format!("{}1st Place", prefix),
-                team_b: format!("{}4th Place", prefix),
-                division_id: division_id.to_string(),
-                duration_minutes,
-                is_final: true,
-            });
-            matches.push(Activity::Match {
-                id: format!("{}_sf_2", division_id),
-                team_a: format!("{}2nd Place", prefix),
-                team_b: format!("{}3rd Place", prefix),
-                division_id: division_id.to_string(),
-                duration_minutes,
-                is_final: true,
-            });
-            matches.push(Activity::Match {
-                id: format!("{}_gf", division_id),
-                team_a: format!("{}Winner SF1", prefix),
-                team_b: format!("{}Winner SF2", prefix),
-                division_id: division_id.to_string(),
-                duration_minutes,
-                is_final: true,
-            });
+            push_match(&mut matches, format!("{}_sf_1", division_id),
+                format!("{}1st Place", prefix), format!("{}4th Place", prefix), MatchStage::SemiFinal);
+            push_match(&mut matches, format!("{}_sf_2", division_id),
+                format!("{}2nd Place", prefix), format!("{}3rd Place", prefix), MatchStage::SemiFinal);
+            push_match(&mut matches, format!("{}_gf", division_id),
+                format!("{}Winner SF1", prefix), format!("{}Winner SF2", prefix), MatchStage::GrandFinal);
         }
         crate::model::FinalsRounds::Quarter => {
             for i in 1..=4 {
@@ -160,39 +150,15 @@ fn generate_finals_matches(
                     4 => ("4th Place", "5th Place"),
                     _ => unreachable!(),
                 };
-                matches.push(Activity::Match {
-                    id: format!("{}_qf_{}", division_id, i),
-                    team_a: format!("{}{}", prefix, ta),
-                    team_b: format!("{}{}", prefix, tb),
-                    division_id: division_id.to_string(),
-                    duration_minutes,
-                    is_final: true,
-                });
+                push_match(&mut matches, format!("{}_qf_{}", division_id, i),
+                    format!("{}{}", prefix, ta), format!("{}{}", prefix, tb), MatchStage::QuarterFinal);
             }
-            matches.push(Activity::Match {
-                id: format!("{}_sf_1", division_id),
-                team_a: format!("{}Winner QF1", prefix),
-                team_b: format!("{}Winner QF4", prefix),
-                division_id: division_id.to_string(),
-                duration_minutes,
-                is_final: true,
-            });
-            matches.push(Activity::Match {
-                id: format!("{}_sf_2", division_id),
-                team_a: format!("{}Winner QF2", prefix),
-                team_b: format!("{}Winner QF3", prefix),
-                division_id: division_id.to_string(),
-                duration_minutes,
-                is_final: true,
-            });
-            matches.push(Activity::Match {
-                id: format!("{}_gf", division_id),
-                team_a: format!("{}Winner SF1", prefix),
-                team_b: format!("{}Winner SF2", prefix),
-                division_id: division_id.to_string(),
-                duration_minutes,
-                is_final: true,
-            });
+            push_match(&mut matches, format!("{}_sf_1", division_id),
+                format!("{}Winner QF1", prefix), format!("{}Winner QF4", prefix), MatchStage::SemiFinal);
+            push_match(&mut matches, format!("{}_sf_2", division_id),
+                format!("{}Winner QF2", prefix), format!("{}Winner QF3", prefix), MatchStage::SemiFinal);
+            push_match(&mut matches, format!("{}_gf", division_id),
+                format!("{}Winner SF1", prefix), format!("{}Winner SF2", prefix), MatchStage::GrandFinal);
         }
         crate::model::FinalsRounds::Eighths => {
             for i in 1..=8 {
@@ -208,14 +174,8 @@ fn generate_finals_matches(
                     16 => "16th Place".to_string(),
                     other => format!("{}th Place", other),
                 };
-                matches.push(Activity::Match {
-                    id: format!("{}_ef_{}", division_id, i),
-                    team_a: format!("{}{}", prefix, ta_str),
-                    team_b: format!("{}{}", prefix, tb_str),
-                    division_id: division_id.to_string(),
-                    duration_minutes,
-                    is_final: true,
-                });
+                push_match(&mut matches, format!("{}_ef_{}", division_id, i),
+                    format!("{}{}", prefix, ta_str), format!("{}{}", prefix, tb_str), MatchStage::EighthFinal);
             }
             for i in 1..=4 {
                 let (ta, tb) = match i {
@@ -225,51 +185,21 @@ fn generate_finals_matches(
                     4 => ("Winner EF4", "Winner EF5"),
                     _ => unreachable!(),
                 };
-                matches.push(Activity::Match {
-                    id: format!("{}_qf_{}", division_id, i),
-                    team_a: format!("{}{}", prefix, ta),
-                    team_b: format!("{}{}", prefix, tb),
-                    division_id: division_id.to_string(),
-                    duration_minutes,
-                    is_final: true,
-                });
+                push_match(&mut matches, format!("{}_qf_{}", division_id, i),
+                    format!("{}{}", prefix, ta), format!("{}{}", prefix, tb), MatchStage::QuarterFinal);
             }
-            matches.push(Activity::Match {
-                id: format!("{}_sf_1", division_id),
-                team_a: format!("{}Winner QF1", prefix),
-                team_b: format!("{}Winner QF4", prefix),
-                division_id: division_id.to_string(),
-                duration_minutes,
-                is_final: true,
-            });
-            matches.push(Activity::Match {
-                id: format!("{}_sf_2", division_id),
-                team_a: format!("{}Winner QF2", prefix),
-                team_b: format!("{}Winner QF3", prefix),
-                division_id: division_id.to_string(),
-                duration_minutes,
-                is_final: true,
-            });
-            matches.push(Activity::Match {
-                id: format!("{}_gf", division_id),
-                team_a: format!("{}Winner SF1", prefix),
-                team_b: format!("{}Winner SF2", prefix),
-                division_id: division_id.to_string(),
-                duration_minutes,
-                is_final: true,
-            });
+            push_match(&mut matches, format!("{}_sf_1", division_id),
+                format!("{}Winner QF1", prefix), format!("{}Winner QF4", prefix), MatchStage::SemiFinal);
+            push_match(&mut matches, format!("{}_sf_2", division_id),
+                format!("{}Winner QF2", prefix), format!("{}Winner QF3", prefix), MatchStage::SemiFinal);
+            push_match(&mut matches, format!("{}_gf", division_id),
+                format!("{}Winner SF1", prefix), format!("{}Winner SF2", prefix), MatchStage::GrandFinal);
         }
     }
 
     if third_place_playoff && rounds != crate::model::FinalsRounds::Grand {
-        matches.push(Activity::Match {
-            id: format!("{}_3pl", division_id),
-            team_a: format!("{}Loser SF1", prefix),
-            team_b: format!("{}Loser SF2", prefix),
-            division_id: division_id.to_string(),
-            duration_minutes,
-            is_final: true,
-        });
+        push_match(&mut matches, format!("{}_3pl", division_id),
+            format!("{}Loser SF1", prefix), format!("{}Loser SF2", prefix), MatchStage::ThirdPlace);
     }
 
     matches
@@ -316,7 +246,7 @@ fn generate_circle_round_robin(
                     team_b: team_a.clone(),
                     division_id: division_id.to_string(),
                     duration_minutes,
-                    is_final: false,
+                    stage: MatchStage::RoundRobin { cycle: 0, round: r },
                 });
             }
         }

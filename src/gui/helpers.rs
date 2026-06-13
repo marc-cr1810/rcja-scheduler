@@ -33,6 +33,7 @@ pub(crate) fn draw_stat_card(ui: &mut egui::Ui, title: &str, value: &str, color:
         });
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment, config: &TournamentConfig, current_slot_id: &str, w: f32, h: f32, conflicts: &[AssignmentConflict], assign_idx: usize) -> Option<usize> {
     let mut substitution_requested = None;
     let div_id = assign.activity.division_id();

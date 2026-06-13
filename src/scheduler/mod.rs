@@ -102,18 +102,6 @@ pub struct RoundRow {
     pub bye_teams: Vec<String>,
 }
 
-/// Parses `_c{cycle}_r{round}` from a match ID.
-/// Returns `(cycle, round)` if both are found.
-fn parse_cycle_round(id: &str) -> Option<(usize, usize)> {
-    // Expected pattern: something_c{cycle}_r{round}
-    let c_pos = id.rfind("_c")?;
-    let after_c = &id[c_pos + 2..];
-    let r_pos = after_c.find("_r")?;
-    let cycle: usize = after_c[..r_pos].parse().ok()?;
-    let round: usize = after_c[r_pos + 2..].parse().ok()?;
-    Some((cycle, round))
-}
-
 /// Builds a round-by-round view for every division given the solved schedule.
 pub fn get_division_rounds(
     config: &TournamentConfig,
@@ -162,12 +150,11 @@ pub fn get_division_rounds(
                 let mut finals_stages: std::collections::BTreeMap<u8, Vec<&crate::model::ScheduleAssignment>> = std::collections::BTreeMap::new();
 
                 for assign in &div_assignments {
-                    let id = assign.activity.id();
                     let stage = assign.activity.stage();
                     if stage > 0 {
                         // Finals match
                         finals_stages.entry(stage as u8).or_default().push(assign);
-                    } else if let Some((cycle, round)) = parse_cycle_round(id) {
+                    } else if let Activity::Match { stage: crate::model::MatchStage::RoundRobin { cycle, round }, .. } = &assign.activity {
                         // n_teams - 1 rounds per cycle (using padded team count for odd divisions)
                         let n_padded = if div_teams.len().is_multiple_of(2) { div_teams.len() } else { div_teams.len() + 1 };
                         let rounds_per_cycle = n_padded.saturating_sub(1).max(1);

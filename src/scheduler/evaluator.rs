@@ -1,11 +1,10 @@
 use crate::model::{
-    Activity, FairnessMode, FieldKind, Schedule, SchedulingMode, SpecialistMode, TournamentConfig,
+    Activity, FieldKind, Schedule, TournamentConfig,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use super::utils::{is_field_suitable_for_activity, is_volunteer_qualified, format_minutes_to_time};
 use super::SolverParams;
 
-type DivAssignInfo = (usize, usize, usize, usize, bool);
 type DivAssignInfoWithIdx = (usize, usize, usize, usize, bool, usize);
 type DivAssignInfoWithName = (usize, usize, usize, usize, bool, String);
 
@@ -31,533 +30,17 @@ pub fn get_occupied_slots(config: &TournamentConfig, start_slot_id: &str, durati
     occupied
 }
 
+/// Scores a schedule. Delegates to the solver's evaluator
+/// ([`super::fast_evaluator::evaluate_schedule_cost`]) so cost display and
+/// optimization share one implementation.
 pub fn evaluate_schedule_cost(
     config: &TournamentConfig,
     schedule: &Schedule,
     params: &SolverParams,
 ) -> (f64, f64) {
-    let fairness_mode = params.fairness_mode;
-    let vol_consecutive_weight = params.vol_consecutive_weight;
-    let team_back_to_back_weight = params.team_back_to_back_weight;
-    let field_variety_weight = params.field_variety_weight;
-    let field_balance_weight = params.field_balance_weight;
-    let vol_capability_weight = params.vol_capability_weight;
-    let interview_late_weight = params.interview_late_weight;
-    let interview_match_gap_weight = params.interview_match_gap_weight;
-    let vol_specialist_mode = params.vol_specialist_mode;
-    let team_wait_time_weight = params.team_wait_time_weight;
-    let field_variety_strict = params.field_variety_strict;
-    let vol_travel_weight = params.vol_travel_weight;
-    let round_order_weight = params.round_order_weight;
-    let vol_daily_shift_cap = params.vol_daily_shift_cap;
-    let peak_period_weight = params.peak_period_weight;
-    let finals_priority_multiplier = params.finals_priority_multiplier;
-
-    let mut hard_conflicts = 0.0;
-    let mut soft_penalties = 0.0;
-
-    let mut team_overlap = HashMap::new();
-    let mut field_overlap = HashMap::new();
-    let mut volunteer_overlap = HashMap::new();
-
-    let mut team_assignments: HashMap<String, Vec<(usize, usize, bool)>> = HashMap::new();
-    let mut team_fields: HashMap<String, Vec<String>> = HashMap::new();
-    let mut volunteer_assignments: HashMap<String, Vec<(usize, usize, String, String)>> = HashMap::new();
-    let mut division_assignments: HashMap<String, Vec<DivAssignInfo>> = HashMap::new(); // div_id -> vec<(min_idx, max_idx, round_index, stage, is_interview)>
-
-    let slot_idx_map: HashMap<&str, usize> = config
-        .time_slots
-        .iter()
-        .enumerate()
-        .map(|(idx, slot)| (slot.id.as_str(), idx))
-        .collect();
-
-    for assign in &schedule.assignments {
-        let slot_id = &assign.time_slot_id;
-        let field_id = &assign.field_id;
-        let activity = &assign.activity;
-        let div_id = activity.division_id();
-        let division = match config.divisions.iter().find(|d| d.id == div_id) {
-            Some(d) => d,
-            None => {
-                hard_conflicts += 1.0;
-                continue;
-            }
-        };
-
-        let occupied_slots = get_occupied_slots(config, slot_id, activity.duration_minutes());
-
-        let mut min_idx = usize::MAX;
-        let mut max_idx = 0;
-        let mut has_idx = false;
-
-        for slot_overlap_id in &occupied_slots {
-            if let Some(&idx) = slot_idx_map.get(slot_overlap_id.as_str()) {
-                min_idx = min_idx.min(idx);
-                max_idx = max_idx.max(idx);
-                has_idx = true;
-            }
-        }
-
-        let start_min = config.time_slots.iter().find(|s| s.id == *slot_id).map(|s| s.start_minutes()).unwrap_or(0);
-        let end_min = start_min + activity.duration_minutes();
-        let day_idx = config.time_slots.iter().find(|s| s.id == *slot_id).map(|s| {
-            config.day_configs.iter().position(|dc| dc.day.to_lowercase() == s.day.to_lowercase()).unwrap_or(0)
-        }).unwrap_or(0);
-        let bucket_size = 5u32;
-        let buckets_per_day = 24 * 60 / bucket_size;
-        let day_offset = day_idx as u32 * buckets_per_day;
-
-        let first_bucket = (start_min / bucket_size) as usize;
-        let last_bucket = ((end_min - 1) / bucket_size) as usize;
-        let buckets: Vec<usize> = (first_bucket..=last_bucket).map(|b| day_offset as usize + b).collect();
-
-        for b_idx in &buckets {
-            for team in activity.teams() {
-                let entry = team_overlap
-                    .entry(*b_idx)
-                    .or_insert_with(HashMap::new);
-                *entry.entry(team.to_string()).or_insert(0) += 1;
-            }
-        }
-
-        if let Some(f_id) = field_id
-            && (field_variety_strict || matches!(division.mode, SchedulingMode::IndividualRun)) {
-                for team in activity.teams() {
-                    team_fields.entry(team.to_string()).or_default().push(f_id.clone());
-                }
-            }
-
-        let is_final = match activity {
-            Activity::Match { is_final, .. } => *is_final,
-            _ => false,
-        };
-        let is_interview = matches!(activity, Activity::Interview { .. });
-        let mut multiplier = 1.0;
-        if is_final {
-            multiplier = finals_priority_multiplier;
-        }
-
-        if let Some(slot) = config.time_slots.iter().find(|s| s.id == *slot_id) {
-            if (is_interview && slot.kind == FieldKind::Competition) || (!is_interview && slot.kind == FieldKind::Interview) {
-                hard_conflicts += 1.0 * multiplier;
-            }
-
-            if is_interview {
-                let day_cfg = config.day_configs.iter().find(|dc| dc.day.to_lowercase() == slot.day.to_lowercase());
-                if let Some(dc) = day_cfg
-                    && !dc.interviews_enabled {
-                        hard_conflicts += 10.0 * multiplier;
-                    }
-            }
-        }
-
-        if let Some(f_id) = field_id {
-            for b_idx in &buckets {
-                let entry = field_overlap
-                    .entry(*b_idx)
-                    .or_insert_with(HashMap::new);
-                *entry.entry(f_id.clone()).or_insert(0) += 1;
-            }
-
-            let field_suitable = config.fields.iter().find(|f| f.id == *f_id).is_some_and(|f| {
-                is_field_suitable_for_activity(config, f, activity)
-            });
-            if !field_suitable {
-                hard_conflicts += 1.0 * multiplier;
-            }
-        } else {
-            // Hard penalty for not having a field assigned
-            hard_conflicts += 1.0 * multiplier;
-        }
-
-        for volunteer_id in &assign.volunteer_ids {
-            for b_idx in &buckets {
-                let entry = volunteer_overlap
-                    .entry(*b_idx)
-                    .or_insert_with(HashMap::new);
-                *entry.entry(volunteer_id.clone()).or_insert(0) += 1;
-            }
-
-            if let Some(volunteer) = config.volunteers.iter().find(|v| v.id == *volunteer_id) {
-                // Attendance check
-                if let Some(slot) = config.time_slots.iter().find(|s| s.id == *slot_id) {
-                    if matches!(volunteer.status_for_day(&slot.day), crate::model::AttendanceStatus::NoShow) {
-                        hard_conflicts += 10.0 * multiplier;
-                    }
-                }
-
-                let duration = activity.duration_minutes();
-                
-                // Availability check: must be available for ALL slots that overlap with this time range
-                for slot in &config.time_slots {
-                    if slot.day.to_lowercase() == config.time_slots.iter().find(|s| s.id == *slot_id).unwrap().day.to_lowercase() {
-                        let s_start = slot.start_minutes();
-                        let s_end = s_start + slot.duration_minutes();
-                        if start_min < s_end && s_start < start_min + duration
-                            && !volunteer.availabilities.contains(&slot.id) {
-                                hard_conflicts += 1.0 * multiplier;
-                                break;
-                            }
-                    }
-                }
-
-                if !is_volunteer_qualified(volunteer, activity, div_id) {
-                    let is_interview_activity = matches!(activity, Activity::Interview { .. });
-                    let is_interviewer = volunteer.capabilities.as_ref().is_some_and(|caps| caps.contains(&"Interview".to_string()));
-
-                    if config.strict_capabilities || is_interview_activity || is_interviewer {
-                        hard_conflicts += 1.0 * multiplier;
-                    } else {
-                        soft_penalties += vol_capability_weight * multiplier;
-                    }
-                }
-
-                for team_name in activity.teams() {
-                    if let Some(team) = config.teams.iter().find(|t| t.name == team_name)
-                        && volunteer.conflict_organizations.contains(&team.organization) {
-                            hard_conflicts += 1.0 * multiplier;
-                        }
-                }
-            } else {
-                hard_conflicts += 1.0 * multiplier;
-            }
-        }
-
-        let req_volunteers = match activity {
-            Activity::Interview { .. } => division.interview_volunteers_required,
-            _ => division.volunteers_required,
-        };
-        if assign.volunteer_ids.len() < req_volunteers {
-            hard_conflicts += (req_volunteers - assign.volunteer_ids.len()) as f64 * multiplier;
-        }
-
-        if let Some(slot) = config.time_slots.iter().find(|s| s.id == *slot_id) {
-            let day_end = config.time_slots.iter()
-                .filter(|s| s.day.to_lowercase() == slot.day.to_lowercase())
-                .map(|s| s.start_minutes() + s.duration_minutes())
-                .max()
-                .unwrap_or(0);
-            if slot.start_minutes() + activity.duration_minutes() > day_end {
-                hard_conflicts += 1.0 * multiplier;
-            }
-        } else {
-            hard_conflicts += 1.0 * multiplier;
-        }
-
-        if is_interview && interview_late_weight > 0.0 {
-            soft_penalties += (max_idx as f64) * interview_late_weight;
-        }
-
-        if has_idx {
-            division_assignments.entry(div_id.to_string()).or_default().push((min_idx, max_idx, activity.round_index(), activity.stage(), is_interview));
-            for team in activity.teams() {
-                team_assignments.entry(team.to_string()).or_default().push((min_idx, max_idx, is_interview));
-            }
-            for volunteer_id in &assign.volunteer_ids {
-                volunteer_assignments.entry(volunteer_id.clone()).or_default().push((min_idx, max_idx, field_id.clone().unwrap_or_default(), div_id.to_string()));
-            }
-        }
-    }
-
-    for (_, teams) in team_overlap {
-        for (_, count) in teams {
-            if count > 1 {
-                hard_conflicts += (count - 1) as f64;
-            }
-        }
-    }
-    for (_, fields) in field_overlap {
-        for (_, count) in fields {
-            if count > 1 {
-                hard_conflicts += (count - 1) as f64;
-            }
-        }
-    }
-    for (_, volunteers) in volunteer_overlap {
-        for (_, count) in volunteers {
-            if count > 1 {
-                hard_conflicts += (count - 1) as f64;
-            }
-        }
-    }
-
-    for (_, mut ranges) in team_assignments {
-        ranges.sort_unstable_by_key(|r| r.0);
-        
-        let mut day_ranges: HashMap<String, Vec<(usize, usize, bool)>> = HashMap::new();
-        for r in &ranges {
-            let day = config.time_slots[r.0].day.clone();
-            day_ranges.entry(day).or_default().push(*r);
-        }
-
-        for (_, d_ranges) in day_ranges {
-            if team_wait_time_weight > 0.0 && d_ranges.len() > 1 {
-                let non_interviews: Vec<&(usize, usize, bool)> = d_ranges.iter().filter(|r| !r.2).collect();
-                if non_interviews.len() > 1 {
-                    let first_start = non_interviews.first().unwrap().0;
-                    let last_end = non_interviews.last().unwrap().1;
-                    let span = last_end - first_start;
-                    let excessive_span = span.saturating_sub(non_interviews.len() * 2); 
-                    soft_penalties += (excessive_span as f64) * team_wait_time_weight;
-                }
-            }
-
-            if interview_match_gap_weight > 0.0 {
-                for i in 0..d_ranges.len() {
-                    for j in i+1..d_ranges.len() {
-                        let r1 = d_ranges[i];
-                        let r2 = d_ranges[j];
-                        if r1.2 != r2.2 {
-                            let gap = if r2.0 > r1.1 { 
-                                r2.0 - r1.1 
-                            } else { r1.0.saturating_sub(r2.1) };
-                            if gap < 2 {
-                                soft_penalties += interview_match_gap_weight;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        for window in ranges.windows(2) {
-            let (_min_1, max_1, _) = window[0];
-            let (min_2, _max_2, _) = window[1];
-            if max_1 + 1 == min_2
-                && config.time_slots[max_1].day.to_lowercase() == config.time_slots[min_2].day.to_lowercase() {
-                    soft_penalties += team_back_to_back_weight;
-                }
-        }
-    }
-
-    for (_, mut ranges) in volunteer_assignments {
-        ranges.sort_unstable_by_key(|r| r.0);
-
-        if vol_specialist_mode != SpecialistMode::Off {
-            let distinct_divs: HashSet<_> = ranges.iter().map(|r| &r.3).collect();
-            if distinct_divs.len() > 1 {
-                let weight = match vol_specialist_mode {
-                    SpecialistMode::Off => 0.0,
-                    SpecialistMode::Balanced => 0.5,
-                    SpecialistMode::Strict => 2.0,
-                };
-                soft_penalties += (distinct_divs.len() - 1) as f64 * weight;
-            }
-        }
-
-        if vol_daily_shift_cap > 0 {
-            let mut day_counts: HashMap<String, usize> = HashMap::new();
-            for r in &ranges {
-                let day = config.time_slots[r.0].day.clone();
-                *day_counts.entry(day).or_insert(0) += 1;
-            }
-            for count in day_counts.values() {
-                if *count > vol_daily_shift_cap {
-                    hard_conflicts += (*count - vol_daily_shift_cap) as f64;
-                }
-            }
-        }
-
-        for window in ranges.windows(2) {
-            let (_min_1, max_1, f1, _) = &window[0];
-            let (min_2, _max_2, f2, _) = &window[1];
-            
-            if *max_1 + 1 == *min_2
-                && config.time_slots[*max_1].day.to_lowercase() == config.time_slots[*min_2].day.to_lowercase() {
-                    if vol_consecutive_weight > 0.0 {
-                        soft_penalties += vol_consecutive_weight;
-                    }
-                    if vol_travel_weight > 0.0 && f1 != f2 {
-                        soft_penalties += vol_travel_weight;
-                    }
-                }
-        }
-    }
-
-    for (_, fields) in team_fields {
-        let mut counts = HashMap::new();
-        for f in fields {
-            *counts.entry(f).or_insert(0) += 1;
-        }
-        for (_, count) in counts {
-            if count > 1 {
-                if field_variety_strict {
-                    hard_conflicts += (count - 1) as f64;
-                } else {
-                    soft_penalties += (count - 1) as f64 * field_variety_weight;
-                }
-            }
-        }
-    }
-
-    if peak_period_weight > 0.0 {
-        let mut slot_counts = vec![0.0; config.time_slots.len()];
-        for assign in &schedule.assignments {
-            let occupied = get_occupied_slots(config, &assign.time_slot_id, assign.activity.duration_minutes());
-            for s_id in occupied {
-                if let Some(idx) = config.time_slots.iter().position(|s| s.id == s_id) {
-                    slot_counts[idx] += 1.0;
-                }
-            }
-        }
-        let active_slots: Vec<f64> = slot_counts.into_iter().filter(|&c| c > 0.0).collect();
-        if !active_slots.is_empty() {
-            let sum: f64 = active_slots.iter().sum();
-            let mean = sum / active_slots.len() as f64;
-            let variance: f64 = active_slots.iter().map(|&c| (c - mean).powi(2)).sum::<f64>() / active_slots.len() as f64;
-            soft_penalties += variance * peak_period_weight;
-        }
-    }
-
-    let mut match_field_counts = HashMap::new();
-    let mut interview_field_counts = HashMap::new();
-    for f in &config.fields {
-        if f.kind == FieldKind::Competition {
-            match_field_counts.insert(f.id.clone(), 0.0);
-        } else {
-            interview_field_counts.insert(f.id.clone(), 0.0);
-        }
-    }
-
-    let mut total_field_counts = HashMap::new();
-    for f in &config.fields {
-        total_field_counts.insert(f.id.clone(), 0.0);
-    }
-
-    for assign in &schedule.assignments {
-        if let Some(ref f_id) = assign.field_id {
-            if let Some(c) = total_field_counts.get_mut(f_id) {
-                *c += 1.0;
-            }
-            match &assign.activity {
-                Activity::Interview { .. } => {
-                    if let Some(c) = interview_field_counts.get_mut(f_id) {
-                        *c += 1.0;
-                    }
-                }
-                _ => {
-                    if let Some(c) = match_field_counts.get_mut(f_id) {
-                        *c += 1.0;
-                    }
-                }
-            }
-        }
-    }
-
-    let match_fields: Vec<f64> = match_field_counts.values().cloned().collect();
-    if !match_fields.is_empty() {
-        let sum: f64 = match_fields.iter().sum();
-        let mean = sum / match_fields.len() as f64;
-        let sq_diff_sum: f64 = match_fields.iter().map(|&c| (c - mean).powi(2)).sum();
-        soft_penalties += (sq_diff_sum / match_fields.len() as f64) * field_balance_weight;
-    }
-
-    let interview_fields: Vec<f64> = interview_field_counts.values().cloned().collect();
-    if !interview_fields.is_empty() {
-        let sum: f64 = interview_fields.iter().sum();
-        let mean = sum / interview_fields.len() as f64;
-        let sq_diff_sum: f64 = interview_fields.iter().map(|&c| (c - mean).powi(2)).sum();
-        soft_penalties += (sq_diff_sum / interview_fields.len() as f64) * field_balance_weight;
-    }
-
-    let all_fields: Vec<f64> = total_field_counts.values().cloned().collect();
-    if !all_fields.is_empty() {
-        let sum: f64 = all_fields.iter().sum();
-        let mean = sum / all_fields.len() as f64;
-        let sq_diff_sum: f64 = all_fields.iter().map(|&c| (c - mean).powi(2)).sum();
-        // Additional nudge to balance total load across all fields
-        soft_penalties += (sq_diff_sum / all_fields.len() as f64) * (field_balance_weight * 0.5);
-    }
-
-    let mut volunteer_counts = HashMap::new();
-    for v in &config.volunteers {
-        volunteer_counts.insert(v.id.clone(), 0);
-    }
-    for assign in &schedule.assignments {
-        for v_id in &assign.volunteer_ids {
-            *volunteer_counts.entry(v_id.clone()).or_insert(0) += 1;
-        }
-    }
-
-    let active_vols: Vec<f64> = volunteer_counts
-        .iter()
-        .filter_map(|(v_id, &count)| {
-            let vol = config.volunteers.iter().find(|v| v.id == *v_id)?;
-            if vol.availabilities.is_empty() {
-                None
-            } else {
-                let avail_len = vol.availabilities.len() as f64;
-                Some((count as f64) / avail_len)
-            }
-        })
-        .collect();
-
-    if !active_vols.is_empty() {
-        let sum: f64 = active_vols.iter().sum();
-        let mean = sum / active_vols.len() as f64;
-        let sq_diff_sum: f64 = active_vols.iter().map(|&r| (r - mean).powi(2)).sum();
-        let fairness_weight = match fairness_mode {
-            FairnessMode::Off => 5.0,
-            FairnessMode::Balanced => 10.0,
-            FairnessMode::Strict => 20.0,
-        };
-        soft_penalties += (sq_diff_sum / active_vols.len() as f64) * fairness_weight;
-    }
-
-    if round_order_weight >= 0.0 {
-        for assignments in division_assignments.values_mut() {
-            // Sort by slot index to ensure chronological order
-            assignments.sort_by_key(|a| a.0);
-
-            for i in 0..assignments.len() {
-                for j in i + 1..assignments.len() {
-                    let (min1, max1, round1, stage1, is_int1) = assignments[i];
-                    let (min2, _max2, round2, stage2, is_int2) = assignments[j];
-
-                    if is_int1 || is_int2 { continue; }
-
-                    // Since we sorted by slot index, we know min1 <= min2.
-                    
-                    // Different stages check (RR vs Finals, SF vs GF, etc.)
-                    if stage1 != stage2 {
-                        let is_3pl_gf = (stage1 == 4 && stage2 == 5) || (stage1 == 5 && stage2 == 4);
-                        if !is_3pl_gf {
-                            if stage1 > stage2 {
-                                // Hard conflict: later stage starts at or before earlier stage
-                                hard_conflicts += 10.0;
-                            } else if max1 >= min2 {
-                                // stage1 < stage2: check for overlap
-                                hard_conflicts += 10.0;
-                            }
-                        }
-                    } else if round_order_weight > 0.0 {
-                        // Same stage: enforce round order with soft penalty
-                        
-                        // Same day check
-                        if config.time_slots[min1].day.to_lowercase() != config.time_slots[min2].day.to_lowercase() {
-                            if round1 > round2 {
-                                soft_penalties += round_order_weight;
-                            }
-                            continue;
-                        }
-
-                        if round1 > round2 {
-                            // Strictly out of order
-                            soft_penalties += round_order_weight;
-                        } else if round1 < round2
-                            && max1 >= min2 && min1 == min2 {
-                                // Traditional same-start overlap penalty for same-stage activities
-                                soft_penalties += round_order_weight * 0.5;
-                            }
-                    }
-                }
-            }
-        }
-    }
-
-    (hard_conflicts, soft_penalties)
+    super::fast_evaluator::evaluate_schedule_cost(config, schedule, params)
 }
+
 
 /// Returns the indices of assignments that are currently involved in at least one hard conflict.
 /// Used to bias mutation toward fixing broken assignments rather than touching healthy ones.
@@ -1371,11 +854,11 @@ mod tests {
         let schedule1 = Schedule {
             assignments: vec![
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "m1".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, is_final: false }, 
+                    activity: Activity::Match { id: "m1".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
                     time_slot_id: "s1".into(), field_id: Some("f3".into()), volunteer_ids: vec![] 
                 },
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "m2".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div2".into(), duration_minutes: 20, is_final: false }, 
+                    activity: Activity::Match { id: "m2".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div2".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
                     time_slot_id: "s2".into(), field_id: Some("f3".into()), volunteer_ids: vec![] 
                 },
             ]
@@ -1385,11 +868,11 @@ mod tests {
         let schedule2 = Schedule {
             assignments: vec![
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "m1".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, is_final: false }, 
+                    activity: Activity::Match { id: "m1".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
                     time_slot_id: "s1".into(), field_id: Some("f1".into()), volunteer_ids: vec![] 
                 },
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "m2".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div2".into(), duration_minutes: 20, is_final: false }, 
+                    activity: Activity::Match { id: "m2".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div2".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
                     time_slot_id: "s1".into(), field_id: Some("f2".into()), volunteer_ids: vec![] 
                 },
             ]
@@ -1439,11 +922,11 @@ mod tests {
         let schedule1 = Schedule {
             assignments: vec![
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "m1".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, is_final: false }, 
+                    activity: Activity::Match { id: "m1".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
                     time_slot_id: "s1".into(), field_id: Some("f3".into()), volunteer_ids: vec![] 
                 },
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "m2".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div2".into(), duration_minutes: 20, is_final: false }, 
+                    activity: Activity::Match { id: "m2".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div2".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
                     time_slot_id: "s2".into(), field_id: Some("f3".into()), volunteer_ids: vec![] 
                 },
             ]
@@ -1452,11 +935,11 @@ mod tests {
         let schedule2 = Schedule {
             assignments: vec![
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "m1".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, is_final: false }, 
+                    activity: Activity::Match { id: "m1".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
                     time_slot_id: "s1".into(), field_id: Some("f1".into()), volunteer_ids: vec![] 
                 },
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "m2".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div2".into(), duration_minutes: 20, is_final: false }, 
+                    activity: Activity::Match { id: "m2".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div2".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
                     time_slot_id: "s1".into(), field_id: Some("f2".into()), volunteer_ids: vec![] 
                 },
             ]
@@ -1497,11 +980,11 @@ mod tests {
         let schedule1 = Schedule {
             assignments: vec![
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "div1_m_1_c0_r0".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, is_final: false }, 
+                    activity: Activity::Match { id: "div1_m_1_c0_r0".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
                     time_slot_id: "s1".into(), field_id: Some("f1".into()), volunteer_ids: vec![] 
                 },
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "div1_m_2_c0_r1".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div1".into(), duration_minutes: 20, is_final: false }, 
+                    activity: Activity::Match { id: "div1_m_2_c0_r1".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 1 } }, 
                     time_slot_id: "s2".into(), field_id: Some("f1".into()), volunteer_ids: vec![] 
                 },
             ]
@@ -1511,11 +994,11 @@ mod tests {
         let schedule2 = Schedule {
             assignments: vec![
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "div1_m_2_c0_r1".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div1".into(), duration_minutes: 20, is_final: false }, 
+                    activity: Activity::Match { id: "div1_m_2_c0_r1".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 1 } }, 
                     time_slot_id: "s1".into(), field_id: Some("f1".into()), volunteer_ids: vec![] 
                 },
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "div1_m_1_c0_r0".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, is_final: false }, 
+                    activity: Activity::Match { id: "div1_m_1_c0_r0".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
                     time_slot_id: "s2".into(), field_id: Some("f1".into()), volunteer_ids: vec![] 
                 },
             ]
@@ -1561,11 +1044,11 @@ mod tests {
         let schedule1 = Schedule {
             assignments: vec![
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "div1_m_1_c0_r0".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, is_final: false }, 
+                    activity: Activity::Match { id: "div1_m_1_c0_r0".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
                     time_slot_id: "s1".into(), field_id: Some("f1".into()), volunteer_ids: vec![] 
                 },
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "div1_gf".into(), team_a: "1st".into(), team_b: "2nd".into(), division_id: "div1".into(), duration_minutes: 20, is_final: true }, 
+                    activity: Activity::Match { id: "div1_gf".into(), team_a: "1st".into(), team_b: "2nd".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::GrandFinal }, 
                     time_slot_id: "s1".into(), field_id: Some("f2".into()), volunteer_ids: vec![] 
                 },
             ]
@@ -1575,11 +1058,11 @@ mod tests {
         let schedule2 = Schedule {
             assignments: vec![
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "div1_m_1_c0_r0".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, is_final: false }, 
+                    activity: Activity::Match { id: "div1_m_1_c0_r0".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
                     time_slot_id: "s1".into(), field_id: Some("f1".into()), volunteer_ids: vec![] 
                 },
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "div1_gf".into(), team_a: "1st".into(), team_b: "2nd".into(), division_id: "div1".into(), duration_minutes: 20, is_final: true }, 
+                    activity: Activity::Match { id: "div1_gf".into(), team_a: "1st".into(), team_b: "2nd".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::GrandFinal }, 
                     time_slot_id: "s2".into(), field_id: Some("f2".into()), volunteer_ids: vec![] 
                 },
             ]
@@ -1632,11 +1115,11 @@ mod tests {
         let schedule = Schedule {
             assignments: vec![
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "div1_3pl".into(), team_a: "L1".into(), team_b: "L2".into(), division_id: "div1".into(), duration_minutes: 20, is_final: true }, 
+                    activity: Activity::Match { id: "div1_3pl".into(), team_a: "L1".into(), team_b: "L2".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::ThirdPlace }, 
                     time_slot_id: "s1".into(), field_id: Some("f1".into()), volunteer_ids: vec![] 
                 },
                 ScheduleAssignment { 
-                    activity: Activity::Match { id: "div1_sf_1".into(), team_a: "1st".into(), team_b: "4th".into(), division_id: "div1".into(), duration_minutes: 20, is_final: true }, 
+                    activity: Activity::Match { id: "div1_sf_1".into(), team_a: "1st".into(), team_b: "4th".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::SemiFinal }, 
                     time_slot_id: "s2".into(), field_id: Some("f2".into()), volunteer_ids: vec![] 
                 },
             ]

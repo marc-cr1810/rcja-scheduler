@@ -610,11 +610,10 @@ impl AppState {
         ui.horizontal(|ui| {
             ui.label(RichText::new("VOLUNTEER ASSIGNMENT ROSTERS").strong().color(Color32::from_rgb(156, 163, 175)));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if !self.vol_roster_search.is_empty() {
-                    if ui.button("Clear").clicked() {
+                if !self.vol_roster_search.is_empty()
+                    && ui.button("Clear").clicked() {
                         self.vol_roster_search.clear();
                     }
-                }
                 ui.add(egui::TextEdit::singleline(&mut self.vol_roster_search)
                     .hint_text("🔍 Search volunteers...")
                     .desired_width(180.0));
@@ -648,7 +647,7 @@ impl AppState {
                     .collect();
                 
                 let has_conflict = assign_indices.iter().any(|idx| {
-                    self.assignment_conflicts.get(idx).map_or(false, |c| !c.is_empty())
+                    self.assignment_conflicts.get(idx).is_some_and(|c| !c.is_empty())
                 });
 
                 (vol, assign_indices, has_conflict)
@@ -749,8 +748,8 @@ impl AppState {
                                         slot_time, location, assign.activity.label()
                                     )).color(Color32::from_rgb(209, 213, 219)));
                                     
-                                    if let Some(conflicts) = self.assignment_conflicts.get(&idx) {
-                                        if !conflicts.is_empty() {
+                                    if let Some(conflicts) = self.assignment_conflicts.get(&idx)
+                                        && !conflicts.is_empty() {
                                             let has_error = conflicts.iter().any(|c| matches!(c.severity, crate::scheduler::ConflictSeverity::Error));
                                             let icon = if has_error { "❌" } else { "⚠" };
                                             let color = if has_error { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(251, 191, 36) };
@@ -762,7 +761,6 @@ impl AppState {
                                                 });
                                             });
                                         }
-                                    }
                                 });
                             }
                         });
@@ -772,11 +770,10 @@ impl AppState {
                         // Find unique days this volunteer is active
                         let mut active_days = Vec::new();
                         for slot_id in &vol.availabilities {
-                            if let Some(slot) = self.config.time_slots.iter().find(|s| &s.id == slot_id) {
-                                if !active_days.contains(&slot.day) {
+                            if let Some(slot) = self.config.time_slots.iter().find(|s| &s.id == slot_id)
+                                && !active_days.contains(&slot.day) {
                                     active_days.push(slot.day.clone());
                                 }
-                            }
                         }
                         // Sort days by order they appear in config.time_slots
                         active_days.sort_by_key(|day| {
@@ -842,7 +839,7 @@ impl AppState {
                 }
             }
             self.re_evaluate_schedule();
-            self.status_message = format!("Cleared all shifts for volunteer.");
+            self.status_message = "Cleared all shifts for volunteer.".to_string();
         }
 
         if let Some(_vol_id) = vol_to_view {
@@ -902,11 +899,10 @@ impl AppState {
                         if !vol.availabilities.contains(slot_id) { continue; }
 
                         // 4. Capability
-                        if !crate::scheduler::utils::is_volunteer_qualified(vol, activity, activity.division_id()) {
-                            if self.config.strict_capabilities || matches!(activity, crate::model::Activity::Interview { .. }) {
+                        if !crate::scheduler::utils::is_volunteer_qualified(vol, activity, activity.division_id())
+                            && (self.config.strict_capabilities || matches!(activity, crate::model::Activity::Interview { .. })) {
                                 continue;
                             }
-                        }
 
                         // 5. Conflict of Interest
                         let mut has_coi = false;
@@ -1002,13 +998,12 @@ impl AppState {
             // Find a no-show to replace, or just add if there's room
             let mut replaced = false;
             for vol_id in &mut assign.volunteer_ids {
-                if let Some(vol) = self.config.volunteers.iter().find(|v| v.id == *vol_id) {
-                    if matches!(vol.status_for_day(&day), AttendanceStatus::NoShow) {
+                if let Some(vol) = self.config.volunteers.iter().find(|v| v.id == *vol_id)
+                    && matches!(vol.status_for_day(&day), AttendanceStatus::NoShow) {
                         *vol_id = new_vol_id.clone();
                         replaced = true;
                         break;
                     }
-                }
             }
 
             if !replaced {
@@ -1029,7 +1024,7 @@ impl AppState {
 
             let vols = self.config.volunteers.clone();
             assign.volunteer_ids.retain(|id| {
-                vols.iter().find(|v| &v.id == id).map_or(true, |v| !matches!(v.status_for_day(&day), AttendanceStatus::NoShow))
+                vols.iter().find(|v| &v.id == id).is_none_or(|v| !matches!(v.status_for_day(&day), AttendanceStatus::NoShow))
             });
         }
         self.active_substitution = None;
@@ -1519,8 +1514,8 @@ impl AppState {
         });
 
         // Subtitle: explain round count
-        if is_h2h {
-            if let Some(rows) = self.division_rounds.get(div_id) {
+        if is_h2h
+            && let Some(rows) = self.division_rounds.get(div_id) {
                 let rr_rounds: Vec<&RoundRow> = rows.iter().filter(|r| !r.matches.iter().any(|m| m.is_final)).collect();
                 let finals_rounds: Vec<&RoundRow> = rows.iter().filter(|r| r.matches.iter().any(|m| m.is_final)).collect();
                 let parts: Vec<String> = [
@@ -1531,7 +1526,6 @@ impl AppState {
                     ui.label(RichText::new(parts.join(" + ")).size(11.0).color(Color32::from_rgb(107, 114, 128)).italics());
                 }
             }
-        }
         ui.add_space(8.0);
 
         // Sub-tabs

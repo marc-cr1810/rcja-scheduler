@@ -10,6 +10,9 @@ pub struct InternalActivity {
     pub team_indices: Vec<usize>,
     pub division_idx: usize,
     pub duration_minutes: u32,
+    /// Index into the distinct-durations table, used to look up precomputed
+    /// bucket/overlap data by `[slot_idx][duration_class]` without hashing.
+    pub duration_class: usize,
     pub stage: usize,
     pub round_index: usize,
     pub is_final: bool,
@@ -72,10 +75,10 @@ pub struct InternalTournamentConfig {
     pub days: Vec<String>,
     pub day_interviews_enabled: Vec<bool>,
     
-    // Maps (slot_idx, duration_minutes) to a list of global 5-minute bucket indices
-    pub activity_buckets: HashMap<(usize, u32), Vec<usize>>,
-    // Maps (slot_idx, duration_minutes) to a list of other slot indices that overlap
-    pub activity_overlapping_slots: HashMap<(usize, u32), Vec<usize>>,
+    // [slot_idx][duration_class] -> list of global 5-minute bucket indices
+    pub activity_buckets: Vec<Vec<Vec<usize>>>,
+    // [slot_idx][duration_class] -> list of other slot indices that overlap
+    pub activity_overlapping_slots: Vec<Vec<Vec<usize>>>,
     pub num_total_buckets: usize,
 
     /// Pre-computed chronological slot ranges for each round index.
@@ -215,40 +218,48 @@ impl InternalTournamentConfig {
             interview_volunteers_required: d.interview_volunteers_required,
         }).collect();
 
+        // Distinct activity durations. Each gets a "class" index so the solver
+        // can look up precomputed bucket/overlap data by plain Vec indexing
+        // (`[slot_idx][duration_class]`) instead of hashing a (slot, dur) key.
+        let mut durations: Vec<u32> = activities.iter().map(|a| a.duration_minutes()).collect();
+        durations.sort_unstable();
+        durations.dedup();
+        let dur_class: HashMap<u32, usize> = durations.iter().enumerate().map(|(i, &d)| (d, i)).collect();
+
         let internal_activities: Vec<InternalActivity> = activities.iter().map(|a| InternalActivity {
             id: a.id().to_string(),
             team_indices: a.teams().iter().filter_map(|t| team_map.get(*t).copied()).collect(),
             division_idx: *div_map.get(a.division_id()).unwrap(),
             duration_minutes: a.duration_minutes(),
+            duration_class: dur_class[&a.duration_minutes()],
             stage: a.stage(),
             round_index: a.round_index(),
-            is_final: matches!(a, Activity::Match { is_final: true, .. }),
+            is_final: a.is_final(),
             is_interview: matches!(a, Activity::Interview { .. }),
         }).collect();
 
-        let mut activity_buckets = HashMap::new();
-        let mut activity_overlapping_slots = HashMap::new();
         let bucket_size = 5u32;
         let day_span_minutes = 24 * 60;
         let buckets_per_day = day_span_minutes / bucket_size;
 
-        for activity in &internal_activities {
-            let dur = activity.duration_minutes;
-            for (slot_idx, slot) in internal_slots.iter().enumerate() {
-                if activity_buckets.contains_key(&(slot_idx, dur)) { continue; }
-                
+        let mut activity_buckets: Vec<Vec<Vec<usize>>> =
+            vec![vec![Vec::new(); durations.len()]; internal_slots.len()];
+        let mut activity_overlapping_slots: Vec<Vec<Vec<usize>>> =
+            vec![vec![Vec::new(); durations.len()]; internal_slots.len()];
+
+        for (slot_idx, slot) in internal_slots.iter().enumerate() {
+            for (dc, &dur) in durations.iter().enumerate() {
                 let start_min = slot.start_minutes;
                 let end_min = start_min + dur;
                 let day_offset = slot.day_idx as u32 * buckets_per_day;
-                
+
                 let mut buckets = Vec::new();
                 let first_bucket = start_min / bucket_size;
                 let last_bucket = (end_min - 1) / bucket_size;
-                
                 for b in first_bucket..=last_bucket {
                     buckets.push((day_offset + b) as usize);
                 }
-                activity_buckets.insert((slot_idx, dur), buckets);
+                activity_buckets[slot_idx][dc] = buckets;
 
                 let mut overlapping = Vec::new();
                 for (other_idx, other_slot) in internal_slots.iter().enumerate() {
@@ -260,10 +271,10 @@ impl InternalTournamentConfig {
                         }
                     }
                 }
-                activity_overlapping_slots.insert((slot_idx, dur), overlapping);
+                activity_overlapping_slots[slot_idx][dc] = overlapping;
             }
         }
-        
+
         let num_total_buckets = day_names.len() * buckets_per_day as usize;
 
         let n_slots = internal_slots.len();

@@ -1,6 +1,7 @@
 use super::internal::{InternalTournamentConfig, InternalAssignment, InternalSchedule};
 use super::SolverParams;
-use crate::model::{FairnessMode, SpecialistMode, FieldKind};
+use crate::model::{FairnessMode, SpecialistMode, FieldKind, Schedule, SchedulingMode, TournamentConfig};
+use std::collections::HashMap;
 
 pub struct FastEvaluator<'a> {
     config: &'a InternalTournamentConfig,
@@ -124,7 +125,7 @@ impl<'a> FastEvaluator<'a> {
             self.division_assignments[activity.division_idx].push(idx);
 
             let multiplier = if activity.is_final { self.params.finals_priority_multiplier } else { 1.0 };
-            let buckets = self.config.activity_buckets.get(&(assign.slot_idx, activity.duration_minutes)).unwrap();
+            let buckets = &self.config.activity_buckets[assign.slot_idx][activity.duration_class];
             let slot = &self.config.slots[assign.slot_idx];
 
             if (activity.is_interview && slot.kind == FieldKind::Competition) || (!activity.is_interview && slot.kind == FieldKind::Interview) {
@@ -163,7 +164,7 @@ impl<'a> FastEvaluator<'a> {
             }
 
             // Volunteer
-            let overlapped = &self.config.activity_overlapping_slots[&(assign.slot_idx, activity.duration_minutes)];
+            let overlapped = &self.config.activity_overlapping_slots[assign.slot_idx][activity.duration_class];
             for &v_idx in &assign.volunteer_indices {
                 let v = &self.config.volunteers[v_idx];
                 self.volunteer_shift_counts[v_idx] += 1;
@@ -302,6 +303,48 @@ impl<'a> FastEvaluator<'a> {
             }
         }
 
+        // Field variety: penalise a team being assigned to the same field
+        // repeatedly. Only tracked under strict mode (all divisions) or for
+        // IndividualRun divisions, mirroring the original evaluator.
+        if self.params.field_variety_strict || self.config.divisions.iter().any(|d| d.mode == SchedulingMode::IndividualRun) {
+            let mut team_field_counts: HashMap<(usize, usize), u32> = HashMap::new();
+            for (idx, assign) in schedule.assignments.iter().enumerate() {
+                let Some(f_idx) = assign.field_idx else { continue };
+                let activity = &self.config.activities[idx];
+                let div_mode = self.config.divisions[activity.division_idx].mode;
+                if !(self.params.field_variety_strict || div_mode == SchedulingMode::IndividualRun) {
+                    continue;
+                }
+                for &t_idx in &activity.team_indices {
+                    *team_field_counts.entry((t_idx, f_idx)).or_insert(0) += 1;
+                }
+            }
+            for &count in team_field_counts.values() {
+                if count > 1 {
+                    if self.params.field_variety_strict {
+                        hard += (count - 1) as f64;
+                    } else {
+                        soft += (count - 1) as f64 * self.params.field_variety_weight;
+                    }
+                }
+            }
+        }
+
+        // Peak period: encourage an even spread of activities across time slots
+        // by penalising the variance of per-slot occupancy.
+        if self.params.peak_period_weight > 0.0 {
+            let mut slot_counts = vec![0.0f64; self.config.slots.len()];
+            for (idx, assign) in schedule.assignments.iter().enumerate() {
+                let activity = &self.config.activities[idx];
+                let overlapped = &self.config.activity_overlapping_slots[assign.slot_idx][activity.duration_class];
+                for &s_idx in overlapped {
+                    slot_counts[s_idx] += 1.0;
+                }
+            }
+            let active: Vec<f64> = slot_counts.into_iter().filter(|&c| c > 0.0).collect();
+            soft += calculate_variance_f64(&active) * self.params.peak_period_weight;
+        }
+
         self.current_hard_conflicts = hard;
         self.current_soft_penalties = soft;
         (hard, soft)
@@ -312,7 +355,7 @@ impl<'a> FastEvaluator<'a> {
 
         for (idx, assign) in schedule.assignments.iter().enumerate() {
             let activity = &self.config.activities[idx];
-            let buckets = self.config.activity_buckets.get(&(assign.slot_idx, activity.duration_minutes)).unwrap();
+            let buckets = &self.config.activity_buckets[assign.slot_idx][activity.duration_class];
             let slot = &self.config.slots[assign.slot_idx];
 
             if (activity.is_interview && slot.kind == FieldKind::Competition) || (!activity.is_interview && slot.kind == FieldKind::Interview) {
@@ -345,7 +388,7 @@ impl<'a> FastEvaluator<'a> {
             }
 
             // Volunteer
-            let overlapped = &self.config.activity_overlapping_slots[&(assign.slot_idx, activity.duration_minutes)];
+            let overlapped = &self.config.activity_overlapping_slots[assign.slot_idx][activity.duration_class];
             for &v_idx in &assign.volunteer_indices {
                 let v = &self.config.volunteers[v_idx];
                 let day_idx = self.config.slots[assign.slot_idx].day_idx;
@@ -429,8 +472,13 @@ impl<'a> FastEvaluator<'a> {
                 let idx2 = list[i+1];
                 let assign2 = &schedule.assignments[idx2];
 
-                let a1_end_slot = assign1.slot_idx + act1.duration_minutes.div_ceil(config.slots[0].duration_minutes) as usize - 1;
-                if a1_end_slot + 1 == assign2.slot_idx {
+                // Back-to-back: the next activity starts exactly when this one
+                // ends (same day; these lists are per-day). Compared in minutes
+                // so it stays correct with non-uniform slot durations.
+                let slot1 = &config.slots[assign1.slot_idx];
+                let slot2 = &config.slots[assign2.slot_idx];
+                if slot1.day_idx == slot2.day_idx
+                    && slot2.start_minutes == slot1.start_minutes + act1.duration_minutes {
                     soft += params.team_back_to_back_weight;
                 }
             }
@@ -460,8 +508,10 @@ impl<'a> FastEvaluator<'a> {
             let assign2 = &schedule.assignments[i2];
             let act1 = &config.activities[i1];
 
-            let a1_end_slot = assign1.slot_idx + act1.duration_minutes.div_ceil(config.slots[0].duration_minutes) as usize - 1;
-            if a1_end_slot + 1 == assign2.slot_idx {
+            let slot1 = &config.slots[assign1.slot_idx];
+            let slot2 = &config.slots[assign2.slot_idx];
+            if slot1.day_idx == slot2.day_idx
+                && slot2.start_minutes == slot1.start_minutes + act1.duration_minutes {
                 soft += params.vol_consecutive_weight;
                 if params.vol_travel_weight > 0.0 && assign1.field_idx != assign2.field_idx {
                     soft += params.vol_travel_weight;
@@ -552,6 +602,58 @@ fn calculate_variance_f64(values: &[f64]) -> f64 {
     values.iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64
 }
 
+/// Evaluates the cost of a (model-level) `Schedule` using the same engine the
+/// solver optimizes against. This is the single source of truth for schedule
+/// cost: the GUI and the solver both score schedules through this path, so the
+/// number shown to the user always matches what was optimized.
+pub fn evaluate_schedule_cost(
+    config: &TournamentConfig,
+    schedule: &Schedule,
+    params: &SolverParams,
+) -> (f64, f64) {
+    // Activities not belonging to a known division can't be compiled; count each
+    // as a hard conflict (matching the previous evaluator's behavior) and drop it.
+    let valid: Vec<&crate::model::ScheduleAssignment> = schedule
+        .assignments
+        .iter()
+        .filter(|a| config.divisions.iter().any(|d| d.id == a.activity.division_id()))
+        .collect();
+    let dropped = (schedule.assignments.len() - valid.len()) as f64;
+
+    if valid.is_empty() {
+        return (dropped, 0.0);
+    }
+
+    let activities: Vec<crate::model::Activity> = valid.iter().map(|a| a.activity.clone()).collect();
+    let internal_config = InternalTournamentConfig::compile(config, &activities);
+
+    let slot_idx: HashMap<&str, usize> =
+        internal_config.slots.iter().enumerate().map(|(i, s)| (s.id.as_str(), i)).collect();
+    let field_idx: HashMap<&str, usize> =
+        internal_config.fields.iter().enumerate().map(|(i, f)| (f.id.as_str(), i)).collect();
+    let vol_idx: HashMap<&str, usize> =
+        internal_config.volunteers.iter().enumerate().map(|(i, v)| (v.id.as_str(), i)).collect();
+
+    let assignments: Vec<InternalAssignment> = valid
+        .iter()
+        .map(|a| InternalAssignment {
+            slot_idx: slot_idx.get(a.time_slot_id.as_str()).copied().unwrap_or(0),
+            field_idx: a.field_id.as_ref().and_then(|f| field_idx.get(f.as_str()).copied()),
+            volunteer_indices: a
+                .volunteer_ids
+                .iter()
+                .filter_map(|v| vol_idx.get(v.as_str()).copied())
+                .collect(),
+        })
+        .collect();
+
+    let internal_schedule = InternalSchedule { assignments };
+    let mut evaluator = FastEvaluator::new(&internal_config, params);
+    evaluator.init(&internal_schedule);
+    let (hard, soft) = evaluator.calculate_total_cost(&internal_schedule);
+    (hard + dropped, soft)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -587,8 +689,8 @@ mod tests {
         ];
 
         let activities = vec![
-            Activity::Match { id: "div1_3pl".into(), team_a: "L1".into(), team_b: "L2".into(), division_id: "div1".into(), duration_minutes: 20, is_final: true }, 
-            Activity::Match { id: "div1_sf_1".into(), team_a: "1st".into(), team_b: "4th".into(), division_id: "div1".into(), duration_minutes: 20, is_final: true }, 
+            Activity::Match { id: "div1_3pl".into(), team_a: "L1".into(), team_b: "L2".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::ThirdPlace }, 
+            Activity::Match { id: "div1_sf_1".into(), team_a: "1st".into(), team_b: "4th".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::SemiFinal }, 
         ];
 
         let internal_config = InternalTournamentConfig::compile(&config, &activities);
