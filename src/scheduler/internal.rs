@@ -321,18 +321,6 @@ impl InternalTournamentConfig {
                 let n_comp = comp_indices.len();
 
                 if n_comp > 0 {
-                    // Translate a competition-ordinal window [c_start, c_end) into a
-                    // real slot-index range. Filtering that range to competition
-                    // slots yields exactly those columns; interleaved interview
-                    // slots inside the range are ignored by the solver.
-                    let to_range = |c_start: usize, c_end: usize| -> std::ops::Range<usize> {
-                        if c_end <= c_start {
-                            let s = comp_indices[c_start.min(n_comp - 1)];
-                            return s..s; // empty -> solver falls back to a random slot
-                        }
-                        comp_indices[c_start]..(comp_indices[c_end - 1] + 1)
-                    };
-
                     // Competition fields available to a division — used to size each
                     // band so a division never has more games in a band than it has
                     // columns x fields to hold them (which would force a double-booking).
@@ -376,22 +364,43 @@ impl InternalTournamentConfig {
 
                     let total_count: usize = bands.iter().map(|(_, c, _)| *c).sum::<usize>().max(1);
                     let n_bands = bands.len();
-                    let mut c_start = 0usize;
-                    for (bi, (round_idxs, count, min_c)) in bands.iter().enumerate() {
-                        // Columns the remaining bands still need, so we never starve them.
+                    
+                    let mut band_starts = vec![0; n_bands];
+                    let mut band_ends = vec![0; n_bands];
+                    let mut curr = 0usize;
+                    for (bi, (_, count, min_c)) in bands.iter().enumerate() {
                         let remaining_min: usize = bands[bi + 1..].iter().map(|(_, _, m)| *m).sum();
                         let share = ((*count as f64 / total_count as f64) * n_comp as f64).round() as usize;
-                        let mut c_end = c_start + share.max(*min_c);
-                        c_end = c_end.min(n_comp.saturating_sub(remaining_min)).max(c_start + *min_c);
+                        let mut c_end = curr + share.max(*min_c);
+                        c_end = c_end.min(n_comp.saturating_sub(remaining_min)).max(curr + *min_c);
                         if bi == n_bands - 1 {
-                            c_end = n_comp; // last band (finals) takes the remainder
+                            c_end = n_comp;
                         }
                         c_end = c_end.min(n_comp);
-                        let range = to_range(c_start.min(n_comp - 1), c_end);
+                        band_starts[bi] = curr;
+                        band_ends[bi] = c_end;
+                        curr = c_end;
+                    }
+                    
+                    let finals_start_slot = if !finals_rounds.is_empty() && n_bands > 0 {
+                        let finals_c_start = band_starts[n_bands - 1];
+                        comp_indices[finals_c_start.min(n_comp - 1)]
+                    } else {
+                        n_slots
+                    };
+                    
+                    for (bi, (round_idxs, _, _)) in bands.iter().enumerate() {
+                        let is_finals = !finals_rounds.is_empty() && bi == n_bands - 1;
+                        let range = if is_finals {
+                            let range_start = comp_indices[band_starts[bi].min(n_comp - 1)];
+                            range_start..n_slots
+                        } else {
+                            let range_start = comp_indices[band_starts[bi].min(n_comp - 1)];
+                            range_start..finals_start_slot
+                        };
                         for &r_idx in round_idxs {
                             round_ranges[r_idx] = range.clone();
                         }
-                        c_start = c_end;
                     }
                 }
             }
