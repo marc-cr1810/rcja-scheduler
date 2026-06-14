@@ -436,6 +436,13 @@ pub struct SolverSettings {
     pub vol_daily_shift_cap: usize,
     pub peak_period_weight: f64,
     pub finals_priority_multiplier: f64,
+    /// When true, the solver seeds from `seed` for a fully reproducible result.
+    /// When false, every generation draws a fresh random seed.
+    #[serde(default)]
+    pub use_seed: bool,
+    /// Fixed RNG seed, used only when `use_seed` is true.
+    #[serde(default)]
+    pub seed: u64,
     // Time slot generator settings
     pub gen_slot_duration: u32,
     pub gen_interview_slot_duration: u32,
@@ -468,6 +475,8 @@ impl Default for SolverSettings {
             vol_daily_shift_cap: 0,
             peak_period_weight: 0.1,
             finals_priority_multiplier: 2.0,
+            use_seed: false,
+            seed: 0,
             gen_slot_duration: 20,
             gen_interview_slot_duration: 10,
             gen_match_slot_break: 5,
@@ -500,6 +509,8 @@ impl PartialEq for SolverSettings {
             && self.vol_daily_shift_cap == other.vol_daily_shift_cap
             && self.peak_period_weight == other.peak_period_weight
             && self.finals_priority_multiplier == other.finals_priority_multiplier
+            && self.use_seed == other.use_seed
+            && self.seed == other.seed
             && self.gen_slot_duration == other.gen_slot_duration
             && self.gen_interview_slot_duration == other.gen_interview_slot_duration
             && self.gen_match_slot_break == other.gen_match_slot_break
@@ -640,6 +651,8 @@ mod tests {
             vol_daily_shift_cap: 6,
             peak_period_weight: 0.5,
             finals_priority_multiplier: 3.0,
+            use_seed: true,
+            seed: 123456789,
             gen_slot_duration: 15,
             gen_interview_slot_duration: 8,
             gen_match_slot_break: 3,

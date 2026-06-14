@@ -881,6 +881,115 @@ mod tests {
         assert_eq!(indices, vec![0, 1], "both stage-ordered matches should be flagged");
     }
 
+    /// Randomised property test for the unification invariant. The two tests
+    /// above check one hand-built conflict; this one scores hundreds of random
+    /// (mostly-broken) schedules over a config that exercises volunteers,
+    /// interviews, multiple fields and break rules, and asserts on every one:
+    ///   * scalar hard cost == sum of hard record weights,
+    ///   * scalar soft cost == sum of soft record weights,
+    ///   * conflicted indices == the distinct assignments named by hard records.
+    /// This is the guardrail behind the "cost and conflicts can never drift
+    /// apart" claim — and behind the incremental evaluator when it lands.
+    #[test]
+    fn sinks_agree_on_random_schedules() {
+        use crate::scheduler::conflicts::{distinct_hard_conflicts, CostClass, RecordSink, ScalarSink};
+        use crate::scheduler::internal::{InternalAssignment, InternalSchedule};
+        use rand::{Rng, SeedableRng, rngs::StdRng};
+
+        // A config broad enough to fire most hard rule kinds.
+        let mut config = TournamentConfig::default();
+        config.divisions = vec![
+            Division {
+                id: "d1".into(), name: "D1".into(), mode: SchedulingMode::HeadToHead,
+                games_per_team: 2, volunteers_required: 1, duration_minutes: 20,
+                allowed_fields: None, interviews_enabled: true,
+                interview_volunteers_required: 1, interview_duration_minutes: 10,
+                finals_enabled: true, finals_rounds: Some(FinalsRounds::Semis), finals_duration_minutes: Some(20),
+                finals_third_place_playoff: true, color: None, min_match_break_minutes: Some(30),
+            },
+            Division {
+                id: "d2".into(), name: "D2".into(), mode: SchedulingMode::HeadToHead,
+                games_per_team: 2, volunteers_required: 1, duration_minutes: 20,
+                allowed_fields: None, interviews_enabled: false,
+                interview_volunteers_required: 0, interview_duration_minutes: 0,
+                finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
+                finals_third_place_playoff: false, color: None, min_match_break_minutes: None,
+            },
+        ];
+        for (d, names) in [("d1", ["A", "B", "C", "D"]), ("d2", ["E", "F", "G", "H"])] {
+            for t in names {
+                config.teams.push(Team { name: t.into(), division_id: d.into(), organization: format!("org{t}") });
+            }
+        }
+        config.fields = vec![
+            Field { id: "c1".into(), name: "Court 1".into(), kind: FieldKind::Competition, allowed_divisions: None },
+            Field { id: "c2".into(), name: "Court 2".into(), kind: FieldKind::Competition, allowed_divisions: Some(vec!["d1".into()]) },
+            Field { id: "iv".into(), name: "Interview Room".into(), kind: FieldKind::Interview, allowed_divisions: None },
+        ];
+        // Interleaved competition + interview slots across one day.
+        let fmt = |m: u32| format!("{:02}:{:02}", m / 60, m % 60);
+        config.time_slots = (0..12u32)
+            .map(|i| {
+                let start = 9 * 60 + i * 15;
+                let kind = if i % 4 == 3 { FieldKind::Interview } else { FieldKind::Competition };
+                TimeSlot { id: format!("s{i}"), day: "Sat".into(), start_time: fmt(start), end_time: fmt(start + 15), kind }
+            })
+            .collect();
+        config.day_configs = vec![DayGenConfig { day: "Sat".into(), ..Default::default() }];
+        config.volunteers = vec![
+            Volunteer { id: "v1".into(), name: "V1".into(), availabilities: vec![], capabilities: None, conflict_organizations: vec![], attendance_status: Default::default() },
+            Volunteer { id: "v2".into(), name: "V2".into(), availabilities: vec!["s0".into(), "s1".into()], capabilities: Some(vec!["d1".into()]), conflict_organizations: vec!["orgA".into()], attendance_status: Default::default() },
+            Volunteer { id: "v3".into(), name: "V3".into(), availabilities: vec![], capabilities: Some(vec!["d2".into()]), conflict_organizations: vec![], attendance_status: Default::default() },
+        ];
+
+        let activities = crate::scheduler::generate_activities(&config);
+        assert!(!activities.is_empty());
+        let internal = InternalTournamentConfig::compile(&config, &activities);
+
+        // Params turned up so as many hard rule kinds as possible can fire.
+        let params = SolverParams {
+            field_variety_strict: true,
+            vol_daily_shift_cap: 2,
+            team_min_break_minutes: 20,
+            team_match_min_break_minutes: 30,
+            ..SolverParams::default()
+        };
+
+        let (n_slots, n_fields, n_vols, n_acts) =
+            (internal.slots.len(), internal.fields.len(), internal.volunteers.len(), internal.activities.len());
+        let mut e = FastEvaluator::new(&internal, &params);
+        let mut rng = StdRng::seed_from_u64(0xA11CE);
+
+        for _ in 0..300 {
+            let assignments = (0..n_acts)
+                .map(|_| InternalAssignment {
+                    slot_idx: rng.gen_range(0..n_slots),
+                    field_idx: if rng.gen_bool(0.85) { Some(rng.gen_range(0..n_fields)) } else { None },
+                    volunteer_indices: (0..n_vols).filter(|_| rng.gen_bool(0.4)).collect(),
+                })
+                .collect();
+            let sched = InternalSchedule { assignments };
+
+            let mut scalar = ScalarSink::default();
+            e.evaluate(&sched, &mut scalar);
+            let mut rec = RecordSink::default();
+            e.evaluate(&sched, &mut rec);
+            let mut conflicted = e.get_conflicted_indices(&sched);
+            conflicted.sort_unstable();
+
+            let hard_sum: f64 = rec.records.iter().filter(|c| c.class == CostClass::Hard).map(|c| c.weight).sum();
+            let soft_sum: f64 = rec.records.iter().filter(|c| c.class == CostClass::Soft).map(|c| c.weight).sum();
+            assert!((scalar.hard - hard_sum).abs() < 1e-6, "hard {} != hard record sum {}", scalar.hard, hard_sum);
+            assert!((scalar.soft - soft_sum).abs() < 1e-6, "soft {} != soft record sum {}", scalar.soft, soft_sum);
+
+            let mut expected: Vec<usize> =
+                distinct_hard_conflicts(&rec.records).iter().flat_map(|c| c.who.clone()).collect();
+            expected.sort_unstable();
+            expected.dedup();
+            assert_eq!(conflicted, expected, "conflicted indices disagree with hard records");
+        }
+    }
+
     /// An interview immediately followed by a match for the same team (the
     /// reported 14:12 interview → 14:20 game case) is a hard conflict under the
     /// default minimum break, and the gap is measured in real minutes — not slot

@@ -66,6 +66,12 @@ pub struct SolverParams {
     pub finals_priority_multiplier: f64,
     /// Optional flag to signal cancellation to the solver thread.
     pub cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Optional RNG seed. When `Some`, the solve is fully reproducible: each
+    /// restart is seeded deterministically from this value and the best-result
+    /// selection breaks ties by restart index, so the same config + params
+    /// always yields the same schedule. When `None`, the solver seeds from
+    /// system entropy (different result each run).
+    pub seed: Option<u64>,
 }
 
 impl Default for SolverParams {
@@ -94,6 +100,7 @@ impl Default for SolverParams {
             peak_period_weight: 10.0,
             finals_priority_multiplier: 2.0,
             cancel_flag: None,
+            seed: None,
         }
     }
 }

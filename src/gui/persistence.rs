@@ -86,6 +86,8 @@ impl AppState {
         ss.fairness_mode = self.solver_fairness_mode;
         ss.iterations = self.solver_iterations;
         ss.restarts = self.solver_restarts;
+        ss.use_seed = self.solver_use_seed;
+        ss.seed = self.solver_seed;
         ss.vol_consecutive_weight = self.solver_vol_consecutive_weight;
         ss.team_back_to_back_weight = self.solver_team_back_to_back_weight;
         ss.field_variety_weight = self.solver_field_variety_weight;
@@ -119,6 +121,8 @@ impl AppState {
         self.solver_fairness_mode = ss.fairness_mode;
         self.solver_iterations = ss.iterations;
         self.solver_restarts = ss.restarts;
+        self.solver_use_seed = ss.use_seed;
+        self.solver_seed = ss.seed;
         self.solver_vol_consecutive_weight = ss.vol_consecutive_weight;
         self.solver_team_back_to_back_weight = ss.team_back_to_back_weight;
         self.solver_field_variety_weight = ss.field_variety_weight;

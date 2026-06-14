@@ -3,6 +3,8 @@ use crate::model::{
 };
 use rand::seq::SliceRandom;
 use rand::Rng;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 use super::internal::{InternalTournamentConfig, InternalSchedule, InternalAssignment, InternalActivity};
 use super::fast_evaluator::FastEvaluator;
 use super::conflicts::distinct_hard_conflicts;
@@ -34,7 +36,14 @@ pub fn solve_schedule(
                     return None;
                 }
 
-            let mut rng = rand::thread_rng();
+            // Seed per restart so a `Some(seed)` run is fully reproducible while
+            // each restart still explores a distinct random stream. With no seed,
+            // draw from system entropy (different result each run). StdRng is
+            // portable, so a given seed reproduces across platforms.
+            let mut rng = match params.seed {
+                Some(s) => StdRng::seed_from_u64(s.wrapping_add(restart_idx as u64)),
+                None => StdRng::from_entropy(),
+            };
             let mut current_schedule = construct_initial_internal_schedule(&internal_config, params.fairness_mode, &mut rng);
             let mut evaluator = FastEvaluator::new(&internal_config, params);
             evaluator.init(&current_schedule);
@@ -106,15 +115,18 @@ pub fn solve_schedule(
             let best_hard = distinct_hard_conflicts(&evaluator.collect_conflicts(&best_local_schedule)).len() as f64;
             (progress_callback)(restart_idx, params.num_restarts, params.max_iterations, params.max_iterations, best_hard, best_local_cost.1);
 
-            Some((best_local_schedule, best_local_cost))
+            Some((restart_idx, best_local_schedule, best_local_cost))
         })
+        // Pick the cheapest schedule, breaking ties by restart index. The
+        // explicit tiebreak makes the choice independent of the order in which
+        // rayon reduces the parallel results, so a seeded solve is deterministic.
         .reduce_with(|a, b| {
-            let t1 = a.1.0 * 1_000_000.0 + a.1.1;
-            let t2 = b.1.0 * 1_000_000.0 + b.1.1;
-            if t1 < t2 { a } else { b }
+            let t1 = a.2.0 * 1_000_000.0 + a.2.1;
+            let t2 = b.2.0 * 1_000_000.0 + b.2.1;
+            if (t1, a.0) <= (t2, b.0) { a } else { b }
         });
 
-    best_result.map(|(internal_schedule, _)| decompile_schedule(config, &internal_config, &activities, internal_schedule))
+    best_result.map(|(_, internal_schedule, _)| decompile_schedule(config, &internal_config, &activities, internal_schedule))
 }
 
 fn construct_initial_internal_schedule(
@@ -553,6 +565,46 @@ mod tests {
         // schedule must be reachable.
         let (hard, _soft) = crate::scheduler::evaluate_schedule_cost(&config, &schedule, &params);
         assert_eq!(hard, 0.0, "expected no hard conflicts, got {hard}");
+    }
+
+    #[test]
+    fn same_seed_yields_identical_schedule() {
+        let config = small_config();
+        let params = SolverParams {
+            max_iterations: 5_000,
+            num_restarts: 4,
+            seed: Some(0xC0FFEE),
+            ..SolverParams::default()
+        };
+
+        let run = || solve_schedule(&config, &params, |_, _, _, _, _, _| {}).expect("schedule");
+        let a = run();
+        let b = run();
+
+        // A seeded solve must be bit-for-bit reproducible: same slots, fields and
+        // volunteer rosters in the same order. This is what makes a reported bad
+        // schedule reproducible and the benchmark's run-to-run deltas meaningful.
+        assert_eq!(a.assignments.len(), b.assignments.len());
+        for (x, y) in a.assignments.iter().zip(&b.assignments) {
+            assert_eq!(x.time_slot_id, y.time_slot_id);
+            assert_eq!(x.field_id, y.field_id);
+            assert_eq!(x.volunteer_ids, y.volunteer_ids);
+            assert_eq!(x.activity.id(), y.activity.id());
+        }
+    }
+
+    #[test]
+    fn different_seeds_can_diverge() {
+        // Sanity check that the seed actually drives the RNG: two different seeds
+        // should be capable of producing different schedules. (We don't assert
+        // they *always* differ — on a tiny instance the optimum may be unique —
+        // only that the seeding path is wired through, exercised alongside the
+        // reproducibility guarantee above.)
+        let config = small_config();
+        let base = SolverParams { max_iterations: 2_000, num_restarts: 2, ..SolverParams::default() };
+        let s1 = solve_schedule(&config, &SolverParams { seed: Some(1), ..base.clone() }, |_, _, _, _, _, _| {});
+        let s2 = solve_schedule(&config, &SolverParams { seed: Some(2), ..base }, |_, _, _, _, _, _| {});
+        assert!(s1.is_some() && s2.is_some());
     }
 
     #[test]

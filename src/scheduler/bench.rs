@@ -10,10 +10,16 @@
 //! instead of by eye. Capture the numbers before a change, apply the change,
 //! re-run, and compare.
 //!
+//! The runs are **seeded** (each of the `RUNS_PER_CASE` runs gets a distinct but
+//! fixed seed derived from [`BASE_SEED`]), so the whole sweep is deterministic:
+//! a difference between two runs reflects the code change, not RNG luck. You
+//! still get a distribution across the seeds, just a reproducible one.
+//!
 //! Run it (release is essential — debug is ~20× slower and not representative):
 //!
 //! ```text
-//! cargo test --release -p rcja-scheduler solver_benchmark -- --ignored --nocapture
+//! cargo bench-solver                 # alias for the line below (.cargo/config.toml)
+//! cargo test --release solver_benchmark -- --ignored --nocapture
 //! ```
 
 use crate::model::{
@@ -24,9 +30,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-/// Number of independent solver runs per instance. The solver is stochastic
-/// (un-seeded `thread_rng`), so we report a distribution, not a single number.
+/// Number of independent solver runs per instance. Each run uses a different
+/// fixed seed (`BASE_SEED + run_index`), so we still report a distribution but
+/// one that reproduces exactly on the next invocation.
 const RUNS_PER_CASE: usize = 5;
+
+/// Base seed for the benchmark. Run `i` of each case uses `BASE_SEED + i`, so
+/// the sweep is deterministic across invocations while each run still explores a
+/// distinct random stream. Change this to resample the instances.
+const BASE_SEED: u64 = 0x5EED;
 
 fn hhmm(m: u32) -> String {
     format!("{:02}:{:02}", m / 60, m % 60)
@@ -249,7 +261,10 @@ fn solver_benchmark() {
     let params = SolverParams { max_iterations: 20_000, num_restarts: 4, ..SolverParams::default() };
 
     println!("\n=== SOLVER BENCHMARK (baseline) ===");
-    println!("params: max_iterations={}, restarts={}, runs/case={RUNS_PER_CASE}", params.max_iterations, params.num_restarts);
+    println!(
+        "params: max_iterations={}, restarts={}, runs/case={RUNS_PER_CASE}, base_seed={BASE_SEED:#x} (deterministic)",
+        params.max_iterations, params.num_restarts
+    );
 
     for (name, config) in [
         ("EASY", easy_case()),
@@ -257,7 +272,13 @@ fn solver_benchmark() {
         ("BREAK-STRESS", break_stress_case()),
         ("OVER-CONSTRAINED", over_constrained_case()),
     ] {
-        let results: Vec<RunResult> = (0..RUNS_PER_CASE).map(|_| run_once(&config, &params)).collect();
+        let results: Vec<RunResult> = (0..RUNS_PER_CASE)
+            .map(|i| {
+                // Distinct fixed seed per run: reproducible, but still a spread.
+                let p = SolverParams { seed: Some(BASE_SEED.wrapping_add(i as u64)), ..params.clone() };
+                run_once(&config, &p)
+            })
+            .collect();
         report(name, &config, &results);
     }
     println!();

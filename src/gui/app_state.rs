@@ -68,6 +68,10 @@ pub struct AppState {
     // Solver state
     pub solver_iterations: usize,
     pub solver_restarts: usize,
+    /// When true, the solver uses `solver_seed` for a reproducible schedule.
+    /// When false, each generation is seeded randomly.
+    pub solver_use_seed: bool,
+    pub solver_seed: u64,
     pub solver_fairness_mode: crate::model::FairnessMode,
     pub solver_vol_consecutive_weight: f64,
     pub solver_team_back_to_back_weight: f64,
@@ -184,6 +188,8 @@ impl Default for AppState {
 
             solver_iterations: 50000,
             solver_restarts: 5,
+            solver_use_seed: false,
+            solver_seed: 0,
             solver_fairness_mode: crate::model::FairnessMode::Balanced,
             solver_vol_consecutive_weight: 1.0,
             solver_team_back_to_back_weight: 1.0,

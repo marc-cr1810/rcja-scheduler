@@ -362,6 +362,9 @@ impl AppState {
             peak_period_weight: self.solver_peak_period_weight,
             finals_priority_multiplier: self.solver_finals_priority_multiplier,
             cancel_flag: None,
+            // Fixed seed only when the user opts in; otherwise None, which makes
+            // the solver draw a fresh random seed for every generation.
+            seed: if self.solver_use_seed { Some(self.solver_seed) } else { None },
         }
     }
 }

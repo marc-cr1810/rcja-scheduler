@@ -47,6 +47,19 @@ impl AppState {
                         ui.add(egui::DragValue::new(&mut self.solver_restarts).clamp_range(1..=20));
                     });
 
+                    ui.vertical(|ui| {
+                        ui.checkbox(&mut self.solver_use_seed, "Fixed seed")
+                            .on_hover_text("Off: each generation uses a new random seed.\nOn: the same seed always reproduces the same schedule.");
+                        ui.add_enabled_ui(self.solver_use_seed, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.add(egui::DragValue::new(&mut self.solver_seed).speed(1.0));
+                                if ui.button("🎲").on_hover_text("Roll a new random seed").clicked() {
+                                    self.solver_seed = rand::random::<u64>();
+                                }
+                            });
+                        });
+                    });
+
                     ui.add_space(20.0);
 
                     let can_solve = !is_solving && config_error_count == 0;

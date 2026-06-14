@@ -1,0 +1,5 @@
+[alias]
+# Run the solver benchmark in one command (release is essential for representative
+# numbers). Equivalent to:
+#   cargo test --release solver_benchmark -- --ignored --nocapture
+bench-solver = "test --release solver_benchmark -- --ignored --nocapture"
