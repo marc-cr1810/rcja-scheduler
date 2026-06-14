@@ -1,6 +1,81 @@
 use crate::model::{Activity, MatchStage, SchedulingMode, TournamentConfig};
 use super::utils::sanitize_name;
 
+/// Computes the actual number of round-robin matches that will be generated for
+/// a division, accounting for the two-phase selection logic that minimises
+/// variance in games per team (pairs deficit teams first, then fills stragglers).
+pub fn compute_rr_match_count(num_teams: usize, games_per_team: usize) -> usize {
+    if num_teams < 2 {
+        return 0;
+    }
+
+    let padded_n = if num_teams % 2 == 0 { num_teams } else { num_teams + 1 };
+    let num_rounds = padded_n - 1;
+    let games_per_round = padded_n / 2;
+
+    // Generate all (home, away) pairs from enough cycles, skipping byes.
+    let matches_per_cycle = num_teams * (num_teams - 1) / 2;
+    let min_needed = (num_teams * games_per_team + 1) / 2;
+    let cycles = (min_needed + matches_per_cycle - 1) / matches_per_cycle.max(1);
+
+    let mut all_pairs: Vec<(usize, usize)> = Vec::new();
+    for _ in 0..cycles.max(1) {
+        for r in 0..num_rounds {
+            for g in 0..games_per_round {
+                let (home, away) = if g == 0 {
+                    if r % 2 == 0 { (padded_n - 1, r) } else { (r, padded_n - 1) }
+                } else {
+                    ((r + g) % (padded_n - 1), (r + padded_n - 1 - g) % (padded_n - 1))
+                };
+                if home < num_teams && away < num_teams {
+                    all_pairs.push((home, away));
+                }
+            }
+        }
+    }
+
+    // Phase 1: both below quota
+    let mut counts = vec![0usize; num_teams];
+    let mut total = 0;
+    let mut deferred = Vec::new();
+    for (h, a) in all_pairs {
+        if counts[h] < games_per_team && counts[a] < games_per_team {
+            counts[h] += 1;
+            counts[a] += 1;
+            total += 1;
+        } else {
+            deferred.push((h, a));
+        }
+    }
+
+    // Phase 2a: among deferred, both still below
+    let mut still_deferred = Vec::new();
+    for (h, a) in deferred {
+        if counts[h] < games_per_team && counts[a] < games_per_team {
+            counts[h] += 1;
+            counts[a] += 1;
+            total += 1;
+        } else {
+            still_deferred.push((h, a));
+        }
+    }
+
+    // Phase 2b: one below
+    for (h, a) in still_deferred {
+        if counts.iter().all(|&c| c >= games_per_team) {
+            break;
+        }
+        if counts[h] < games_per_team || counts[a] < games_per_team {
+            counts[h] += 1;
+            counts[a] += 1;
+            total += 1;
+        }
+    }
+
+    total
+}
+
+
 pub fn generate_activities(config: &TournamentConfig) -> Vec<Activity> {
     let mut activities = Vec::new();
 
@@ -77,13 +152,14 @@ fn generate_head_to_head_matches(
         return Vec::new();
     }
 
-    let total_matches_needed = (n * games_per_team).div_ceil(2);
-    let mut all_matches = Vec::new();
-    let mut cycle = 0;
+    // Generate enough full round-robin cycles to have sufficient candidate matches.
+    let matches_per_cycle = n * (n - 1) / 2;
+    let min_needed = (n * games_per_team + 1) / 2;
+    let cycles_needed = (min_needed + matches_per_cycle - 1) / matches_per_cycle.max(1);
 
-    while all_matches.len() < total_matches_needed {
+    let mut all_matches = Vec::new();
+    for cycle in 0..cycles_needed.max(1) {
         let mut cycle_matches = generate_circle_round_robin(division_id, teams, duration_minutes);
-        
         for m in &mut cycle_matches {
             if let Activity::Match { id, stage, .. } = m {
                 *id = id.replacen("_c0_r", &format!("_c{}_r", cycle), 1);
@@ -92,20 +168,64 @@ fn generate_head_to_head_matches(
                 }
             }
         }
-        
-        all_matches.append(&mut cycle_matches);
-        cycle += 1;
-        
-        if cycle > 100 {
-            break;
+        all_matches.extend(cycle_matches);
+    }
+
+    // Two-phase selection to minimise variance in games per team:
+    // Phase 1: Take matches where BOTH teams are below quota (pairs deficit teams).
+    // Phase 2: Fill remaining deficits with matches where at least one team needs games.
+    let mut team_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut selected = Vec::new();
+    let mut deferred = Vec::new();
+
+    // Phase 1: both below quota
+    for m in all_matches {
+        if let Activity::Match { ref team_a, ref team_b, .. } = m {
+            let ca = *team_counts.get(team_a).unwrap_or(&0);
+            let cb = *team_counts.get(team_b).unwrap_or(&0);
+            if ca < games_per_team && cb < games_per_team {
+                *team_counts.entry(team_a.clone()).or_insert(0) += 1;
+                *team_counts.entry(team_b.clone()).or_insert(0) += 1;
+                selected.push(m);
+            } else {
+                deferred.push(m);
+            }
         }
     }
 
-    if all_matches.len() > total_matches_needed {
-        all_matches.truncate(total_matches_needed);
+    // Phase 2a: among deferred, catch any remaining both-below pairings
+    let mut still_deferred = Vec::new();
+    for m in deferred {
+        if let Activity::Match { ref team_a, ref team_b, .. } = m {
+            let ca = *team_counts.get(team_a).unwrap_or(&0);
+            let cb = *team_counts.get(team_b).unwrap_or(&0);
+            if ca < games_per_team && cb < games_per_team {
+                *team_counts.entry(team_a.clone()).or_insert(0) += 1;
+                *team_counts.entry(team_b.clone()).or_insert(0) += 1;
+                selected.push(m);
+            } else {
+                still_deferred.push(m);
+            }
+        }
     }
 
-    all_matches
+    // Phase 2b: one below quota (fills the last straggler)
+    for m in still_deferred {
+        if teams.iter().all(|t| *team_counts.get(t).unwrap_or(&0) >= games_per_team) {
+            break;
+        }
+        if let Activity::Match { ref team_a, ref team_b, .. } = m {
+            let ca = *team_counts.get(team_a).unwrap_or(&0);
+            let cb = *team_counts.get(team_b).unwrap_or(&0);
+            if ca < games_per_team || cb < games_per_team {
+                *team_counts.entry(team_a.clone()).or_insert(0) += 1;
+                *team_counts.entry(team_b.clone()).or_insert(0) += 1;
+                selected.push(m);
+            }
+        }
+    }
+
+    selected
 }
 
 fn generate_finals_matches(

@@ -1,4 +1,4 @@
-mod activity;
+pub mod activity;
 mod evaluator;
 mod solver;
 pub mod utils;

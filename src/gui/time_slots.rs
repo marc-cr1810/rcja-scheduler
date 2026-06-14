@@ -145,8 +145,7 @@ impl AppState {
                     }
                     let games = match div.mode {
                         crate::model::SchedulingMode::HeadToHead => {
-                            let n = div_teams_count;
-                            let rr_matches = (n * div.games_per_team).div_ceil(2);
+                            let rr_matches = crate::scheduler::activity::compute_rr_match_count(div_teams_count, div.games_per_team);
                             let mut finals_matches = if div.finals_enabled {
                                 match div.finals_rounds.unwrap_or(crate::model::FinalsRounds::Grand) {
                                     crate::model::FinalsRounds::Grand => 1,
@@ -281,8 +280,7 @@ impl AppState {
             }
             let games = match div.mode {
                 SchedulingMode::HeadToHead => {
-                    let n = div_teams_count;
-                    let rr_matches = (n * div.games_per_team).div_ceil(2);
+                    let rr_matches = crate::scheduler::activity::compute_rr_match_count(div_teams_count, div.games_per_team);
                     let mut finals_matches = if div.finals_enabled {
                         match div.finals_rounds.unwrap_or(crate::model::FinalsRounds::Grand) {
                             crate::model::FinalsRounds::Grand => 1,
