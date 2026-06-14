@@ -64,6 +64,7 @@ pub struct AppState {
     pub new_vol_name: String,
     pub new_vol_caps: Vec<String>,
     pub new_vol_conflicts_list: Vec<String>,
+    pub new_vol_locked_fields: Vec<String>,
 
     // Solver state
     pub solver_iterations: usize,
@@ -185,6 +186,7 @@ impl Default for AppState {
             new_vol_name: String::new(),
             new_vol_caps: Vec::new(),
             new_vol_conflicts_list: Vec::new(),
+            new_vol_locked_fields: Vec::new(),
 
             solver_iterations: 50000,
             solver_restarts: 5,
@@ -443,6 +445,7 @@ impl AppState {
             capabilities: Some(vec!["soccer_open".to_string(), "simple_simon".to_string()]),
             conflict_organizations: Vec::new(),
             attendance_status: std::collections::HashMap::new(),
+            locked_field_ids: None,
         });
 
 
@@ -453,6 +456,7 @@ impl AppState {
             capabilities: Some(vec!["soccer_open".to_string(), "simple_simon".to_string()]),
             conflict_organizations: Vec::new(),
             attendance_status: std::collections::HashMap::new(),
+            locked_field_ids: None,
         });
 
         self.config.volunteers.push(Volunteer {
@@ -462,6 +466,7 @@ impl AppState {
             capabilities: Some(vec!["soccer_open".to_string()]),
             conflict_organizations: Vec::new(),
             attendance_status: std::collections::HashMap::new(),
+            locked_field_ids: None,
         });
 
         self.config.volunteers.push(Volunteer {
@@ -471,6 +476,7 @@ impl AppState {
             capabilities: Some(vec!["simple_simon".to_string()]),
             conflict_organizations: Vec::new(),
             attendance_status: std::collections::HashMap::new(),
+            locked_field_ids: None,
         });
 
         self.config.volunteers.push(Volunteer {
@@ -480,6 +486,7 @@ impl AppState {
             capabilities: None, // can judge anything
             conflict_organizations: Vec::new(),
             attendance_status: std::collections::HashMap::new(),
+            locked_field_ids: None,
         });
 
         self.config.volunteers.push(Volunteer {
@@ -489,6 +496,7 @@ impl AppState {
             capabilities: None,
             conflict_organizations: Vec::new(),
             attendance_status: std::collections::HashMap::new(),
+            locked_field_ids: None,
         });
 
         self.config.volunteers.push(Volunteer {
@@ -498,6 +506,7 @@ impl AppState {
             capabilities: None,
             conflict_organizations: Vec::new(),
             attendance_status: std::collections::HashMap::new(),
+            locked_field_ids: None,
         });
 
         self.clear_schedule();

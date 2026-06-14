@@ -191,14 +191,20 @@ fn construct_initial_internal_schedule(
         let qualified_volunteers: Vec<usize> = (0..config.volunteers.len())
             .filter(|&v_idx| {
                 let v = &config.volunteers[v_idx];
+                // Respect a field lock: a pinned volunteer is only eligible for an
+                // activity currently placed on one of their allowed fields.
+                if let Some(ref locked) = v.locked_field_indices
+                    && !field_idx.is_some_and(|f| locked.contains(&f)) {
+                    return false;
+                }
                 if activity.is_interview
                     && config.can_interview[v_idx] { return true; }
-                
+
                 if let Some(ref caps) = v.capability_indices {
                     if caps.contains(&activity.division_idx) { return true; }
                     return false;
                 }
-                
+
                 true
             })
             .collect();
@@ -425,12 +431,18 @@ fn mutate_internal_schedule_in_place(
             };
 
             if req_volunteers > 0 {
+                let field_idx = schedule.assignments[idx].field_idx;
                 let qualified: Vec<usize> = (0..config.volunteers.len())
                     .filter(|&v_idx| {
                         let v = &config.volunteers[v_idx];
+                        // Respect a field lock against the activity's current field.
+                        if let Some(ref locked) = v.locked_field_indices
+                            && !field_idx.is_some_and(|f| locked.contains(&f)) {
+                            return false;
+                        }
                         if activity.is_interview
                             && config.can_interview[v_idx] { return true; }
-                        
+
                         if let Some(ref caps) = v.capability_indices {
                             if caps.contains(&activity.division_idx) { return true; }
                             return false;
@@ -707,9 +719,9 @@ mod tests {
         }
         config.time_slots = slots;
         config.volunteers = vec![
-            Volunteer { id: "v1".into(), name: "V1".into(), availabilities: vec![], capabilities: None, conflict_organizations: vec![], attendance_status: Default::default() },
-            Volunteer { id: "v2".into(), name: "V2".into(), availabilities: vec!["Saturday_s0".into(), "Saturday_s1".into()], capabilities: Some(vec!["d1".into()]), conflict_organizations: vec!["orgA".into()], attendance_status: Default::default() },
-            Volunteer { id: "v3".into(), name: "V3".into(), availabilities: vec![], capabilities: Some(vec!["d2".into(), "d3".into()]), conflict_organizations: vec!["orgE".into()], attendance_status: Default::default() },
+            Volunteer { id: "v1".into(), name: "V1".into(), availabilities: vec![], capabilities: None, conflict_organizations: vec![], attendance_status: Default::default(), locked_field_ids: Some(vec!["c1".into()]) },
+            Volunteer { id: "v2".into(), name: "V2".into(), availabilities: vec!["Saturday_s0".into(), "Saturday_s1".into()], capabilities: Some(vec!["d1".into()]), conflict_organizations: vec!["orgA".into()], attendance_status: Default::default(), locked_field_ids: None },
+            Volunteer { id: "v3".into(), name: "V3".into(), availabilities: vec![], capabilities: Some(vec!["d2".into(), "d3".into()]), conflict_organizations: vec!["orgE".into()], attendance_status: Default::default(), locked_field_ids: None },
         ];
         let _ = SpecialistMode::Strict;
         config

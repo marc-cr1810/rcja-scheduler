@@ -262,6 +262,16 @@ impl<'a> FastEvaluator<'a> {
                     sink.report(CostClass::Hard, multiplier, ConflictKind::ConflictOfInterest { vol_idx: v_idx, team_idx: t_idx }, &[idx]);
                 }
             }
+
+            // Field lock: a volunteer pinned to a set of fields/interview tables
+            // may only be rostered on an activity placed on one of them. A missing
+            // field is already reported as FieldMissing, so only flag a present but
+            // disallowed field here.
+            if let Some(ref locked) = v.locked_field_indices
+                && let Some(f_idx) = assign.field_idx
+                && !locked.contains(&f_idx) {
+                sink.report(CostClass::Hard, multiplier, ConflictKind::VolFieldLocked { vol_idx: v_idx }, &[idx]);
+            }
         }
 
         let req = if activity.is_interview { config.divisions[activity.division_idx].interview_volunteers_required }
@@ -1374,9 +1384,9 @@ mod tests {
             .collect();
         config.day_configs = vec![DayGenConfig { day: "Sat".into(), ..Default::default() }];
         config.volunteers = vec![
-            Volunteer { id: "v1".into(), name: "V1".into(), availabilities: vec![], capabilities: None, conflict_organizations: vec![], attendance_status: Default::default() },
-            Volunteer { id: "v2".into(), name: "V2".into(), availabilities: vec!["s0".into(), "s1".into()], capabilities: Some(vec!["d1".into()]), conflict_organizations: vec!["orgA".into()], attendance_status: Default::default() },
-            Volunteer { id: "v3".into(), name: "V3".into(), availabilities: vec![], capabilities: Some(vec!["d2".into()]), conflict_organizations: vec![], attendance_status: Default::default() },
+            Volunteer { id: "v1".into(), name: "V1".into(), availabilities: vec![], capabilities: None, conflict_organizations: vec![], attendance_status: Default::default(), locked_field_ids: None },
+            Volunteer { id: "v2".into(), name: "V2".into(), availabilities: vec!["s0".into(), "s1".into()], capabilities: Some(vec!["d1".into()]), conflict_organizations: vec!["orgA".into()], attendance_status: Default::default(), locked_field_ids: None },
+            Volunteer { id: "v3".into(), name: "V3".into(), availabilities: vec![], capabilities: Some(vec!["d2".into()]), conflict_organizations: vec![], attendance_status: Default::default(), locked_field_ids: None },
         ];
 
         let activities = crate::scheduler::generate_activities(&config);
@@ -1569,7 +1579,7 @@ mod tests {
 
         let mut vol = Volunteer {
             id: "v1".into(), name: "Vol One".into(), availabilities: vec!["s1".into()],
-            capabilities: None, conflict_organizations: vec![], attendance_status: Default::default(),
+            capabilities: None, conflict_organizations: vec![], attendance_status: Default::default(), locked_field_ids: None,
         };
         vol.attendance_status.insert("Sat".into(), AttendanceStatus::NoShow);
         config.volunteers = vec![vol];

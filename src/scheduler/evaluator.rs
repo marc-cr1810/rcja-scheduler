@@ -106,6 +106,17 @@ fn format_hard_conflict(
         ConflictKind::VolUnavailable { vol_idx, slot_idx } => (ConflictSeverity::Error, format!("Volunteer Availability: '{}' is not available during slot '{}'.", vol_name(vol_idx), slot_disp(slot_idx))),
         ConflictKind::VolUnqualified { vol_idx } => (ConflictSeverity::Error, format!("Volunteer Capability: '{}' lacks the required qualifications for '{}'.", vol_name(vol_idx), act)),
         ConflictKind::ConflictOfInterest { vol_idx, team_idx } => (ConflictSeverity::Error, format!("Conflict of Interest: '{}' has a conflict of interest with team '{}'.", vol_name(vol_idx), team_name(team_idx))),
+        ConflictKind::VolFieldLocked { vol_idx } => {
+            let id = &internal.volunteers[vol_idx].id;
+            let locked = config.volunteers.iter().find(|v| &v.id == id)
+                .and_then(|v| v.locked_field_ids.as_ref())
+                .map(|ids| ids.iter()
+                    .map(|fid| config.fields.iter().find(|f| &f.id == fid).map(|f| f.name.clone()).unwrap_or_else(|| fid.clone()))
+                    .collect::<Vec<_>>()
+                    .join(", "))
+                .unwrap_or_default();
+            (ConflictSeverity::Error, format!("Field Lock: '{}' is locked to [{}] but is rostered on '{}'.", vol_name(vol_idx), locked, act))
+        }
         ConflictKind::UnderRostered { required, assigned } => (ConflictSeverity::Warning, format!("Under-Rostered: '{}' requires at least {} volunteer(s), but only {} assigned.", act, required, assigned)),
         ConflictKind::InterviewsDisabled => (ConflictSeverity::Error, format!("Interviews are disabled on the day '{}' is scheduled.", act)),
         ConflictKind::DurationExceedsDay => (ConflictSeverity::Error, format!("Duration Error: Activity '{}' exceeds the end of the day.", act)),
@@ -388,6 +399,57 @@ mod tests {
 
         assert_eq!(cost1.1, 0.0);
         assert!(cost2.1 >= 10.0);
+    }
+
+    #[test]
+    fn test_volunteer_field_lock_hard_conflict() {
+        let mut config = TournamentConfig::default();
+        config.divisions = vec![Division {
+            id: "div1".into(), name: "Div 1".into(), mode: SchedulingMode::HeadToHead,
+            games_per_team: 2, volunteers_required: 1, duration_minutes: 20,
+            allowed_fields: None, interviews_enabled: false,
+            interview_volunteers_required: 0, interview_duration_minutes: 0,
+            finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
+            finals_third_place_playoff: false, color: None, min_match_break_minutes: None,
+        }];
+        config.teams = vec![
+            Team { name: "a".into(), division_id: "div1".into(), organization: "o1".into() },
+            Team { name: "b".into(), division_id: "div1".into(), organization: "o2".into() },
+        ];
+        config.fields = vec![
+            Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: None },
+            Field { id: "f2".into(), name: "Field 2".into(), kind: FieldKind::Competition, allowed_divisions: None },
+        ];
+        config.time_slots = vec![
+            TimeSlot { id: "s1".into(), day: "Sat".into(), start_time: "09:00".into(), end_time: "09:20".into(), kind: FieldKind::Competition },
+        ];
+        config.day_configs = vec![DayGenConfig { day: "Sat".into(), ..Default::default() }];
+        // Vee is locked to Field 1 only.
+        config.volunteers = vec![Volunteer {
+            id: "vee".into(), name: "Vee".into(), availabilities: vec!["s1".into()],
+            capabilities: None, conflict_organizations: vec![], attendance_status: Default::default(),
+            locked_field_ids: Some(vec!["f1".into()]),
+        }];
+
+        let params = SolverParams::default();
+        let mk = |field: &str| Schedule {
+            assignments: vec![ScheduleAssignment {
+                activity: Activity::Match { id: "div1_m_1_c0_r0".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } },
+                time_slot_id: "s1".into(), field_id: Some(field.into()), volunteer_ids: vec!["vee".into()],
+            }],
+        };
+
+        // On the allowed field: no hard conflict from the lock.
+        let allowed = mk("f1");
+        assert_eq!(evaluate_schedule_cost(&config, &allowed, &params).0, 0.0,
+            "locked volunteer on their allowed field must not conflict");
+
+        // On a different field: one hard conflict, surfaced as a Field Lock message.
+        let violating = mk("f2");
+        assert!(evaluate_schedule_cost(&config, &violating, &params).0 >= 1.0,
+            "locked volunteer on a disallowed field must be a hard conflict");
+        let msgs = get_schedule_conflicts(&config, &violating, &params);
+        assert!(msgs.iter().any(|m| m.contains("Field Lock")), "expected a Field Lock conflict, got {msgs:?}");
     }
 
     #[test]

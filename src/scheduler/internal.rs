@@ -26,6 +26,9 @@ pub struct InternalVolunteer {
     pub availability_slots: Vec<bool>, // indexed by slot_idx
     pub capability_indices: Option<Vec<usize>>, // None means all
     pub conflict_org_indices: Vec<usize>,
+    /// Field indices this volunteer is locked to. `None` (or empty) means no
+    /// restriction; otherwise the volunteer may only be rostered on a listed field.
+    pub locked_field_indices: Option<Vec<usize>>,
 }
 
 #[allow(dead_code)]
@@ -146,6 +149,9 @@ impl InternalTournamentConfig {
         sorted_slots.sort_by_key(|s| (get_day_idx(&s.day), s.start_minutes()));
 
         let div_map: HashMap<String, usize> = config.divisions.iter().enumerate().map(|(i, d)| (d.id.clone(), i)).collect();
+        // Internal field indices match the order of `config.fields`, so this map
+        // resolves a volunteer's locked field IDs to those indices.
+        let field_map: HashMap<String, usize> = config.fields.iter().enumerate().map(|(i, f)| (f.id.clone(), i)).collect();
 
         // Include ALL team names from activities, including finals placeholders
         let mut all_team_names: Vec<String> = config.teams.iter().map(|t| t.name.clone()).collect();
@@ -208,6 +214,10 @@ impl InternalTournamentConfig {
                     caps.iter().filter_map(|c| div_map.get(c).copied()).collect()
                 }),
                 conflict_org_indices: v.conflict_organizations.iter().filter_map(|o| org_map.get(o).copied()).collect(),
+                locked_field_indices: v.locked_field_ids.as_ref().and_then(|ids| {
+                    let idxs: Vec<usize> = ids.iter().filter_map(|f| field_map.get(f).copied()).collect();
+                    if idxs.is_empty() { None } else { Some(idxs) }
+                }),
             }
         }).collect();
 

@@ -26,6 +26,18 @@ impl AppState {
             .map(|d| (d.id.clone(), d.name.clone()))
             .collect();
 
+        // (id, display name) for every field / interview table, used by the
+        // per-volunteer field-lock selectors.
+        let fields_list: Vec<(String, String)> = self.config.fields.iter()
+            .map(|f| {
+                let label = match f.kind {
+                    crate::model::FieldKind::Interview => format!("🎤 {}", f.name),
+                    crate::model::FieldKind::Competition => f.name.clone(),
+                };
+                (f.id.clone(), label)
+            })
+            .collect();
+
         let mut all_orgs: Vec<String> = self.config.teams.iter()
             .map(|t| t.organization.clone())
             .filter(|s| !s.is_empty())
@@ -90,6 +102,24 @@ impl AppState {
                         }
                     });
 
+                    if !fields_list.is_empty() {
+                        ui.add_space(5.0);
+                        ui.label("Lock to Fields / Interview Tables (optional):");
+                        ui.label(RichText::new("If any are selected, this volunteer will only be rostered on those fields.").size(11.0).color(Color32::from_rgb(156, 163, 175)));
+                        ui.horizontal_wrapped(|ui| {
+                            for (fid, fname) in &fields_list {
+                                let mut locked = self.new_vol_locked_fields.contains(fid);
+                                if ui.checkbox(&mut locked, fname).changed() {
+                                    if locked {
+                                        self.new_vol_locked_fields.push(fid.clone());
+                                    } else {
+                                        self.new_vol_locked_fields.retain(|x| x != fid);
+                                    }
+                                }
+                            }
+                        });
+                    }
+
                     ui.add_space(8.0);
                     if ui.button(RichText::new("+ Register Volunteer").strong().color(Color32::WHITE)).clicked()
                         && !self.new_vol_name.trim().is_empty() {
@@ -102,11 +132,13 @@ impl AppState {
                                 capabilities: if self.new_vol_caps.is_empty() { None } else { Some(self.new_vol_caps.clone()) },
                                 conflict_organizations: self.new_vol_conflicts_list.clone(),
                                 attendance_status: std::collections::HashMap::new(),
+                                locked_field_ids: if self.new_vol_locked_fields.is_empty() { None } else { Some(self.new_vol_locked_fields.clone()) },
                             });
 
                             self.new_vol_name.clear();
                             self.new_vol_conflicts_list.clear();
                             self.new_vol_caps.clear();
+                            self.new_vol_locked_fields.clear();
                             self.clear_schedule();
                             self.update_diagnostics();
                             self.status_message = "Volunteer registered!".to_string();
@@ -162,7 +194,7 @@ impl AppState {
             .cloned()
             .collect();
 
-        let num_cols = active_slots.len() + 4;
+        let num_cols = active_slots.len() + 5;
         let mut to_delete = None;
 
         // Clone division mapping to avoid double borrows on config
@@ -175,6 +207,7 @@ impl AppState {
                 ui.label(RichText::new("Volunteer").strong());
                 ui.label(RichText::new("Qualified for").strong());
                 ui.label(RichText::new("Conflicts").strong());
+                ui.label(RichText::new("Locked To").strong());
 
                 for slot in &active_slots {
                     ui.label(RichText::new(format!("{}-{}", slot.start_time, slot.end_time)).size(10.0).strong());
@@ -285,6 +318,46 @@ impl AppState {
                         });
 
                     if org_changed {
+                        config_changed = true;
+                    }
+
+                    // 3b. Field lock (Locked To) — restrict this volunteer to a set
+                    // of fields / interview tables. Empty means no restriction.
+                    let mut lock_changed = false;
+                    let lock_label = match &vol.locked_field_ids {
+                        Some(ids) if !ids.is_empty() => {
+                            let names: Vec<String> = ids.iter()
+                                .map(|fid| fields_list.iter().find(|(id, _)| id == fid)
+                                    .map(|(_, n)| n.clone())
+                                    .unwrap_or_else(|| fid.clone()))
+                                .collect();
+                            names.join(", ")
+                        }
+                        _ => "Any Field".to_string(),
+                    };
+                    egui::ComboBox::from_id_source(format!("vol_lock_edit_{}", v_idx))
+                        .selected_text(lock_label)
+                        .show_ui(ui, |ui| {
+                            if fields_list.is_empty() {
+                                ui.label("No fields defined");
+                            }
+                            for (fid, fname) in &fields_list {
+                                let mut locked = vol.locked_field_ids.as_ref().is_some_and(|ids| ids.contains(fid));
+                                if ui.checkbox(&mut locked, fname).changed() {
+                                    let ids = vol.locked_field_ids.get_or_insert_with(Vec::new);
+                                    if locked {
+                                        ids.push(fid.clone());
+                                    } else {
+                                        ids.retain(|x| x != fid);
+                                    }
+                                    if ids.is_empty() {
+                                        vol.locked_field_ids = None;
+                                    }
+                                    lock_changed = true;
+                                }
+                            }
+                        });
+                    if lock_changed {
                         config_changed = true;
                     }
 

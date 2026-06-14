@@ -151,6 +151,11 @@ pub struct Volunteer {
     pub conflict_organizations: Vec<String>, // list of organization names they cannot judge
     #[serde(default)]
     pub attendance_status: HashMap<String, AttendanceStatus>,
+    /// Field/interview-table IDs this volunteer is locked to. `None` or an empty
+    /// list means no restriction; otherwise the volunteer may only be rostered on
+    /// an activity placed on one of these fields.
+    #[serde(default)]
+    pub locked_field_ids: Option<Vec<String>>,
 }
 
 impl Volunteer {
@@ -611,7 +616,7 @@ mod tests {
         config.volunteers.push(Volunteer {
             id: "v1".into(), name: "Vol".into(), availabilities: vec!["s1".into()],
             capabilities: Some(vec!["d1".into()]), conflict_organizations: vec![],
-            attendance_status: Default::default(),
+            attendance_status: Default::default(), locked_field_ids: None,
         });
 
         let json = serde_json::to_string(&config).expect("serialize");

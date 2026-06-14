@@ -44,6 +44,9 @@ pub enum ConflictKind {
     VolUnqualified { vol_idx: usize },
     /// A volunteer has a declared conflict of interest with a participating team.
     ConflictOfInterest { vol_idx: usize, team_idx: usize },
+    /// A volunteer is locked to a specific set of fields/interview tables but is
+    /// rostered on an activity placed on a different field.
+    VolFieldLocked { vol_idx: usize },
     /// Fewer volunteers rostered than the division requires.
     UnderRostered { required: usize, assigned: usize },
     /// An interview scheduled on a day where interviews are disabled.
