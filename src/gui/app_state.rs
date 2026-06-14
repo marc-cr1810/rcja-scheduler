@@ -495,6 +495,7 @@ impl AppState {
         });
 
         self.clear_schedule();
+        self.sync_solver_settings_from_config();
         self.assignment_conflicts = HashMap::new();
         self.solve_status = "Unsolved".to_string();
         self.solve_message = String::new();

@@ -33,6 +33,9 @@ impl AppState {
     }
 
     fn save_to_path(&mut self, path: std::path::PathBuf) {
+        // Sync solver/generator settings from AppState into the config before saving
+        self.sync_solver_settings_to_config();
+
         let json = match serde_json::to_string_pretty(&self.config) {
             Ok(json) => json,
             Err(e) => {
@@ -61,6 +64,10 @@ impl AppState {
                 if let Ok(config) = serde_json::from_reader(file) {
                     self.config = config;
                     self.current_file_path = Some(path.clone());
+                    // Migrate legacy fairness_mode for old configs that lack solver_settings
+                    self.migrate_legacy_fairness_mode();
+                    // Populate AppState solver fields from the loaded config
+                    self.sync_solver_settings_from_config();
                     self.clear_schedule();
                     self.update_diagnostics();
                     self.status_message = format!("Config loaded from '{}'", path.display());
@@ -70,6 +77,82 @@ impl AppState {
             } else {
                 self.status_message = format!("'{}' not found", path.display());
             }
+        }
+    }
+
+    /// Copy solver/generator settings from AppState fields into `self.config.solver_settings`.
+    pub fn sync_solver_settings_to_config(&mut self) {
+        let ss = &mut self.config.solver_settings;
+        ss.fairness_mode = self.solver_fairness_mode;
+        ss.iterations = self.solver_iterations;
+        ss.restarts = self.solver_restarts;
+        ss.vol_consecutive_weight = self.solver_vol_consecutive_weight;
+        ss.team_back_to_back_weight = self.solver_team_back_to_back_weight;
+        ss.field_variety_weight = self.solver_field_variety_weight;
+        ss.field_balance_weight = self.solver_field_balance_weight;
+        ss.vol_capability_weight = self.solver_vol_capability_weight;
+        ss.interview_late_weight = self.solver_interview_late_weight;
+        ss.interview_match_gap_weight = self.solver_interview_match_gap_weight;
+        ss.team_min_break_minutes = self.solver_team_min_break_minutes;
+        ss.team_break_buffer_minutes = self.solver_team_break_buffer_minutes;
+        ss.team_match_min_break_minutes = self.solver_team_match_min_break_minutes;
+        ss.team_match_break_buffer_minutes = self.solver_team_match_break_buffer_minutes;
+        ss.vol_specialist_mode = self.solver_vol_specialist_mode;
+        ss.team_wait_time_weight = self.solver_team_wait_time_weight;
+        ss.field_variety_strict = self.solver_field_variety_strict;
+        ss.vol_travel_weight = self.solver_vol_travel_weight;
+        ss.round_order_weight = self.solver_round_order_weight;
+        ss.vol_daily_shift_cap = self.solver_vol_daily_shift_cap;
+        ss.peak_period_weight = self.solver_peak_period_weight;
+        ss.finals_priority_multiplier = self.solver_finals_priority_multiplier;
+        ss.gen_slot_duration = self.gen_slot_duration;
+        ss.gen_interview_slot_duration = self.gen_interview_slot_duration;
+        ss.gen_match_slot_break = self.gen_match_slot_break;
+        ss.gen_interview_slot_break = self.gen_interview_slot_break;
+        // Keep legacy field in sync
+        self.config.fairness_mode = self.solver_fairness_mode;
+    }
+
+    /// Copy solver/generator settings from `self.config.solver_settings` into AppState fields.
+    pub fn sync_solver_settings_from_config(&mut self) {
+        let ss = &self.config.solver_settings;
+        self.solver_fairness_mode = ss.fairness_mode;
+        self.solver_iterations = ss.iterations;
+        self.solver_restarts = ss.restarts;
+        self.solver_vol_consecutive_weight = ss.vol_consecutive_weight;
+        self.solver_team_back_to_back_weight = ss.team_back_to_back_weight;
+        self.solver_field_variety_weight = ss.field_variety_weight;
+        self.solver_field_balance_weight = ss.field_balance_weight;
+        self.solver_vol_capability_weight = ss.vol_capability_weight;
+        self.solver_interview_late_weight = ss.interview_late_weight;
+        self.solver_interview_match_gap_weight = ss.interview_match_gap_weight;
+        self.solver_team_min_break_minutes = ss.team_min_break_minutes;
+        self.solver_team_break_buffer_minutes = ss.team_break_buffer_minutes;
+        self.solver_team_match_min_break_minutes = ss.team_match_min_break_minutes;
+        self.solver_team_match_break_buffer_minutes = ss.team_match_break_buffer_minutes;
+        self.solver_vol_specialist_mode = ss.vol_specialist_mode;
+        self.solver_team_wait_time_weight = ss.team_wait_time_weight;
+        self.solver_field_variety_strict = ss.field_variety_strict;
+        self.solver_vol_travel_weight = ss.vol_travel_weight;
+        self.solver_round_order_weight = ss.round_order_weight;
+        self.solver_vol_daily_shift_cap = ss.vol_daily_shift_cap;
+        self.solver_peak_period_weight = ss.peak_period_weight;
+        self.solver_finals_priority_multiplier = ss.finals_priority_multiplier;
+        self.gen_slot_duration = ss.gen_slot_duration;
+        self.gen_interview_slot_duration = ss.gen_interview_slot_duration;
+        self.gen_match_slot_break = ss.gen_match_slot_break;
+        self.gen_interview_slot_break = ss.gen_interview_slot_break;
+    }
+
+    /// For old config files that have a top-level `fairness_mode` but no `solver_settings`,
+    /// migrate the legacy value into `solver_settings.fairness_mode`.
+    fn migrate_legacy_fairness_mode(&mut self) {
+        // If solver_settings has the default fairness mode but the legacy field doesn't,
+        // it means this is an old config — adopt the legacy value.
+        if self.config.solver_settings.fairness_mode == crate::model::FairnessMode::Balanced
+            && self.config.fairness_mode != crate::model::FairnessMode::Balanced
+        {
+            self.config.solver_settings.fairness_mode = self.config.fairness_mode;
         }
     }
 

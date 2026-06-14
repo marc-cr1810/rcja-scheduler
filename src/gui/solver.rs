@@ -140,6 +140,7 @@ impl AppState {
                         if resp.clicked() {
                             self.solver_fairness_mode = *mode;
                             self.config.fairness_mode = *mode;
+                            self.config.solver_settings.fairness_mode = *mode;
                         }
                         ui.add_space(4.0);
                     }

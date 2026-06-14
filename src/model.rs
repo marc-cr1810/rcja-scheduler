@@ -412,6 +412,101 @@ impl Default for DayGenConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SolverSettings {
+    pub fairness_mode: FairnessMode,
+    pub iterations: usize,
+    pub restarts: usize,
+    pub vol_consecutive_weight: f64,
+    pub team_back_to_back_weight: f64,
+    pub field_variety_weight: f64,
+    pub field_balance_weight: f64,
+    pub vol_capability_weight: f64,
+    pub interview_late_weight: f64,
+    pub interview_match_gap_weight: f64,
+    pub team_min_break_minutes: u32,
+    pub team_break_buffer_minutes: u32,
+    pub team_match_min_break_minutes: u32,
+    pub team_match_break_buffer_minutes: u32,
+    pub vol_specialist_mode: SpecialistMode,
+    pub team_wait_time_weight: f64,
+    pub field_variety_strict: bool,
+    pub vol_travel_weight: f64,
+    pub round_order_weight: f64,
+    pub vol_daily_shift_cap: usize,
+    pub peak_period_weight: f64,
+    pub finals_priority_multiplier: f64,
+    // Time slot generator settings
+    pub gen_slot_duration: u32,
+    pub gen_interview_slot_duration: u32,
+    pub gen_match_slot_break: u32,
+    pub gen_interview_slot_break: u32,
+}
+
+impl Default for SolverSettings {
+    fn default() -> Self {
+        Self {
+            fairness_mode: FairnessMode::Balanced,
+            iterations: 50000,
+            restarts: 5,
+            vol_consecutive_weight: 1.0,
+            team_back_to_back_weight: 1.0,
+            field_variety_weight: 0.5,
+            field_balance_weight: 1.5,
+            vol_capability_weight: 0.5,
+            interview_late_weight: 0.5,
+            interview_match_gap_weight: 1.0,
+            team_min_break_minutes: 10,
+            team_break_buffer_minutes: 30,
+            team_match_min_break_minutes: 10,
+            team_match_break_buffer_minutes: 20,
+            vol_specialist_mode: SpecialistMode::Off,
+            team_wait_time_weight: 0.3,
+            field_variety_strict: false,
+            vol_travel_weight: 0.3,
+            round_order_weight: 5.0,
+            vol_daily_shift_cap: 0,
+            peak_period_weight: 0.1,
+            finals_priority_multiplier: 2.0,
+            gen_slot_duration: 20,
+            gen_interview_slot_duration: 10,
+            gen_match_slot_break: 5,
+            gen_interview_slot_break: 5,
+        }
+    }
+}
+
+impl PartialEq for SolverSettings {
+    fn eq(&self, other: &Self) -> bool {
+        self.fairness_mode == other.fairness_mode
+            && self.iterations == other.iterations
+            && self.restarts == other.restarts
+            && self.vol_consecutive_weight == other.vol_consecutive_weight
+            && self.team_back_to_back_weight == other.team_back_to_back_weight
+            && self.field_variety_weight == other.field_variety_weight
+            && self.field_balance_weight == other.field_balance_weight
+            && self.vol_capability_weight == other.vol_capability_weight
+            && self.interview_late_weight == other.interview_late_weight
+            && self.interview_match_gap_weight == other.interview_match_gap_weight
+            && self.team_min_break_minutes == other.team_min_break_minutes
+            && self.team_break_buffer_minutes == other.team_break_buffer_minutes
+            && self.team_match_min_break_minutes == other.team_match_min_break_minutes
+            && self.team_match_break_buffer_minutes == other.team_match_break_buffer_minutes
+            && self.vol_specialist_mode == other.vol_specialist_mode
+            && self.team_wait_time_weight == other.team_wait_time_weight
+            && self.field_variety_strict == other.field_variety_strict
+            && self.vol_travel_weight == other.vol_travel_weight
+            && self.round_order_weight == other.round_order_weight
+            && self.vol_daily_shift_cap == other.vol_daily_shift_cap
+            && self.peak_period_weight == other.peak_period_weight
+            && self.finals_priority_multiplier == other.finals_priority_multiplier
+            && self.gen_slot_duration == other.gen_slot_duration
+            && self.gen_interview_slot_duration == other.gen_interview_slot_duration
+            && self.gen_match_slot_break == other.gen_match_slot_break
+            && self.gen_interview_slot_break == other.gen_interview_slot_break
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TournamentConfig {
     pub competition_name: String,
@@ -421,10 +516,14 @@ pub struct TournamentConfig {
     pub time_slots: Vec<TimeSlot>,
     pub volunteers: Vec<Volunteer>,
     pub strict_capabilities: bool,
+    /// Legacy field — kept for backward-compatible deserialization of old configs.
+    /// New configs store fairness_mode inside `solver_settings`.
     #[serde(default)]
     pub fairness_mode: FairnessMode,
     #[serde(default)]
     pub day_configs: Vec<DayGenConfig>,
+    #[serde(default)]
+    pub solver_settings: SolverSettings,
 }
 
 #[cfg(test)]
@@ -512,5 +611,65 @@ mod tests {
         assert_eq!(restored.teams, config.teams);
         assert_eq!(restored.time_slots, config.time_slots);
         assert_eq!(restored.volunteers, config.volunteers);
+        assert_eq!(restored.solver_settings, config.solver_settings);
+    }
+
+    #[test]
+    fn solver_settings_round_trip() {
+        let mut config = TournamentConfig::default();
+        config.solver_settings = SolverSettings {
+            fairness_mode: FairnessMode::Strict,
+            iterations: 30000,
+            restarts: 8,
+            vol_consecutive_weight: 2.5,
+            team_back_to_back_weight: 0.7,
+            field_variety_weight: 1.2,
+            field_balance_weight: 3.0,
+            vol_capability_weight: 0.1,
+            interview_late_weight: 2.0,
+            interview_match_gap_weight: 0.8,
+            team_min_break_minutes: 15,
+            team_break_buffer_minutes: 45,
+            team_match_min_break_minutes: 20,
+            team_match_break_buffer_minutes: 35,
+            vol_specialist_mode: SpecialistMode::Strict,
+            team_wait_time_weight: 0.9,
+            field_variety_strict: true,
+            vol_travel_weight: 1.5,
+            round_order_weight: 8.0,
+            vol_daily_shift_cap: 6,
+            peak_period_weight: 0.5,
+            finals_priority_multiplier: 3.0,
+            gen_slot_duration: 15,
+            gen_interview_slot_duration: 8,
+            gen_match_slot_break: 3,
+            gen_interview_slot_break: 2,
+        };
+
+        let json = serde_json::to_string(&config).expect("serialize");
+        let restored: TournamentConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.solver_settings, config.solver_settings);
+    }
+
+    #[test]
+    fn legacy_config_without_solver_settings_loads_defaults() {
+        // Simulates loading a JSON file saved before solver_settings existed
+        let json = r#"{
+            "competition_name": "Old Config",
+            "divisions": [],
+            "teams": [],
+            "fields": [],
+            "time_slots": [],
+            "volunteers": [],
+            "strict_capabilities": false,
+            "fairness_mode": "Strict",
+            "day_configs": []
+        }"#;
+        let config: TournamentConfig = serde_json::from_str(json).expect("deserialize legacy");
+        assert_eq!(config.competition_name, "Old Config");
+        // solver_settings should get defaults
+        assert_eq!(config.solver_settings, SolverSettings::default());
+        // legacy fairness_mode should still parse
+        assert_eq!(config.fairness_mode, FairnessMode::Strict);
     }
 }
