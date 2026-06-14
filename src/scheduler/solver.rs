@@ -46,8 +46,8 @@ pub fn solve_schedule(
             };
             let mut current_schedule = construct_initial_internal_schedule(&internal_config, params.fairness_mode, &mut rng);
             let mut evaluator = FastEvaluator::new(&internal_config, params);
-            evaluator.init(&current_schedule);
-            let mut current_cost = evaluator.calculate_total_cost(&current_schedule);
+            evaluator.inc_init(&current_schedule);
+            let mut current_cost = evaluator.inc_total();
 
             let mut best_local_schedule = current_schedule.clone();
             let mut best_local_cost = current_cost;
@@ -64,7 +64,11 @@ pub fn solve_schedule(
                     // that is ultimately returned. We report the distinct hard
                     // *count* (same metric the GUI shows when done) so the live and
                     // final numbers are identical, plus the soft penalty score.
-                    let best_hard = distinct_hard_conflicts(&evaluator.collect_conflicts(&best_local_schedule)).len() as f64;
+                    // Use a throwaway evaluator: `collect_conflicts` runs a full
+                    // scan that rebuilds shared state for `best_local_schedule`,
+                    // which would corrupt `evaluator`'s incremental state for the
+                    // (different) current schedule.
+                    let best_hard = distinct_hard_conflicts(&FastEvaluator::new(&internal_config, params).collect_conflicts(&best_local_schedule)).len() as f64;
                     (progress_callback)(restart_idx, params.num_restarts, iter, params.max_iterations, best_hard, best_local_cost.1);
 
                     if let Some(ref flag) = params.cancel_flag
@@ -86,7 +90,10 @@ pub fn solve_schedule(
                     &mut rng,
                 );
 
-                let mutated_cost = evaluator.calculate_total_cost(&current_schedule);
+                // Score the move incrementally: detach the prior assignment(s),
+                // attach the new ones, recompute only the touched partitions.
+                let olds = mutation.old_assignments(&current_schedule);
+                let mutated_cost = evaluator.apply_change(&current_schedule, &olds);
 
                 let old_total = current_cost.0 * 1_000_000.0 + current_cost.1;
                 let new_total = mutated_cost.0 * 1_000_000.0 + mutated_cost.1;
@@ -103,8 +110,16 @@ pub fn solve_schedule(
                     if rng.gen_range(0.0..1.0) < prob && temp > 0.01 {
                         current_cost = mutated_cost;
                     } else {
-                        // Revert mutation
+                        // Reject: snapshot the new state, restore the schedule,
+                        // then feed the new values back as "prior" so the
+                        // evaluator detaches them and re-attaches the originals.
+                        let news: Vec<(usize, InternalAssignment)> = mutation
+                            .touched()
+                            .into_iter()
+                            .map(|i| (i, current_schedule.assignments[i].clone()))
+                            .collect();
                         revert_mutation(&mut current_schedule, mutation);
+                        evaluator.apply_change(&current_schedule, &news);
                     }
                 }
 
@@ -297,6 +312,47 @@ pub enum Mutation {
         idx1: usize, old_s1: usize, old_f1: Option<usize>,
         idx2: usize, old_s2: usize, old_f2: Option<usize>
     },
+}
+
+impl Mutation {
+    /// The assignment indices this mutation changed.
+    fn touched(&self) -> Vec<usize> {
+        match *self {
+            Mutation::Slot { idx, .. } | Mutation::Field { idx, .. } | Mutation::Volunteers { idx, .. } => vec![idx],
+            Mutation::Swap { idx1, idx2, .. } => vec![idx1, idx2],
+        }
+    }
+
+    /// Reconstructs the assignment(s) as they were *before* this mutation, given
+    /// the post-mutation `schedule`. Only the field(s) the mutation changed
+    /// differ, so the rest is read back from the current schedule. Returned as
+    /// `(idx, prior_assignment)` pairs ready for [`FastEvaluator::apply_change`].
+    fn old_assignments(&self, schedule: &InternalSchedule) -> Vec<(usize, InternalAssignment)> {
+        match self {
+            Mutation::Slot { idx, old_slot } => {
+                let mut a = schedule.assignments[*idx].clone();
+                a.slot_idx = *old_slot;
+                vec![(*idx, a)]
+            }
+            Mutation::Field { idx, old_field } => {
+                let mut a = schedule.assignments[*idx].clone();
+                a.field_idx = *old_field;
+                vec![(*idx, a)]
+            }
+            Mutation::Volunteers { idx, old_vols } => {
+                let mut a = schedule.assignments[*idx].clone();
+                a.volunteer_indices = old_vols.clone();
+                vec![(*idx, a)]
+            }
+            Mutation::Swap { idx1, old_s1, old_f1, idx2, old_s2, old_f2 } => {
+                let mut a1 = schedule.assignments[*idx1].clone();
+                a1.slot_idx = *old_s1; a1.field_idx = *old_f1;
+                let mut a2 = schedule.assignments[*idx2].clone();
+                a2.slot_idx = *old_s2; a2.field_idx = *old_f2;
+                vec![(*idx1, a1), (*idx2, a2)]
+            }
+        }
+    }
 }
 
 fn mutate_internal_schedule_in_place(
@@ -605,6 +661,119 @@ mod tests {
         let s1 = solve_schedule(&config, &SolverParams { seed: Some(1), ..base.clone() }, |_, _, _, _, _, _| {});
         let s2 = solve_schedule(&config, &SolverParams { seed: Some(2), ..base }, |_, _, _, _, _, _| {});
         assert!(s1.is_some() && s2.is_some());
+    }
+
+    /// A config broad enough to fire most rule kinds: three divisions (one
+    /// individual-run, so soft field-variety is active), interviews, volunteers
+    /// with availability/capability/conflict constraints, a division-restricted
+    /// field, and two days.
+    fn guardrail_config() -> TournamentConfig {
+        use crate::model::{SpecialistMode, Volunteer};
+        let mut config = TournamentConfig::default();
+        let div = |id: &str, mode, games, interviews| Division {
+            id: id.into(), name: id.into(), mode,
+            games_per_team: games, volunteers_required: 1, duration_minutes: 20,
+            allowed_fields: None, interviews_enabled: interviews,
+            interview_volunteers_required: 1, interview_duration_minutes: 10,
+            finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
+            finals_third_place_playoff: false, color: None, min_match_break_minutes: None,
+        };
+        config.divisions = vec![
+            div("d1", SchedulingMode::HeadToHead, 3, true),
+            div("d2", SchedulingMode::HeadToHead, 2, false),
+            div("d3", SchedulingMode::IndividualRun, 2, false),
+        ];
+        for (d, names) in [("d1", &["A", "B", "C", "D"][..]), ("d2", &["E", "F", "G", "H"][..]), ("d3", &["I", "J", "K", "L"][..])] {
+            for t in names {
+                config.teams.push(Team { name: (*t).into(), division_id: d.into(), organization: format!("org{t}") });
+            }
+        }
+        config.fields = vec![
+            Field { id: "c1".into(), name: "Court 1".into(), kind: FieldKind::Competition, allowed_divisions: None },
+            Field { id: "c2".into(), name: "Court 2".into(), kind: FieldKind::Competition, allowed_divisions: Some(vec!["d1".into()]) },
+            Field { id: "c3".into(), name: "Court 3".into(), kind: FieldKind::Competition, allowed_divisions: None },
+            Field { id: "iv".into(), name: "Interview".into(), kind: FieldKind::Interview, allowed_divisions: None },
+        ];
+        let fmt = |m: u32| format!("{:02}:{:02}", m / 60, m % 60);
+        let mut slots = Vec::new();
+        for (di, day) in ["Saturday", "Sunday"].iter().enumerate() {
+            for i in 0..10u32 {
+                let start = 9 * 60 + i * 20;
+                let kind = if i % 5 == 4 { FieldKind::Interview } else { FieldKind::Competition };
+                slots.push(TimeSlot { id: format!("{day}_s{i}"), day: (*day).into(), start_time: fmt(start), end_time: fmt(start + 20), kind });
+            }
+            config.day_configs.push(DayGenConfig { day: (*day).into(), ..Default::default() });
+            let _ = di;
+        }
+        config.time_slots = slots;
+        config.volunteers = vec![
+            Volunteer { id: "v1".into(), name: "V1".into(), availabilities: vec![], capabilities: None, conflict_organizations: vec![], attendance_status: Default::default() },
+            Volunteer { id: "v2".into(), name: "V2".into(), availabilities: vec!["Saturday_s0".into(), "Saturday_s1".into()], capabilities: Some(vec!["d1".into()]), conflict_organizations: vec!["orgA".into()], attendance_status: Default::default() },
+            Volunteer { id: "v3".into(), name: "V3".into(), availabilities: vec![], capabilities: Some(vec!["d2".into(), "d3".into()]), conflict_organizations: vec!["orgE".into()], attendance_status: Default::default() },
+        ];
+        let _ = SpecialistMode::Strict;
+        config
+    }
+
+    /// The incremental evaluator must agree with a full recompute at every step.
+    /// We drive the real mutation operators over a rich instance for thousands of
+    /// moves — applying and (half the time) reverting each — and assert the
+    /// maintained `(hard, soft)` cost equals a from-scratch `calculate_total_cost`
+    /// before the move, after applying it, and after reverting it. This is the
+    /// guardrail behind the whole delta-evaluation path.
+    #[test]
+    fn incremental_matches_full_recompute() {
+        use rand::{SeedableRng, rngs::StdRng, Rng};
+        use crate::model::SpecialistMode;
+        use super::super::fast_evaluator::FastEvaluator;
+
+        let config = guardrail_config();
+        let activities = super::super::generate_activities(&config);
+        assert!(!activities.is_empty());
+        let ic = super::super::internal::InternalTournamentConfig::compile(&config, &activities);
+
+        let params = SolverParams {
+            vol_daily_shift_cap: 2,
+            team_min_break_minutes: 15,
+            team_match_min_break_minutes: 20,
+            vol_specialist_mode: SpecialistMode::Strict,
+            ..SolverParams::default()
+        };
+
+        let mut rng = StdRng::seed_from_u64(0xBEEF);
+        let mut schedule = construct_initial_internal_schedule(&ic, params.fairness_mode, &mut rng);
+        let mut ev = FastEvaluator::new(&ic, &params);
+        ev.inc_init(&schedule);
+
+        let close = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6;
+        let full = |sched: &InternalSchedule| {
+            let mut e = FastEvaluator::new(&ic, &params);
+            e.calculate_total_cost(sched)
+        };
+
+        for step in 0..5000 {
+            let inc = ev.inc_total();
+            let f = full(&schedule);
+            assert!(close(inc, f), "step {step} pre-mutate: inc {inc:?} != full {f:?}");
+
+            let mutation = mutate_internal_schedule_in_place(&ic, &mut schedule, &mut ev, &params, &mut rng);
+            let olds = mutation.old_assignments(&schedule);
+            let inc_after = ev.apply_change(&schedule, &olds);
+            let f_after = full(&schedule);
+            assert!(close(inc_after, f_after), "step {step} post-apply: inc {inc_after:?} != full {f_after:?}");
+
+            if rng.gen_bool(0.5) {
+                let news: Vec<(usize, InternalAssignment)> = mutation
+                    .touched()
+                    .into_iter()
+                    .map(|i| (i, schedule.assignments[i].clone()))
+                    .collect();
+                revert_mutation(&mut schedule, mutation);
+                let inc_rev = ev.apply_change(&schedule, &news);
+                let f_rev = full(&schedule);
+                assert!(close(inc_rev, f_rev), "step {step} post-revert: inc {inc_rev:?} != full {f_rev:?}");
+            }
+        }
     }
 
     #[test]

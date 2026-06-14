@@ -29,6 +29,40 @@ pub struct FastEvaluator<'a> {
     // Current total cost
     current_hard_conflicts: f64,
     current_soft_penalties: f64,
+
+    // --- Incremental (delta) evaluation state ---
+    // Set up by `inc_init` and maintained across mutations by `apply_delta` /
+    // `revert_delta`, so the solver can re-score a single move in O(touched)
+    // instead of re-scanning the whole schedule. Every running total below is an
+    // exact mirror of what the full `evaluate` would sum; the guardrail test
+    // `incremental_matches_full_recompute` asserts this on every step.
+    inc_ready: bool,
+    /// Per-assignment local (hard, soft) cost, and its running sum.
+    inc_local: Vec<(f64, f64)>,
+    inc_sum_local: (f64, f64),
+    /// Occupancy double-booking + daily-shift-cap penalty (all hard).
+    inc_occ_hard: f64,
+    /// Per-(team, day) break penalty (hard, soft) and running sum.
+    inc_team_day: Vec<Vec<(f64, f64)>>,
+    inc_sum_team_day: (f64, f64),
+    /// Per-(vol, day) consecutive/travel penalty (soft) and running sum.
+    inc_vol_day: Vec<Vec<f64>>,
+    inc_sum_vol_day: f64,
+    /// Per-division stage-order/round-order penalty (hard, soft) and running sum.
+    inc_div: Vec<(f64, f64)>,
+    inc_sum_div: (f64, f64),
+    /// Field-variety repeat units (Σ excess over counted (team, field) pairs).
+    /// Scored as hard when `field_variety_strict`, else soft × weight.
+    team_field_count: HashMap<(usize, usize), u32>,
+    inc_variety_units: f64,
+    /// Specialist spread: per-(vol, div) counts + per-vol distinct-division count,
+    /// summarised as Σ_vol max(0, distinct − 1).
+    vol_div_count: Vec<Vec<u32>>,
+    vol_distinct_divs: Vec<u32>,
+    inc_specialist_units: f64,
+    /// Per-slot occupancy for the peak-period variance (competition vs interview).
+    comp_slot_occ: Vec<f64>,
+    interview_slot_occ: Vec<f64>,
 }
 
 impl<'a> FastEvaluator<'a> {
@@ -56,6 +90,24 @@ impl<'a> FastEvaluator<'a> {
             division_assignments: vec![Vec::new(); num_divs],
             current_hard_conflicts: 0.0,
             current_soft_penalties: 0.0,
+
+            inc_ready: false,
+            inc_local: Vec::new(),
+            inc_sum_local: (0.0, 0.0),
+            inc_occ_hard: 0.0,
+            inc_team_day: vec![vec![(0.0, 0.0); num_days]; num_teams],
+            inc_sum_team_day: (0.0, 0.0),
+            inc_vol_day: vec![vec![0.0; num_days]; num_vols],
+            inc_sum_vol_day: 0.0,
+            inc_div: vec![(0.0, 0.0); num_divs],
+            inc_sum_div: (0.0, 0.0),
+            team_field_count: HashMap::new(),
+            inc_variety_units: 0.0,
+            vol_div_count: vec![vec![0; num_divs]; num_vols],
+            vol_distinct_divs: vec![0; num_vols],
+            inc_specialist_units: 0.0,
+            comp_slot_occ: vec![0.0; config.slots.len()],
+            interview_slot_occ: vec![0.0; config.slots.len()],
         }
     }
 
@@ -95,6 +147,144 @@ impl<'a> FastEvaluator<'a> {
         self.division_assignments[activity.division_idx].push(idx);
     }
 
+    /// Adds one assignment's contribution to the occupancy/count state used by
+    /// the full-scan [`Self::evaluate`]: grouped lists, per-bucket occupancy,
+    /// field load counts, and volunteer shift/daily counts. This is purely state
+    /// population — no rules are evaluated here (see [`Self::report_assignment_local`]).
+    fn add_assignment_counts(&mut self, idx: usize, assign: &InternalAssignment) {
+        let activity = &self.config.activities[idx];
+        let day_idx = self.config.slots[assign.slot_idx].day_idx;
+
+        for &t_idx in &activity.team_indices {
+            self.team_day_assignments[t_idx][day_idx].push(idx);
+        }
+        for &v_idx in &assign.volunteer_indices {
+            self.vol_day_assignments[v_idx][day_idx].push(idx);
+        }
+        self.division_assignments[activity.division_idx].push(idx);
+
+        let buckets = &self.config.activity_buckets[assign.slot_idx][activity.duration_class];
+        for &b_idx in buckets {
+            for &t_idx in &activity.team_indices {
+                self.team_slot_occupancy[t_idx][b_idx] += 1;
+            }
+            if let Some(f_idx) = assign.field_idx {
+                self.field_slot_occupancy[f_idx][b_idx] += 1;
+            }
+            for &v_idx in &assign.volunteer_indices {
+                self.volunteer_slot_occupancy[v_idx][b_idx] += 1;
+            }
+        }
+
+        if let Some(f_idx) = assign.field_idx {
+            self.field_total_counts[f_idx] += 1;
+            if activity.is_interview { self.field_interview_counts[f_idx] += 1; }
+            else { self.field_match_counts[f_idx] += 1; }
+        }
+
+        for &v_idx in &assign.volunteer_indices {
+            self.volunteer_shift_counts[v_idx] += 1;
+            self.volunteer_daily_counts[v_idx][day_idx] += 1;
+        }
+    }
+
+    /// Reports every hard/soft violation that depends only on a *single*
+    /// assignment (slot-kind mismatch, field suitability, volunteer
+    /// availability/qualification/conflict-of-interest, under-rostering,
+    /// interviews-disabled, duration overflow, interview-late). It reads nothing
+    /// from accumulated state, so it can be called either in the full scan or to
+    /// recompute one assignment's local cost in the incremental path — keeping a
+    /// single source of truth for these rules.
+    fn report_assignment_local<S: ConflictSink>(
+        params: &SolverParams,
+        config: &InternalTournamentConfig,
+        idx: usize,
+        assign: &InternalAssignment,
+        sink: &mut S,
+    ) {
+        let activity = &config.activities[idx];
+        let multiplier = if activity.is_final { params.finals_priority_multiplier } else { 1.0 };
+        let slot = &config.slots[assign.slot_idx];
+
+        if (activity.is_interview && slot.kind == FieldKind::Competition) || (!activity.is_interview && slot.kind == FieldKind::Interview) {
+            sink.report(CostClass::Hard, multiplier, ConflictKind::SlotKindMismatch, &[idx]);
+        }
+
+        if let Some(f_idx) = assign.field_idx {
+            let f = &config.fields[f_idx];
+            let mut suitable = true;
+            if f.kind == FieldKind::Competition && activity.is_interview { suitable = false; }
+            if f.kind == FieldKind::Interview && !activity.is_interview { suitable = false; }
+            if let Some(ref allowed) = f.allowed_division_indices
+                && !allowed.contains(&activity.division_idx) { suitable = false; }
+            if !suitable {
+                sink.report(CostClass::Hard, multiplier, ConflictKind::FieldUnsuitable { field_idx: f_idx }, &[idx]);
+            }
+        } else {
+            sink.report(CostClass::Hard, multiplier, ConflictKind::FieldMissing, &[idx]);
+        }
+
+        let overlapped = &config.activity_overlapping_slots[assign.slot_idx][activity.duration_class];
+        for &v_idx in &assign.volunteer_indices {
+            let v = &config.volunteers[v_idx];
+
+            for &s_idx in overlapped {
+                if !v.availability_slots[s_idx] {
+                    sink.report(CostClass::Hard, multiplier, ConflictKind::VolUnavailable { vol_idx: v_idx, slot_idx: s_idx }, &[idx]);
+                }
+            }
+
+            let mut qualified = true;
+            if activity.is_interview {
+                if !config.can_interview[v_idx] {
+                    if let Some(ref caps) = v.capability_indices {
+                        if !caps.contains(&activity.division_idx) { qualified = false; }
+                    } else {
+                        qualified = true;
+                    }
+                } else {
+                    qualified = true;
+                }
+            } else if let Some(ref caps) = v.capability_indices
+            && !caps.contains(&activity.division_idx) { qualified = false; }
+
+            if !qualified {
+                if config.strict_capabilities || activity.is_interview {
+                    sink.report(CostClass::Hard, multiplier, ConflictKind::VolUnqualified { vol_idx: v_idx }, &[idx]);
+                } else {
+                    sink.report(CostClass::Soft, params.vol_capability_weight * multiplier, ConflictKind::VolCapabilitySoft { vol_idx: v_idx }, &[idx]);
+                }
+            }
+
+            for &t_idx in &activity.team_indices {
+                let team = &config.teams[t_idx];
+                if v.conflict_org_indices.contains(&team.org_idx) {
+                    sink.report(CostClass::Hard, multiplier, ConflictKind::ConflictOfInterest { vol_idx: v_idx, team_idx: t_idx }, &[idx]);
+                }
+            }
+        }
+
+        let req = if activity.is_interview { config.divisions[activity.division_idx].interview_volunteers_required }
+                  else { config.divisions[activity.division_idx].volunteers_required };
+        if assign.volunteer_indices.len() < req {
+            let missing = (req - assign.volunteer_indices.len()) as f64;
+            sink.report(CostClass::Hard, missing * multiplier, ConflictKind::UnderRostered { required: req, assigned: assign.volunteer_indices.len() }, &[idx]);
+        }
+
+        if activity.is_interview && !config.day_interviews_enabled[slot.day_idx] {
+            sink.report(CostClass::Hard, 10.0 * multiplier, ConflictKind::InterviewsDisabled, &[idx]);
+        }
+        let day_end = config.slots.iter().filter(|s| s.day_idx == slot.day_idx)
+            .map(|s| s.start_minutes + s.duration_minutes).max().unwrap_or(0);
+        if slot.start_minutes + activity.duration_minutes > day_end {
+            sink.report(CostClass::Hard, multiplier, ConflictKind::DurationExceedsDay, &[idx]);
+        }
+
+        if activity.is_interview && params.interview_late_weight > 0.0 {
+            sink.report(CostClass::Soft, (assign.slot_idx as f64) * params.interview_late_weight, ConflictKind::InterviewLate, &[idx]);
+        }
+    }
+
     /// Scores `schedule`, routing every hard and soft violation through `sink`.
     /// This is the single rule engine: [`Self::calculate_total_cost`],
     /// [`Self::collect_conflicts`], and [`Self::get_conflicted_indices`] are thin
@@ -118,121 +308,8 @@ impl<'a> FastEvaluator<'a> {
         for row in &mut self.division_assignments { row.clear(); }
 
         for (idx, assign) in schedule.assignments.iter().enumerate() {
-            let activity = &self.config.activities[idx];
-            let day_idx = self.config.slots[assign.slot_idx].day_idx;
-
-            // Rebuild grouped lists
-            for &t_idx in &activity.team_indices {
-                self.team_day_assignments[t_idx][day_idx].push(idx);
-            }
-            for &v_idx in &assign.volunteer_indices {
-                self.vol_day_assignments[v_idx][day_idx].push(idx);
-            }
-            self.division_assignments[activity.division_idx].push(idx);
-
-            let multiplier = if activity.is_final { self.params.finals_priority_multiplier } else { 1.0 };
-            let buckets = &self.config.activity_buckets[assign.slot_idx][activity.duration_class];
-            let slot = &self.config.slots[assign.slot_idx];
-
-            if (activity.is_interview && slot.kind == FieldKind::Competition) || (!activity.is_interview && slot.kind == FieldKind::Interview) {
-                sink.report(CostClass::Hard, multiplier, ConflictKind::SlotKindMismatch, &[idx]);
-            }
-
-            // Occupancy
-            for &b_idx in buckets {
-                for &t_idx in &activity.team_indices {
-                    self.team_slot_occupancy[t_idx][b_idx] += 1;
-                }
-                if let Some(f_idx) = assign.field_idx {
-                    self.field_slot_occupancy[f_idx][b_idx] += 1;
-                }
-                for &v_idx in &assign.volunteer_indices {
-                    self.volunteer_slot_occupancy[v_idx][b_idx] += 1;
-                }
-            }
-
-            // Field Suitability
-            if let Some(f_idx) = assign.field_idx {
-                let f = &self.config.fields[f_idx];
-                let mut suitable = true;
-                if f.kind == FieldKind::Competition && activity.is_interview { suitable = false; }
-                if f.kind == FieldKind::Interview && !activity.is_interview { suitable = false; }
-                if let Some(ref allowed) = f.allowed_division_indices
-                    && !allowed.contains(&activity.division_idx) { suitable = false; }
-                if !suitable {
-                    sink.report(CostClass::Hard, multiplier, ConflictKind::FieldUnsuitable { field_idx: f_idx }, &[idx]);
-                }
-
-                self.field_total_counts[f_idx] += 1;
-                if activity.is_interview { self.field_interview_counts[f_idx] += 1; }
-                else { self.field_match_counts[f_idx] += 1; }
-            } else {
-                sink.report(CostClass::Hard, multiplier, ConflictKind::FieldMissing, &[idx]);
-            }
-
-            // Volunteer
-            let overlapped = &self.config.activity_overlapping_slots[assign.slot_idx][activity.duration_class];
-            for &v_idx in &assign.volunteer_indices {
-                let v = &self.config.volunteers[v_idx];
-                self.volunteer_shift_counts[v_idx] += 1;
-                self.volunteer_daily_counts[v_idx][day_idx] += 1;
-
-                for &s_idx in overlapped {
-                    if !v.availability_slots[s_idx] {
-                        sink.report(CostClass::Hard, multiplier, ConflictKind::VolUnavailable { vol_idx: v_idx, slot_idx: s_idx }, &[idx]);
-                    }
-                }
-
-                let mut qualified = true;
-                if activity.is_interview {
-                    if !self.config.can_interview[v_idx] {
-                        if let Some(ref caps) = v.capability_indices {
-                            if !caps.contains(&activity.division_idx) { qualified = false; }
-                        } else {
-                            // If caps is None, they are qualified for everything
-                            qualified = true;
-                        }
-                    } else {
-                        qualified = true;
-                    }
-                } else if let Some(ref caps) = v.capability_indices
-                && !caps.contains(&activity.division_idx) { qualified = false; }
-
-                if !qualified {
-                    if self.config.strict_capabilities || activity.is_interview {
-                        sink.report(CostClass::Hard, multiplier, ConflictKind::VolUnqualified { vol_idx: v_idx }, &[idx]);
-                    } else {
-                        sink.report(CostClass::Soft, self.params.vol_capability_weight * multiplier, ConflictKind::VolCapabilitySoft { vol_idx: v_idx }, &[idx]);
-                    }
-                }
-
-                for &t_idx in &activity.team_indices {
-                    let team = &self.config.teams[t_idx];
-                    if v.conflict_org_indices.contains(&team.org_idx) {
-                        sink.report(CostClass::Hard, multiplier, ConflictKind::ConflictOfInterest { vol_idx: v_idx, team_idx: t_idx }, &[idx]);
-                    }
-                }
-            }
-
-            let req = if activity.is_interview { self.config.divisions[activity.division_idx].interview_volunteers_required }
-                      else { self.config.divisions[activity.division_idx].volunteers_required };
-            if assign.volunteer_indices.len() < req {
-                let missing = (req - assign.volunteer_indices.len()) as f64;
-                sink.report(CostClass::Hard, missing * multiplier, ConflictKind::UnderRostered { required: req, assigned: assign.volunteer_indices.len() }, &[idx]);
-            }
-
-            if activity.is_interview && !self.config.day_interviews_enabled[slot.day_idx] {
-                sink.report(CostClass::Hard, 10.0 * multiplier, ConflictKind::InterviewsDisabled, &[idx]);
-            }
-            let day_end = self.config.slots.iter().filter(|s| s.day_idx == slot.day_idx)
-                .map(|s| s.start_minutes + s.duration_minutes).max().unwrap_or(0);
-            if slot.start_minutes + activity.duration_minutes > day_end {
-                sink.report(CostClass::Hard, multiplier, ConflictKind::DurationExceedsDay, &[idx]);
-            }
-
-            if activity.is_interview && self.params.interview_late_weight > 0.0 {
-                sink.report(CostClass::Soft, (assign.slot_idx as f64) * self.params.interview_late_weight, ConflictKind::InterviewLate, &[idx]);
-            }
+            self.add_assignment_counts(idx, assign);
+            Self::report_assignment_local(self.params, self.config, idx, assign, sink);
         }
 
         // Double booking + daily shift cap (hard), derived from the occupancy
@@ -244,7 +321,7 @@ impl<'a> FastEvaluator<'a> {
         // no-op for sinks that ignore soft.
         for div_idx in 0..self.config.divisions.len() {
             let list = &mut self.division_assignments[div_idx];
-            list.sort_by_key(|&idx| schedule.assignments[idx].slot_idx);
+            list.sort_by_key(|&idx| (schedule.assignments[idx].slot_idx, idx));
             Self::report_division_penalties(self.params, self.config, schedule, list, sink);
         }
 
@@ -282,7 +359,7 @@ impl<'a> FastEvaluator<'a> {
         for t_idx in 0..self.config.teams.len() {
             for d_idx in 0..self.config.days.len() {
                 let list = &mut self.team_day_assignments[t_idx][d_idx];
-                list.sort_by_key(|&idx| schedule.assignments[idx].slot_idx);
+                list.sort_by_key(|&idx| (schedule.assignments[idx].slot_idx, idx));
                 Self::report_team_day_penalties(self.params, self.config, schedule, list, t_idx, want_soft, sink);
             }
         }
@@ -296,7 +373,7 @@ impl<'a> FastEvaluator<'a> {
         for v_idx in 0..self.config.volunteers.len() {
             for d_idx in 0..self.config.days.len() {
                 let list = &mut self.vol_day_assignments[v_idx][d_idx];
-                list.sort_by_key(|&idx| schedule.assignments[idx].slot_idx);
+                list.sort_by_key(|&idx| (schedule.assignments[idx].slot_idx, idx));
                 Self::report_vol_day_penalties(self.params, self.config, schedule, list, sink);
             }
         }
@@ -448,9 +525,361 @@ impl<'a> FastEvaluator<'a> {
     /// the cost, so it now covers every hard rule — including division stage
     /// ordering, which the previous hand-written scan silently missed.
     pub fn get_conflicted_indices(&mut self, schedule: &InternalSchedule) -> Vec<usize> {
+        // Once the incrementally-tracked schedule is feasible (zero hard cost),
+        // no assignment is in a hard conflict, so the set is empty without a
+        // scan. This is the common case during the long soft-optimisation phase,
+        // so it keeps the per-iteration cost O(1) there.
+        if self.inc_ready && self.inc_hard() < 0.5 {
+            return Vec::new();
+        }
         let mut sink = ConflictedSink::new(schedule.assignments.len());
         self.evaluate(schedule, &mut sink);
         sink.into_indices()
+    }
+
+    // ===================== Incremental (delta) evaluation =====================
+    //
+    // The solver mutates one or two assignments per iteration and almost always
+    // reverts. Re-scanning the whole schedule each time is the dominant cost, so
+    // these methods maintain every cost component as a running total: a mutation
+    // detaches the old assignment(s), attaches the new, and recomputes only the
+    // partitions (team-day, vol-day, division, local) it actually touched. The
+    // small variance aggregates are recomputed from live counts in `inc_total`.
+    // Correctness against the full scan is asserted in
+    // `solver::tests::incremental_matches_full_recompute`.
+
+    /// True if the field-variety rule is active at all (strict, or some division
+    /// runs in individual mode).
+    fn variety_active(&self) -> bool {
+        self.params.field_variety_strict
+            || self.config.divisions.iter().any(|d| d.mode == SchedulingMode::IndividualRun)
+    }
+
+    /// Whether assignment `idx`'s activity contributes to field-variety counting.
+    fn counts_for_variety(&self, div_idx: usize) -> bool {
+        self.params.field_variety_strict
+            || self.config.divisions[div_idx].mode == SchedulingMode::IndividualRun
+    }
+
+    /// Adds one assignment's contribution to all live state and the incremental
+    /// running scalars (occupancy, variety, specialist, peak). Inverse of
+    /// [`Self::detach_one`].
+    fn attach_one(&mut self, idx: usize, assign: &InternalAssignment) {
+        let config = self.config;
+        let activity = &config.activities[idx];
+        let day_idx = config.slots[assign.slot_idx].day_idx;
+
+        for &t in &activity.team_indices { self.team_day_assignments[t][day_idx].push(idx); }
+        for &v in &assign.volunteer_indices { self.vol_day_assignments[v][day_idx].push(idx); }
+        self.division_assignments[activity.division_idx].push(idx);
+
+        let buckets = &config.activity_buckets[assign.slot_idx][activity.duration_class];
+        for &b in buckets {
+            for &t in &activity.team_indices {
+                let c = self.team_slot_occupancy[t][b];
+                if c >= 1 { self.inc_occ_hard += 1.0; }
+                self.team_slot_occupancy[t][b] = c + 1;
+            }
+            if let Some(f) = assign.field_idx {
+                let c = self.field_slot_occupancy[f][b];
+                if c >= 1 { self.inc_occ_hard += 1.0; }
+                self.field_slot_occupancy[f][b] = c + 1;
+            }
+            for &v in &assign.volunteer_indices {
+                let c = self.volunteer_slot_occupancy[v][b];
+                if c >= 1 { self.inc_occ_hard += 1.0; }
+                self.volunteer_slot_occupancy[v][b] = c + 1;
+            }
+        }
+
+        if let Some(f) = assign.field_idx {
+            self.field_total_counts[f] += 1;
+            if activity.is_interview { self.field_interview_counts[f] += 1; } else { self.field_match_counts[f] += 1; }
+        }
+
+        let cap = self.params.vol_daily_shift_cap;
+        for &v in &assign.volunteer_indices {
+            self.volunteer_shift_counts[v] += 1;
+            let dc = self.volunteer_daily_counts[v][day_idx];
+            if cap > 0 && dc >= cap as u32 { self.inc_occ_hard += 1.0; }
+            self.volunteer_daily_counts[v][day_idx] = dc + 1;
+        }
+
+        if self.variety_active() && self.counts_for_variety(activity.division_idx) {
+            if let Some(f) = assign.field_idx {
+                for &t in &activity.team_indices {
+                    let key = (t, f);
+                    let c = *self.team_field_count.get(&key).unwrap_or(&0);
+                    if c >= 1 { self.inc_variety_units += 1.0; }
+                    self.team_field_count.insert(key, c + 1);
+                }
+            }
+        }
+
+        if self.params.vol_specialist_mode != SpecialistMode::Off {
+            let div = activity.division_idx;
+            for &v in &assign.volunteer_indices {
+                let c = self.vol_div_count[v][div];
+                self.vol_div_count[v][div] = c + 1;
+                if c == 0 {
+                    self.vol_distinct_divs[v] += 1;
+                    if self.vol_distinct_divs[v] >= 2 { self.inc_specialist_units += 1.0; }
+                }
+            }
+        }
+
+        let overlapped = &config.activity_overlapping_slots[assign.slot_idx][activity.duration_class];
+        if activity.is_interview {
+            for &s in overlapped { self.interview_slot_occ[s] += 1.0; }
+        } else {
+            for &s in overlapped { self.comp_slot_occ[s] += 1.0; }
+        }
+    }
+
+    /// Removes one assignment's contribution from all live state and the
+    /// incremental running scalars. Exact inverse of [`Self::attach_one`].
+    fn detach_one(&mut self, idx: usize, assign: &InternalAssignment) {
+        let config = self.config;
+        let activity = &config.activities[idx];
+        let day_idx = config.slots[assign.slot_idx].day_idx;
+
+        for &t in &activity.team_indices { remove_val(&mut self.team_day_assignments[t][day_idx], idx); }
+        for &v in &assign.volunteer_indices { remove_val(&mut self.vol_day_assignments[v][day_idx], idx); }
+        remove_val(&mut self.division_assignments[activity.division_idx], idx);
+
+        let buckets = &config.activity_buckets[assign.slot_idx][activity.duration_class];
+        for &b in buckets {
+            for &t in &activity.team_indices {
+                let c = self.team_slot_occupancy[t][b];
+                if c >= 2 { self.inc_occ_hard -= 1.0; }
+                self.team_slot_occupancy[t][b] = c - 1;
+            }
+            if let Some(f) = assign.field_idx {
+                let c = self.field_slot_occupancy[f][b];
+                if c >= 2 { self.inc_occ_hard -= 1.0; }
+                self.field_slot_occupancy[f][b] = c - 1;
+            }
+            for &v in &assign.volunteer_indices {
+                let c = self.volunteer_slot_occupancy[v][b];
+                if c >= 2 { self.inc_occ_hard -= 1.0; }
+                self.volunteer_slot_occupancy[v][b] = c - 1;
+            }
+        }
+
+        if let Some(f) = assign.field_idx {
+            self.field_total_counts[f] -= 1;
+            if activity.is_interview { self.field_interview_counts[f] -= 1; } else { self.field_match_counts[f] -= 1; }
+        }
+
+        let cap = self.params.vol_daily_shift_cap;
+        for &v in &assign.volunteer_indices {
+            self.volunteer_shift_counts[v] -= 1;
+            let dc = self.volunteer_daily_counts[v][day_idx];
+            if cap > 0 && dc > cap as u32 { self.inc_occ_hard -= 1.0; }
+            self.volunteer_daily_counts[v][day_idx] = dc - 1;
+        }
+
+        if self.variety_active() && self.counts_for_variety(activity.division_idx) {
+            if let Some(f) = assign.field_idx {
+                for &t in &activity.team_indices {
+                    let key = (t, f);
+                    let c = *self.team_field_count.get(&key).unwrap_or(&0);
+                    if c >= 2 { self.inc_variety_units -= 1.0; }
+                    if c <= 1 { self.team_field_count.remove(&key); } else { self.team_field_count.insert(key, c - 1); }
+                }
+            }
+        }
+
+        if self.params.vol_specialist_mode != SpecialistMode::Off {
+            let div = activity.division_idx;
+            for &v in &assign.volunteer_indices {
+                let c = self.vol_div_count[v][div];
+                self.vol_div_count[v][div] = c - 1;
+                if c == 1 {
+                    if self.vol_distinct_divs[v] >= 2 { self.inc_specialist_units -= 1.0; }
+                    self.vol_distinct_divs[v] -= 1;
+                }
+            }
+        }
+
+        let overlapped = &config.activity_overlapping_slots[assign.slot_idx][activity.duration_class];
+        if activity.is_interview {
+            for &s in overlapped { self.interview_slot_occ[s] -= 1.0; }
+        } else {
+            for &s in overlapped { self.comp_slot_occ[s] -= 1.0; }
+        }
+    }
+
+    fn recompute_local(&mut self, idx: usize, assign: &InternalAssignment) {
+        let mut sink = ScalarSink::default();
+        Self::report_assignment_local(self.params, self.config, idx, assign, &mut sink);
+        let (oh, os) = self.inc_local[idx];
+        self.inc_sum_local.0 += sink.hard - oh;
+        self.inc_sum_local.1 += sink.soft - os;
+        self.inc_local[idx] = (sink.hard, sink.soft);
+    }
+
+    fn recompute_team_day(&mut self, schedule: &InternalSchedule, t: usize, d: usize) {
+        self.team_day_assignments[t][d].sort_by_key(|&i| (schedule.assignments[i].slot_idx, i));
+        let mut sink = ScalarSink::default();
+        Self::report_team_day_penalties(self.params, self.config, schedule, &self.team_day_assignments[t][d], t, true, &mut sink);
+        let (oh, os) = self.inc_team_day[t][d];
+        self.inc_sum_team_day.0 += sink.hard - oh;
+        self.inc_sum_team_day.1 += sink.soft - os;
+        self.inc_team_day[t][d] = (sink.hard, sink.soft);
+    }
+
+    fn recompute_vol_day(&mut self, schedule: &InternalSchedule, v: usize, d: usize) {
+        self.vol_day_assignments[v][d].sort_by_key(|&i| (schedule.assignments[i].slot_idx, i));
+        let mut sink = ScalarSink::default();
+        Self::report_vol_day_penalties(self.params, self.config, schedule, &self.vol_day_assignments[v][d], &mut sink);
+        let old = self.inc_vol_day[v][d];
+        self.inc_sum_vol_day += sink.soft - old;
+        self.inc_vol_day[v][d] = sink.soft;
+    }
+
+    fn recompute_div(&mut self, schedule: &InternalSchedule, div: usize) {
+        self.division_assignments[div].sort_by_key(|&i| (schedule.assignments[i].slot_idx, i));
+        let mut sink = ScalarSink::default();
+        Self::report_division_penalties(self.params, self.config, schedule, &self.division_assignments[div], &mut sink);
+        let (oh, os) = self.inc_div[div];
+        self.inc_sum_div.0 += sink.hard - oh;
+        self.inc_sum_div.1 += sink.soft - os;
+        self.inc_div[div] = (sink.hard, sink.soft);
+    }
+
+    /// Builds the full incremental state for `schedule` from scratch (O(N)).
+    /// Call once per restart, then maintain it with [`Self::apply_change`].
+    pub fn inc_init(&mut self, schedule: &InternalSchedule) {
+        for row in &mut self.team_slot_occupancy { row.fill(0); }
+        for row in &mut self.field_slot_occupancy { row.fill(0); }
+        for row in &mut self.volunteer_slot_occupancy { row.fill(0); }
+        for row in &mut self.volunteer_daily_counts { row.fill(0); }
+        self.volunteer_shift_counts.fill(0);
+        self.field_match_counts.fill(0);
+        self.field_interview_counts.fill(0);
+        self.field_total_counts.fill(0);
+        for row in &mut self.team_day_assignments { for col in row { col.clear(); } }
+        for row in &mut self.vol_day_assignments { for col in row { col.clear(); } }
+        for row in &mut self.division_assignments { row.clear(); }
+
+        self.inc_local = vec![(0.0, 0.0); schedule.assignments.len()];
+        self.inc_sum_local = (0.0, 0.0);
+        self.inc_occ_hard = 0.0;
+        for row in &mut self.inc_team_day { for c in row { *c = (0.0, 0.0); } }
+        self.inc_sum_team_day = (0.0, 0.0);
+        for row in &mut self.inc_vol_day { for c in row { *c = 0.0; } }
+        self.inc_sum_vol_day = 0.0;
+        for c in &mut self.inc_div { *c = (0.0, 0.0); }
+        self.inc_sum_div = (0.0, 0.0);
+        self.team_field_count.clear();
+        self.inc_variety_units = 0.0;
+        for row in &mut self.vol_div_count { row.fill(0); }
+        self.vol_distinct_divs.fill(0);
+        self.inc_specialist_units = 0.0;
+        self.comp_slot_occ.fill(0.0);
+        self.interview_slot_occ.fill(0.0);
+
+        for (idx, assign) in schedule.assignments.iter().enumerate() {
+            self.attach_one(idx, assign);
+        }
+        for idx in 0..schedule.assignments.len() {
+            self.recompute_local(idx, &schedule.assignments[idx]);
+        }
+        for t in 0..self.config.teams.len() {
+            for d in 0..self.config.days.len() { self.recompute_team_day(schedule, t, d); }
+        }
+        for v in 0..self.config.volunteers.len() {
+            for d in 0..self.config.days.len() { self.recompute_vol_day(schedule, v, d); }
+        }
+        for div in 0..self.config.divisions.len() { self.recompute_div(schedule, div); }
+        self.inc_ready = true;
+    }
+
+    /// Current incremental hard cost (O(1)). Used to short-circuit
+    /// [`Self::get_conflicted_indices`] once the schedule is feasible.
+    fn inc_hard(&self) -> f64 {
+        self.inc_sum_local.0 + self.inc_occ_hard + self.inc_sum_team_day.0 + self.inc_sum_div.0
+            + if self.params.field_variety_strict { self.inc_variety_units } else { 0.0 }
+    }
+
+    /// The maintained `(hard, soft)` cost: O(1) running totals for the
+    /// partitioned terms plus a cheap recompute of the small variance aggregates
+    /// (field balance, fairness, specialist, peak) from live counts.
+    pub fn inc_total(&self) -> (f64, f64) {
+        let hard = self.inc_hard();
+        let mut soft = self.inc_sum_local.1 + self.inc_sum_team_day.1 + self.inc_sum_vol_day + self.inc_sum_div.1;
+        if !self.params.field_variety_strict {
+            soft += self.inc_variety_units * self.params.field_variety_weight;
+        }
+
+        let w = self.params.field_balance_weight;
+        soft += calculate_variance(&self.field_match_counts) * w;
+        soft += calculate_variance(&self.field_interview_counts) * w;
+        soft += calculate_variance(&self.field_total_counts) * (w * 0.5);
+
+        let active_vols: Vec<f64> = self.volunteer_shift_counts.iter().enumerate().filter_map(|(v, &count)| {
+            let vol = &self.config.volunteers[v];
+            let avail = vol.availability_slots.iter().filter(|&&a| a).count() as f64;
+            if avail == 0.0 { None } else { Some(count as f64 / avail) }
+        }).collect();
+        if !active_vols.is_empty() {
+            let var = calculate_variance_f64(&active_vols);
+            let weight = match self.params.fairness_mode { FairnessMode::Off => 5.0, FairnessMode::Balanced => 10.0, FairnessMode::Strict => 20.0 };
+            soft += var * weight;
+        }
+
+        if self.params.vol_specialist_mode != SpecialistMode::Off {
+            let weight = match self.params.vol_specialist_mode {
+                SpecialistMode::Off => 0.0, SpecialistMode::Balanced => 0.5, SpecialistMode::Strict => 2.0,
+            };
+            soft += self.inc_specialist_units * weight;
+        }
+
+        if self.params.peak_period_weight > 0.0 {
+            let by_kind = |kind: FieldKind, counts: &[f64]| -> Vec<f64> {
+                self.config.slots.iter().enumerate().filter(|(_, s)| s.kind == kind).map(|(i, _)| counts[i]).collect()
+            };
+            let comp = by_kind(FieldKind::Competition, &self.comp_slot_occ);
+            let interviews = by_kind(FieldKind::Interview, &self.interview_slot_occ);
+            let mut penalty = calculate_variance_f64(&comp);
+            if !interviews.is_empty() { penalty += calculate_variance_f64(&interviews); }
+            soft += penalty * self.params.peak_period_weight;
+        }
+
+        (hard, soft)
+    }
+
+    /// Applies a set of assignment changes incrementally and returns the new
+    /// `(hard, soft)` cost. `changes` holds `(idx, prior_assignment)` for each
+    /// touched assignment; `schedule` already reflects the *new* values. To
+    /// revert, call again with the same indices but the new values as `prior`
+    /// and `schedule` restored — the operation is its own inverse.
+    pub fn apply_change(&mut self, schedule: &InternalSchedule, changes: &[(usize, InternalAssignment)]) -> (f64, f64) {
+        for (idx, prior) in changes { self.detach_one(*idx, prior); }
+        for (idx, _) in changes { self.attach_one(*idx, &schedule.assignments[*idx]); }
+
+        let config = self.config;
+        for (idx, prior) in changes {
+            let new = &schedule.assignments[*idx];
+            self.recompute_local(*idx, new);
+
+            let activity = &config.activities[*idx];
+            let old_day = config.slots[prior.slot_idx].day_idx;
+            let new_day = config.slots[new.slot_idx].day_idx;
+            let days: &[usize] = if old_day == new_day { &[old_day][..] } else { &[old_day, new_day][..] };
+
+            for &t in &activity.team_indices {
+                for &d in days { self.recompute_team_day(schedule, t, d); }
+            }
+            let mut vols = prior.volunteer_indices.clone();
+            for &v in &new.volunteer_indices { if !vols.contains(&v) { vols.push(v); } }
+            for &v in &vols {
+                for &d in days { self.recompute_vol_day(schedule, v, d); }
+            }
+            self.recompute_div(schedule, activity.division_idx);
+        }
+        self.inc_total()
     }
 
     fn report_team_day_penalties<S: ConflictSink>(params: &SolverParams, config: &InternalTournamentConfig, schedule: &InternalSchedule, list: &[usize], team_idx: usize, want_soft: bool, sink: &mut S) {
@@ -604,6 +1033,14 @@ impl<'a> FastEvaluator<'a> {
                 }
             }
         }
+    }
+}
+
+/// Removes the first occurrence of `val` from `v` (order not preserved). The
+/// grouped lists are re-sorted before use, so `swap_remove` is safe and O(1).
+fn remove_val(v: &mut Vec<usize>, val: usize) {
+    if let Some(pos) = v.iter().position(|&x| x == val) {
+        v.swap_remove(pos);
     }
 }
 

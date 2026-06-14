@@ -184,6 +184,27 @@ fn over_constrained_case() -> TournamentConfig {
     with_day(config, day_slots("Saturday", 9 * 60, 12 * 60, 20, 5, 10, 5, true))
 }
 
+/// Large: four divisions over two days on many fields. ~140 activities — big
+/// enough that the per-iteration evaluation cost dominates, which is exactly
+/// where incremental (delta) evaluation is meant to pay off. Feasible, but the
+/// solver does real work to place everything.
+fn large_case() -> TournamentConfig {
+    let mut config = TournamentConfig::default();
+    for d in 0..4 {
+        add_division(&mut config, &format!("Div{d}"), 12, 4, true);
+    }
+    config.fields = (0..8)
+        .map(|i| Field { id: format!("f{i}"), name: format!("Field {i}"), kind: FieldKind::Competition, allowed_divisions: None })
+        .chain((0..3).map(|i| Field { id: format!("t{i}"), name: format!("Table {i}"), kind: FieldKind::Interview, allowed_divisions: None }))
+        .collect();
+    let mut slots = day_slots("Saturday", 9 * 60, 17 * 60, 20, 5, 10, 5, true);
+    slots.extend(day_slots("Sunday", 9 * 60, 17 * 60, 20, 5, 10, 5, true));
+    config.day_configs.push(DayGenConfig { day: "Saturday".into(), ..Default::default() });
+    config.day_configs.push(DayGenConfig { day: "Sunday".into(), ..Default::default() });
+    config.time_slots = slots;
+    config
+}
+
 struct RunResult {
     hard: f64,
     soft: f64,
@@ -271,6 +292,7 @@ fn solver_benchmark() {
         ("TIGHT", tight_case()),
         ("BREAK-STRESS", break_stress_case()),
         ("OVER-CONSTRAINED", over_constrained_case()),
+        ("LARGE", large_case()),
     ] {
         let results: Vec<RunResult> = (0..RUNS_PER_CASE)
             .map(|i| {
