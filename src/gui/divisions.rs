@@ -203,11 +203,11 @@ impl AppState {
         ui.label(RichText::new("EXISTING DIVISIONS").strong().color(Color32::from_rgb(156, 163, 175)));
         ui.add_space(5.0);
 
-        let mut divisions_changed = false;
         let mut division_to_delete = None;
 
         for (idx, div) in self.config.divisions.clone().into_iter().enumerate() {
             let mut div = div;
+            let mut divisions_changed = false;
             let icon = match div.mode {
                 SchedulingMode::HeadToHead => "⚽",
                 SchedulingMode::IndividualRun => "🤖",
@@ -242,7 +242,6 @@ impl AppState {
                             ui.label("Name:");
                             if ui.text_edit_singleline(&mut div.name).changed() {
                                 divisions_changed = true;
-                                div.id = sanitize_name(&div.name);
                             }
 
                             ui.label("Format:");
@@ -404,6 +403,7 @@ impl AppState {
 
                         if divisions_changed {
                             self.config.divisions[idx] = div;
+                            self.clear_schedule();
                             self.update_diagnostics();
                         }
                     });

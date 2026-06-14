@@ -43,6 +43,7 @@ fn main() -> eframe::Result<()> {
             }
 
             cc.egui_ctx.set_fonts(fonts);
+            gui::setup_custom_style(&cc.egui_ctx);
             Box::new(gui::AppState::default())
         }),
     )

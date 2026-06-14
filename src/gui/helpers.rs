@@ -264,6 +264,29 @@ pub(crate) fn hsl_to_rgb(h: f32, s: f32, l: f32) -> Color32 {
     )
 }
 
+/// Returns true if `t` is a well-formed `HH:MM` time string.
+pub(crate) fn is_valid_hhmm(t: &str) -> bool {
+    let parts: Vec<&str> = t.split(':').collect();
+    if parts.len() != 2 {
+        return false;
+    }
+    match (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
+        (Ok(h), Ok(m)) => h < 24 && m < 60,
+        _ => false,
+    }
+}
+
+/// A 50px `HH:MM` text field whose text turns red while the contents are malformed,
+/// giving inline feedback before the user clicks Generate.
+pub(crate) fn time_edit(value: &mut String) -> egui::TextEdit<'_> {
+    let valid = is_valid_hhmm(value);
+    let mut edit = egui::TextEdit::singleline(value).desired_width(50.0);
+    if !valid {
+        edit = edit.text_color(Color32::from_rgb(248, 113, 113));
+    }
+    edit
+}
+
 pub(crate) fn parse_time_to_minutes(t: &str) -> u32 {
     let parts: Vec<&str> = t.split(':').collect();
     if parts.len() == 2 {

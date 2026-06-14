@@ -61,11 +61,11 @@ impl AppState {
                             });
 
                         ui.label("Start:");
-                        ui.add(egui::TextEdit::singleline(&mut day_cfg.start_time).desired_width(50.0))
+                        ui.add(crate::gui::helpers::time_edit(&mut day_cfg.start_time))
                             .on_hover_text("Format: HH:MM, e.g. 09:00");
 
                         ui.label("End:");
-                        ui.add(egui::TextEdit::singleline(&mut day_cfg.end_time).desired_width(50.0))
+                        ui.add(crate::gui::helpers::time_edit(&mut day_cfg.end_time))
                             .on_hover_text("Format: HH:MM, e.g. 17:00");
 
                         ui.checkbox(&mut day_cfg.lunch_enabled, "Lunch Break");
@@ -73,7 +73,7 @@ impl AppState {
 
                         if day_cfg.lunch_enabled {
                             ui.label("Lunch Start:");
-                            ui.add(egui::TextEdit::singleline(&mut day_cfg.lunch_start).desired_width(50.0))
+                            ui.add(crate::gui::helpers::time_edit(&mut day_cfg.lunch_start))
                                 .on_hover_text("Format: HH:MM, e.g. 12:00");
 
                             ui.label("Lunch Duration (min):");
@@ -99,12 +99,17 @@ impl AppState {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     if ui.button(RichText::new("➕ Add Day Configuration").strong().color(Color32::from_rgb(129, 140, 248))).clicked() {
-                        let last_day = self.config.day_configs.last().map(|c| c.day.clone()).unwrap_or_else(|| "Saturday".to_string());
-                        let next_day = match last_day.as_str() {
-                            "Saturday" => "Sunday".to_string(),
-                            "Friday" => "Saturday".to_string(),
-                            _ => "Saturday".to_string(),
-                        };
+                        let week = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+                        let used: std::collections::HashSet<String> = self.config.day_configs.iter().map(|c| c.day.clone()).collect();
+                        let last_day = self.config.day_configs.last().map(|c| c.day.clone()).unwrap_or_else(|| "Friday".to_string());
+                        let last_idx = week.iter().position(|d| *d == last_day).unwrap_or(4);
+                        // Pick the next weekday after the last one that isn't already configured (wrapping
+                        // through the week). Only falls back to a duplicate if all seven days are in use.
+                        let next_day = (1..=7)
+                            .map(|offset| week[(last_idx + offset) % 7])
+                            .find(|d| !used.contains(*d))
+                            .unwrap_or(week[(last_idx + 1) % 7])
+                            .to_string();
                         self.config.day_configs.push(crate::model::DayGenConfig {
                             day: next_day,
                             start_time: "09:00".to_string(),

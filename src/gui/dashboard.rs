@@ -16,7 +16,7 @@ impl AppState {
         });
         ui.add_space(15.0);
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             draw_stat_card(ui, "Divisions", &self.config.divisions.len().to_string(), Color32::from_rgb(129, 140, 248));
             draw_stat_card(ui, "Teams", &self.config.teams.len().to_string(), Color32::from_rgb(167, 139, 250));
             draw_stat_card(ui, "Fields / Arenas", &self.config.fields.len().to_string(), Color32::from_rgb(52, 211, 153));

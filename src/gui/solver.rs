@@ -406,10 +406,7 @@ impl AppState {
                             .id_source("detailed_conflict_diagnostics")
                             .default_open(true)
                             .show(ui, |ui| {
-                                egui::ScrollArea::vertical()
-                                    .id_source("conflict_diagnostics_scroll")
-                                    .max_height(200.0)
-                                    .show(ui, |ui| {
+                                ui.scope(|ui| {
                                         for conflict in conflicts {
                                             ui.horizontal(|ui| {
                                                 ui.label(RichText::new("•").color(Color32::from_rgb(248, 113, 113)));
@@ -664,7 +661,7 @@ impl AppState {
             }
             if min_shifts == usize::MAX { min_shifts = 0; }
 
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 crate::gui::helpers::draw_stat_card(ui, "Total Assignments", &total_shifts.to_string(), Color32::from_rgb(129, 140, 248));
                 crate::gui::helpers::draw_stat_card(ui, "Active Volunteers", &active_vols.to_string(), Color32::from_rgb(52, 211, 153));
                 let avg = if active_vols > 0 { total_shifts as f32 / active_vols as f32 } else { 0.0 };
@@ -782,14 +779,15 @@ impl AppState {
 
                         for day in active_days.iter().rev() {
                             let status = vol.status_for_day(day);
-                            let (btn_text, btn_color) = match status {
-                                AttendanceStatus::Pending => ("⏳", Color32::from_rgb(251, 191, 36)),
-                                AttendanceStatus::CheckedIn => ("✅", Color32::from_rgb(52, 211, 153)),
-                                AttendanceStatus::NoShow => ("❌", Color32::from_rgb(248, 113, 113)),
+                            let (btn_text, btn_color, btn_text_color) = match status {
+                                AttendanceStatus::Pending => ("⏳", Color32::from_rgb(251, 191, 36), Color32::BLACK),
+                                AttendanceStatus::CheckedIn => ("✅", Color32::from_rgb(52, 211, 153), Color32::BLACK),
+                                AttendanceStatus::NoShow => ("❌", Color32::from_rgb(248, 113, 113), Color32::WHITE),
                             };
-                            
-                            let label = format!("{}: {}", &day[..3], btn_text);
-                            let btn = egui::Button::new(RichText::new(label).size(12.0).strong().color(Color32::BLACK))
+
+                            let day_abbr = day.get(..3).unwrap_or(day.as_str());
+                            let label = format!("{}: {}", day_abbr, btn_text);
+                            let btn = egui::Button::new(RichText::new(label).size(12.0).strong().color(btn_text_color))
                                 .fill(btn_color)
                                 .min_size(egui::vec2(65.0, 24.0))
                                 .rounding(6.0);
@@ -1282,9 +1280,22 @@ impl AppState {
                                                     card_rect = card_rect.translate(self.drag_accumulated_offset);
                                                 }
 
-                                                let mut child_ui = ui.child_ui(card_rect, egui::Layout::top_down(egui::Align::Min));
                                                 let conflicts: &[AssignmentConflict] = self.assignment_conflicts.get(&idx).map(|v| v.as_slice()).unwrap_or(&[]);
-                                                if let Some(sub_idx) = draw_schedule_cell(&mut child_ui, assign, &self.config, &slot.id, w, h, conflicts, idx) {
+                                                let is_dragged = self.dragged_assignment == Some(idx);
+                                                let config = &self.config;
+                                                let draw = |ui: &mut egui::Ui| {
+                                                    let mut child_ui = ui.child_ui(card_rect, egui::Layout::top_down(egui::Align::Min));
+                                                    draw_schedule_cell(&mut child_ui, assign, config, &slot.id, w, h, conflicts, idx)
+                                                };
+                                                // Draw the card currently being dragged on a foreground layer so it
+                                                // stays above cells painted later in the loop.
+                                                let sub = if is_dragged {
+                                                    let layer = egui::LayerId::new(egui::Order::Foreground, ui.id().with(("dragged_card", idx)));
+                                                    ui.with_layer_id(layer, draw).inner
+                                                } else {
+                                                    draw(ui)
+                                                };
+                                                if let Some(sub_idx) = sub {
                                                     self.active_substitution = Some(sub_idx);
                                                 }
                                             }
@@ -1376,7 +1387,7 @@ impl AppState {
     fn draw_division_rounds_table(
         &self,
         ui: &mut egui::Ui,
-        div_id: &str,
+        _div_id: &str,
         rows: &[RoundRow],
         is_h2h: bool,
         accent: Color32,
@@ -1389,11 +1400,7 @@ impl AppState {
         // Reserve a stable width before entering the scroll area to prevent layout feedback loops.
         let panel_width = ui.available_width().max(400.0);
 
-        egui::ScrollArea::vertical()
-            .id_source(format!("div_rounds_scroll_{}", div_id))
-            .max_height(550.0)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
+        ui.scope(|ui| {
                 for row in rows {
                     let is_finals = row.matches.iter().any(|m| m.is_final);
 
@@ -1579,9 +1586,7 @@ impl AppState {
 
         let panel_width = ui.available_width().max(400.0);
 
-        egui::ScrollArea::vertical()
-            .id_source(format!("div_teams_scroll_{}", div_id))
-            .show(ui, |ui| {
+        ui.scope(|ui| {
                 for team in div_teams {
                     // Find activities for this team
                     let mut team_activities: Vec<&crate::model::ScheduleAssignment> = Vec::new();
@@ -1708,9 +1713,7 @@ impl AppState {
 
             let panel_width = ui.available_width().max(400.0);
 
-            egui::ScrollArea::vertical()
-                .id_source(format!("div_interviews_scroll_{}", div_id))
-                .show(ui, |ui| {
+            ui.scope(|ui| {
                     // Interviews header
                     egui::Frame::none()
                         .fill(Color32::from_rgb(30, 37, 50))

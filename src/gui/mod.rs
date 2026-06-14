@@ -13,7 +13,7 @@ use crate::model::Schedule;
 use crate::scheduler::SolverParams;
 use eframe::egui::{self, Color32, RichText};
 
-use helpers::setup_custom_style;
+pub(crate) use helpers::setup_custom_style;
 pub use app_state::{AppState, VolRosterSort};
 
 #[derive(PartialEq, Debug, Clone, Copy)]
@@ -74,7 +74,6 @@ impl eframe::App for AppState {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_solver_messages(ctx);
         self.handle_export_messages(ctx);
-        setup_custom_style(ctx);
 
         // TOP PANEL
         egui::TopBottomPanel::top("header_panel").show(ctx, |ui| {
@@ -105,6 +104,7 @@ impl eframe::App for AppState {
                             self.save_config();
                         }
                         if self.schedule.is_some() {
+                            ui.separator();
                             let export_btn = egui::Button::new("📤 Full Export (CSV & PDF)");
                             if ui.add_enabled(!self.is_exporting, export_btn).clicked() {
                                 self.export_full_tournament();
@@ -148,7 +148,7 @@ impl eframe::App for AppState {
         });
 
         // SIDE PANEL
-        egui::SidePanel::left("navigation_panel").width_range(180.0..=220.0).show(ctx, |ui| {
+        egui::SidePanel::left("navigation_panel").width_range(210.0..=240.0).show(ctx, |ui| {
             ui.add_space(10.0);
             ui.label(RichText::new("WORKSPACE PANELS").size(10.0).color(Color32::from_rgb(107, 114, 128)).strong());
             ui.add_space(5.0);
