@@ -5,6 +5,8 @@ pub mod utils;
 mod internal;
 mod fast_evaluator;
 mod conflicts;
+#[cfg(test)]
+mod bench;
 
 use crate::model::{FairnessMode, SpecialistMode, TournamentConfig};
 use std::collections::{HashMap, HashSet};

@@ -281,9 +281,9 @@ pub enum Mutation {
     Slot { idx: usize, old_slot: usize },
     Field { idx: usize, old_field: Option<usize> },
     Volunteers { idx: usize, old_vols: Vec<usize> },
-    Swap { 
+    Swap {
         idx1: usize, old_s1: usize, old_f1: Option<usize>,
-        idx2: usize, old_s2: usize, old_f2: Option<usize> 
+        idx2: usize, old_s2: usize, old_f2: Option<usize>
     },
 }
 
@@ -315,7 +315,7 @@ fn mutate_internal_schedule_in_place(
             let range = if act.is_interview {
                 (0..config.slots.len())
                     .filter(|&i| {
-                        config.slots[i].kind == FieldKind::Interview && 
+                        config.slots[i].kind == FieldKind::Interview &&
                         config.day_interviews_enabled[config.slots[i].day_idx]
                     })
                     .collect::<Vec<_>>()
