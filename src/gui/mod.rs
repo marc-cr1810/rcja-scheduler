@@ -284,7 +284,7 @@ impl AppState {
                             self.solver_max_iter_reported = iteration;
                             
                             self.solve_message = format!(
-                                "Solving... Parallel Attempt {}/{} | Iteration {}/{} | Hard: {}, Soft: {}",
+                                "Solving... Attempt {}/{} | Iteration {}/{} | Best so far — Hard Conflicts: {}, Soft: {:.1}",
                                 restart_idx + 1, total_restarts, iteration, total_iterations, hard, soft
                             );
                         }
@@ -301,13 +301,16 @@ impl AppState {
                             self.schedule = Some(sched);
                             self.re_evaluate_schedule();
                             
-                            // Override the manual message with the solver success message
+                            // Override the manual message with the solver success message.
+                            // The hard-conflict count and soft penalty come from the
+                            // same engine the solver optimised and the live readout
+                            // reported, so the numbers are consistent end to end.
                             if let Some(ref sched) = self.schedule {
                                 let params = self.get_solver_params();
                                 let (_hard, soft) = crate::scheduler::evaluate_schedule_cost(&self.config, sched, &params);
                                 let conflicts_count = self.schedule_conflicts.len();
                                 self.solve_message = format!(
-                                    "Schedule optimized successfully! Hard Conflicts: {}, Soft Penalties: {}",
+                                    "Schedule optimized successfully! Hard Conflicts: {}, Soft Penalties: {:.1}",
                                     conflicts_count, soft
                                 );
                                 self.status_message = "Schedule solved successfully!".to_string();

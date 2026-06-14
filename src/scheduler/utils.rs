@@ -50,9 +50,3 @@ pub fn sanitize_name(name: &str) -> String {
         .collect::<String>()
         .to_lowercase()
 }
-
-pub fn format_minutes_to_time(min: u32) -> String {
-    let h = min / 60;
-    let m = min % 60;
-    format!("{:02}:{:02}", h, m)
-}

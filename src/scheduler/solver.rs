@@ -5,6 +5,7 @@ use rand::seq::SliceRandom;
 use rand::Rng;
 use super::internal::{InternalTournamentConfig, InternalSchedule, InternalAssignment, InternalActivity};
 use super::fast_evaluator::FastEvaluator;
+use super::conflicts::distinct_hard_conflicts;
 use super::SolverParams;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -47,8 +48,16 @@ pub fn solve_schedule(
 
             for iter in 0..params.max_iterations {
                 if iter % 500 == 0 {
-                    (progress_callback)(restart_idx, params.num_restarts, iter, params.max_iterations, current_cost.0, current_cost.1);
-                    
+                    // Report the best-so-far, not the annealing's current state:
+                    // the current cost intentionally fluctuates (worse moves are
+                    // accepted to escape local minima), so reporting it would make
+                    // the live numbers jump around and disagree with the schedule
+                    // that is ultimately returned. We report the distinct hard
+                    // *count* (same metric the GUI shows when done) so the live and
+                    // final numbers are identical, plus the soft penalty score.
+                    let best_hard = distinct_hard_conflicts(&evaluator.collect_conflicts(&best_local_schedule)).len() as f64;
+                    (progress_callback)(restart_idx, params.num_restarts, iter, params.max_iterations, best_hard, best_local_cost.1);
+
                     if let Some(ref flag) = params.cancel_flag
                         && flag.load(Ordering::Relaxed) {
                             return None;
@@ -63,7 +72,7 @@ pub fn solve_schedule(
                 let mutation = mutate_internal_schedule_in_place(
                     &internal_config,
                     &mut current_schedule,
-                    &evaluator,
+                    &mut evaluator,
                     params,
                     &mut rng,
                 );
@@ -94,7 +103,8 @@ pub fn solve_schedule(
             }
 
             restarts_completed.fetch_add(1, Ordering::Relaxed);
-            (progress_callback)(restart_idx, params.num_restarts, params.max_iterations, params.max_iterations, best_local_cost.0, best_local_cost.1);
+            let best_hard = distinct_hard_conflicts(&evaluator.collect_conflicts(&best_local_schedule)).len() as f64;
+            (progress_callback)(restart_idx, params.num_restarts, params.max_iterations, params.max_iterations, best_hard, best_local_cost.1);
 
             Some((best_local_schedule, best_local_cost))
         })
@@ -280,7 +290,7 @@ pub enum Mutation {
 fn mutate_internal_schedule_in_place(
     config: &InternalTournamentConfig,
     schedule: &mut InternalSchedule,
-    evaluator: &FastEvaluator,
+    evaluator: &mut FastEvaluator,
     params: &SolverParams,
     rng: &mut impl Rng,
 ) -> Mutation {

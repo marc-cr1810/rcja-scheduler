@@ -243,7 +243,8 @@ impl AppState {
     pub fn update_diagnostics(&mut self) {
         let mut diagnostics = validate_config(&self.config);
         if let Some(ref sched) = self.schedule {
-            diagnostics.extend(validate_schedule(&self.config, sched));
+            let params = self.get_solver_params();
+            diagnostics.extend(validate_schedule(&self.config, sched, &params));
         }
         
         // Re-sort: Error > Warning > Info
@@ -260,8 +261,8 @@ impl AppState {
         if let Some(ref sched) = self.schedule {
             let params = self.get_solver_params();
             let (_hard, soft) = crate::scheduler::evaluate_schedule_cost(&self.config, sched, &params);
-            let conflicts = crate::scheduler::get_schedule_conflicts(&self.config, sched);
-            let assignment_conflicts = crate::scheduler::get_assignment_conflicts(&self.config, sched);
+            let conflicts = crate::scheduler::get_schedule_conflicts(&self.config, sched, &params);
+            let assignment_conflicts = crate::scheduler::get_assignment_conflicts(&self.config, sched, &params);
             let division_rounds = crate::scheduler::get_division_rounds(&self.config, sched);
             let conflicts_count = conflicts.len();
             

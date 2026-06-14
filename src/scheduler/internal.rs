@@ -189,6 +189,15 @@ impl InternalTournamentConfig {
                     avail[idx] = true;
                 }
             }
+            // A volunteer marked as a no-show for a day is treated as unavailable
+            // for every slot that day, so the solver and the diagnostics agree on
+            // availability (a no-show used to be flagged only in the UI).
+            for slot in &config.time_slots {
+                if matches!(v.status_for_day(&slot.day), crate::model::AttendanceStatus::NoShow)
+                    && let Some(&idx) = slot_id_to_internal_idx.get(&slot.id) {
+                    avail[idx] = false;
+                }
+            }
             InternalVolunteer {
                 id: v.id.clone(),
                 availability_slots: avail,
@@ -296,46 +305,89 @@ impl InternalTournamentConfig {
                 let rr_rounds: Vec<usize> = round_indices.iter().cloned().filter(|&r| r < 10000).collect();
                 let finals_rounds: Vec<usize> = round_indices.iter().cloned().filter(|&r| r >= 10000).collect();
 
-                // Proportional windowing for RR rounds
-                let mut rr_counts = HashMap::new();
-                for &r_idx in &rr_rounds {
-                    rr_counts.insert(r_idx, internal_activities.iter().filter(|a| a.round_index == r_idx && !a.is_interview).count());
-                }
-                let total_rr_acts: usize = rr_counts.values().sum();
-                
-                let mut finals_count = 0;
-                for &r_idx in &finals_rounds {
-                    finals_count += internal_activities.iter().filter(|a| a.round_index == r_idx && !a.is_interview).count();
-                }
+                // Round windows are sized over *competition* slots only, in
+                // chronological order. Interview slots are excluded because they
+                // tend to cluster on a single day; counting them would inflate that
+                // day's share of the index space and pull every round-robin game
+                // onto it, leaving later days empty. Windowing over competition
+                // columns instead lets round-robin spread across every day.
+                let comp_indices: Vec<usize> = (0..n_slots)
+                    .filter(|&i| internal_slots[i].kind == FieldKind::Competition)
+                    .collect();
+                let n_comp = comp_indices.len();
 
-                let total_acts = total_rr_acts + finals_count;
-                
-                // We'll give RR rounds a portion of the timeline, and Finals rounds the remainder.
-                // However, we'll make ALL finals rounds share the SAME range at the end to allow for more flexibility
-                // and avoid the "empty range" fallback if one stage is too tight.
-                
-                let mut current_start = 0;
-                for &r_idx in &rr_rounds {
-                    let count = *rr_counts.get(&r_idx).unwrap();
-                    let share = if total_acts > 0 { (count as f64 / total_acts as f64) * n_slots as f64 } else { 0.0 };
-                    let mut end = (current_start as f64 + share).round() as usize;
-                    
-                    let max_dur_slots = internal_activities.iter()
-                        .filter(|a| a.round_index == r_idx && !a.is_interview)
-                        .map(|a| {
-                            let slot_dur = internal_slots[0].duration_minutes.max(1);
-                            a.duration_minutes.div_ceil(slot_dur) as usize
-                        }).max().unwrap_or(1);
-                    
-                    end = end.max(current_start + max_dur_slots).min(n_slots);
-                    round_ranges[r_idx] = current_start..end;
-                    current_start = end;
-                }
+                if n_comp > 0 {
+                    // Translate a competition-ordinal window [c_start, c_end) into a
+                    // real slot-index range. Filtering that range to competition
+                    // slots yields exactly those columns; interleaved interview
+                    // slots inside the range are ignored by the solver.
+                    let to_range = |c_start: usize, c_end: usize| -> std::ops::Range<usize> {
+                        if c_end <= c_start {
+                            let s = comp_indices[c_start.min(n_comp - 1)];
+                            return s..s; // empty -> solver falls back to a random slot
+                        }
+                        comp_indices[c_start]..(comp_indices[c_end - 1] + 1)
+                    };
 
-                if !finals_rounds.is_empty() {
-                    let finals_range = current_start..n_slots;
-                    for &r_idx in &finals_rounds {
-                        round_ranges[r_idx] = finals_range.clone();
+                    // Competition fields available to a division — used to size each
+                    // band so a division never has more games in a band than it has
+                    // columns x fields to hold them (which would force a double-booking).
+                    let comp_fields_for_div = |div_idx: usize| -> usize {
+                        internal_fields.iter().filter(|f| {
+                            f.kind == FieldKind::Competition
+                                && f.allowed_division_indices.as_ref().is_none_or(|a| a.contains(&div_idx))
+                        }).count().max(1)
+                    };
+                    // Minimum competition columns a group of activities needs so that no
+                    // single division overflows its available fields.
+                    let min_cols = |pred: &dyn Fn(usize) -> bool| -> usize {
+                        let mut per_div: HashMap<usize, usize> = HashMap::new();
+                        for a in internal_activities.iter().filter(|a| !a.is_interview && pred(a.round_index)) {
+                            *per_div.entry(a.division_idx).or_default() += 1;
+                        }
+                        per_div.iter()
+                            .map(|(&d, &g)| g.div_ceil(comp_fields_for_div(d)))
+                            .max().unwrap_or(1).max(1)
+                    };
+
+                    // Lay every round out as a contiguous, non-overlapping band of
+                    // competition columns, in chronological order, with all finals
+                    // forming the final band. Bands are sized in proportion to their
+                    // game count so the schedule has a uniform density throughout
+                    // instead of sparse early slots and a packed tail; each band is also
+                    // kept at or above its minimum width so no division overflows. The
+                    // finals band additionally keeps enough depth (one column per
+                    // distinct stage, plus slack) for the QF -> SF -> GF / 3rd-place
+                    // ordering, and absorbs any leftover columns as the last band.
+                    let mut bands: Vec<(Vec<usize>, usize, usize)> = Vec::new(); // (round idxs, game count, min cols)
+                    for &r_idx in &rr_rounds {
+                        let count = internal_activities.iter().filter(|a| a.round_index == r_idx && !a.is_interview).count();
+                        bands.push((vec![r_idx], count, min_cols(&|ri| ri == r_idx)));
+                    }
+                    if !finals_rounds.is_empty() {
+                        let count = internal_activities.iter().filter(|a| a.round_index >= 10000 && !a.is_interview).count();
+                        let depth = (finals_rounds.len() + 2).max(min_cols(&|ri| ri >= 10000));
+                        bands.push((finals_rounds.clone(), count, depth));
+                    }
+
+                    let total_count: usize = bands.iter().map(|(_, c, _)| *c).sum::<usize>().max(1);
+                    let n_bands = bands.len();
+                    let mut c_start = 0usize;
+                    for (bi, (round_idxs, count, min_c)) in bands.iter().enumerate() {
+                        // Columns the remaining bands still need, so we never starve them.
+                        let remaining_min: usize = bands[bi + 1..].iter().map(|(_, _, m)| *m).sum();
+                        let share = ((*count as f64 / total_count as f64) * n_comp as f64).round() as usize;
+                        let mut c_end = c_start + share.max(*min_c);
+                        c_end = c_end.min(n_comp.saturating_sub(remaining_min)).max(c_start + *min_c);
+                        if bi == n_bands - 1 {
+                            c_end = n_comp; // last band (finals) takes the remainder
+                        }
+                        c_end = c_end.min(n_comp);
+                        let range = to_range(c_start.min(n_comp - 1), c_end);
+                        for &r_idx in round_idxs {
+                            round_ranges[r_idx] = range.clone();
+                        }
+                        c_start = c_end;
                     }
                 }
             }
@@ -358,5 +410,101 @@ impl InternalTournamentConfig {
             strict_capabilities: config.strict_capabilities,
             can_interview,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{
+        DayGenConfig, Division, Field, FieldKind, FinalsRounds, SchedulingMode, Team, TimeSlot,
+        TournamentConfig,
+    };
+
+    fn slot(id: &str, day: &str, start_min: u32, kind: FieldKind) -> TimeSlot {
+        let fmt = |m: u32| format!("{:02}:{:02}", m / 60, m % 60);
+        TimeSlot {
+            id: id.into(),
+            day: day.into(),
+            start_time: fmt(start_min),
+            end_time: fmt(start_min + 15),
+            kind,
+        }
+    }
+
+    fn two_day_config() -> TournamentConfig {
+        let mut config = TournamentConfig::default();
+        config.divisions.push(Division {
+            id: "d1".into(), name: "Div 1".into(), mode: SchedulingMode::HeadToHead,
+            games_per_team: 3, volunteers_required: 0, duration_minutes: 15,
+            allowed_fields: None, interviews_enabled: true, interview_volunteers_required: 0,
+            interview_duration_minutes: 8, finals_enabled: true,
+            finals_rounds: Some(FinalsRounds::Grand), finals_duration_minutes: None,
+            finals_third_place_playoff: false, color: None,
+        });
+        for (t, org) in [("A", "o1"), ("B", "o1"), ("C", "o2"), ("D", "o2"), ("E", "o3"), ("F", "o3")] {
+            config.teams.push(Team { name: t.into(), division_id: "d1".into(), organization: org.into() });
+        }
+        config.fields.push(Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: None });
+        config.fields.push(Field { id: "f2".into(), name: "Field 2".into(), kind: FieldKind::Competition, allowed_divisions: None });
+        config.fields.push(Field { id: "it".into(), name: "Interview".into(), kind: FieldKind::Interview, allowed_divisions: None });
+
+        // Day 1 carries competition slots AND interview slots (the interview slots
+        // used to inflate day 1's share of the index space and pull all RR onto it).
+        // Day 2 has competition slots only.
+        for i in 0..5 {
+            config.time_slots.push(slot(&format!("sat_c{i}"), "Saturday", 10 * 60 + i * 20, FieldKind::Competition));
+            config.time_slots.push(slot(&format!("sat_i{i}"), "Saturday", 10 * 60 + i * 20 + 5, FieldKind::Interview));
+        }
+        for i in 0..4 {
+            config.time_slots.push(slot(&format!("sun_c{i}"), "Sunday", 10 * 60 + i * 20, FieldKind::Competition));
+        }
+        config.day_configs.push(DayGenConfig { day: "Saturday".into(), ..Default::default() });
+        config.day_configs.push(DayGenConfig { day: "Sunday".into(), interviews_enabled: false, ..Default::default() });
+        config
+    }
+
+    #[test]
+    fn rr_windows_reach_later_days_and_reserve_a_finals_tail() {
+        let config = two_day_config();
+        let activities = crate::scheduler::generate_activities(&config);
+        let internal = InternalTournamentConfig::compile(&config, &activities);
+
+        // Competition slot indices on the second day.
+        let day2_comp: Vec<usize> = internal.slots.iter().enumerate()
+            .filter(|(_, s)| s.day_idx == 1 && s.kind == FieldKind::Competition)
+            .map(|(i, _)| i)
+            .collect();
+        assert!(!day2_comp.is_empty(), "fixture should have day-2 competition slots");
+        let first_day2 = *day2_comp.iter().min().unwrap();
+        let last_day2 = *day2_comp.iter().max().unwrap();
+
+        // Round-robin rounds (round_index < 10000) must, collectively, be allowed to
+        // use at least one day-2 competition slot — i.e. RR is no longer trapped on
+        // day 1.
+        let rr_reaches_day2 = internal.activities.iter()
+            .filter(|a| !a.is_interview && a.round_index < 10000)
+            .any(|a| {
+                let r = &internal.round_ranges[a.round_index];
+                day2_comp.iter().any(|&i| r.contains(&i))
+            });
+        assert!(rr_reaches_day2, "round-robin windows should extend into day 2");
+
+        // Finals must sit at the tail: their window includes the very last day-2
+        // competition slot, and starts strictly after the earliest RR start (so the
+        // round-robin is not entirely buried inside the finals window).
+        let finals = internal.activities.iter().find(|a| a.is_final).expect("a finals match");
+        let finals_range = &internal.round_ranges[finals.round_index];
+        assert!(finals_range.contains(&last_day2), "finals window should reach the last slot");
+
+        let earliest_rr_start = internal.activities.iter()
+            .filter(|a| !a.is_interview && a.round_index < 10000)
+            .map(|a| internal.round_ranges[a.round_index].start)
+            .min()
+            .unwrap();
+        assert!(finals_range.start > earliest_rr_start, "finals should start after RR begins");
+        // The finals tail must not swallow the first day-2 competition slot, leaving
+        // room for RR there.
+        assert!(finals_range.start >= first_day2, "finals tail should be near the end, not mid-day-1");
     }
 }

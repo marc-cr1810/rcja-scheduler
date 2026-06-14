@@ -4,6 +4,7 @@ mod solver;
 pub mod utils;
 mod internal;
 mod fast_evaluator;
+mod conflicts;
 
 use crate::model::{FairnessMode, SpecialistMode, TournamentConfig};
 use std::collections::{HashMap, HashSet};
@@ -71,7 +72,7 @@ impl Default for SolverParams {
             vol_travel_weight: 0.3,
             round_order_weight: 5.0,
             vol_daily_shift_cap: 0,
-            peak_period_weight: 0.1,
+            peak_period_weight: 10.0,
             finals_priority_multiplier: 2.0,
             cancel_flag: None,
         }

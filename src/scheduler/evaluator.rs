@@ -1,12 +1,10 @@
-use crate::model::{
-    Activity, FieldKind, Schedule, TournamentConfig,
-};
+use crate::model::{Activity, Schedule, TournamentConfig};
 use std::collections::HashMap;
-use super::utils::{is_field_suitable_for_activity, is_volunteer_qualified, format_minutes_to_time};
 use super::SolverParams;
+use super::conflicts::{distinct_hard_conflicts, Conflict, ConflictKind};
+use super::fast_evaluator::evaluate_schedule_conflicts;
+use super::internal::InternalTournamentConfig;
 
-type DivAssignInfoWithIdx = (usize, usize, usize, usize, bool, usize);
-type DivAssignInfoWithName = (usize, usize, usize, usize, bool, String);
 
 pub fn get_occupied_slots(config: &TournamentConfig, start_slot_id: &str, duration_minutes: u32) -> Vec<String> {
     let mut occupied = Vec::new();
@@ -41,131 +39,6 @@ pub fn evaluate_schedule_cost(
     super::fast_evaluator::evaluate_schedule_cost(config, schedule, params)
 }
 
-
-/// Returns the indices of assignments that are currently involved in at least one hard conflict.
-/// Used to bias mutation toward fixing broken assignments rather than touching healthy ones.
-#[allow(dead_code)]
-pub fn find_conflicted_assignment_indices(config: &TournamentConfig, schedule: &Schedule) -> Vec<usize> {
-    let mut conflicted = vec![false; schedule.assignments.len()];
-
-    // Build overlap maps: (bucket_idx, key) -> list of assignment indices
-    let mut team_slot: HashMap<(usize, String), Vec<usize>> = HashMap::new();
-    let mut field_slot: HashMap<(usize, String), Vec<usize>> = HashMap::new();
-    let mut vol_slot: HashMap<(usize, String), Vec<usize>> = HashMap::new();
-
-    for (i, assign) in schedule.assignments.iter().enumerate() {
-        let slot_id = &assign.time_slot_id;
-        let activity = &assign.activity;
-        let div_id = activity.division_id();
-
-        let division = match config.divisions.iter().find(|d| d.id == div_id) {
-            Some(d) => d,
-            None => { conflicted[i] = true; continue; }
-        };
-
-        let start_min = config.time_slots.iter().find(|s| s.id == *slot_id).map(|s| s.start_minutes()).unwrap_or(0);
-        let end_min = start_min + activity.duration_minutes();
-        let day_idx = config.time_slots.iter().find(|s| s.id == *slot_id).map(|s| {
-            config.day_configs.iter().position(|dc| dc.day.to_lowercase() == s.day.to_lowercase()).unwrap_or(0)
-        }).unwrap_or(0);
-        let bucket_size = 5u32;
-        let buckets_per_day = 24 * 60 / bucket_size;
-        let day_offset = day_idx as u32 * buckets_per_day;
-
-        let first_bucket = (start_min / bucket_size) as usize;
-        let last_bucket = ((end_min - 1) / bucket_size) as usize;
-        let buckets: Vec<usize> = (first_bucket..=last_bucket).map(|b| day_offset as usize + b).collect();
-
-        for b_idx in &buckets {
-            for team in activity.teams() {
-                team_slot.entry((*b_idx, team.to_string())).or_default().push(i);
-            }
-        }
-
-        if let Some(f_id) = &assign.field_id {
-            for b_idx in &buckets {
-                field_slot.entry((*b_idx, f_id.clone())).or_default().push(i);
-            }
-            let suitable = config.fields.iter().find(|f| f.id == *f_id)
-                .is_some_and(|f| is_field_suitable_for_activity(config, f, activity));
-            if !suitable { conflicted[i] = true; }
-        }
-
-        let req = match activity {
-            Activity::Interview { .. } => division.interview_volunteers_required,
-            _ => division.volunteers_required,
-        };
-        if assign.volunteer_ids.len() < req { conflicted[i] = true; }
-
-        for vol_id in &assign.volunteer_ids {
-            for b_idx in &buckets {
-                vol_slot.entry((*b_idx, vol_id.clone())).or_default().push(i);
-            }
-            if let Some(vol) = config.volunteers.iter().find(|v| v.id == *vol_id) {
-                // Attendance
-                let slot = config.time_slots.iter().find(|s| s.id == *slot_id).unwrap();
-                if matches!(vol.status_for_day(&slot.day), crate::model::AttendanceStatus::NoShow) {
-                    conflicted[i] = true;
-                }
-
-                // Availability
-                let duration = activity.duration_minutes();
-                let day = config.time_slots.iter().find(|s| s.id == *slot_id).unwrap().day.to_lowercase();
-                
-                for slot in &config.time_slots {
-                    if slot.day.to_lowercase() == day {
-                        let s_start = slot.start_minutes();
-                        let s_end = s_start + slot.duration_minutes();
-                        if start_min < s_end && s_start < start_min + duration
-                            && !vol.availabilities.contains(&slot.id) {
-                                conflicted[i] = true;
-                                break;
-                            }
-                    }
-                }
-                
-                // Capability
-                if !is_volunteer_qualified(vol, activity, div_id) {
-                    let is_int = matches!(activity, Activity::Interview { .. });
-                    let is_ivr = vol.capabilities.as_ref()
-                        .is_some_and(|c| c.contains(&"Interview".to_string()));
-                    if config.strict_capabilities || is_int || is_ivr { conflicted[i] = true; }
-                }
-                
-                // Conflict of interest
-                for team_name in activity.teams() {
-                    if let Some(team) = config.teams.iter().find(|t| t.name == team_name)
-                        && vol.conflict_organizations.contains(&team.organization) {
-                            conflicted[i] = true;
-                        }
-                }
-            } else {
-                conflicted[i] = true;
-            }
-        }
-
-        // Duration check: must fit within day
-        let slot_ok = config.time_slots.iter().find(|s| s.id == *slot_id)
-            .is_some_and(|s| {
-                let day_end = config.time_slots.iter()
-                    .filter(|other| other.day.to_lowercase() == s.day.to_lowercase())
-                    .map(|other| other.start_minutes() + other.duration_minutes())
-                    .max()
-                    .unwrap_or(0);
-                s.start_minutes() + activity.duration_minutes() <= day_end
-            });
-        if !slot_ok { conflicted[i] = true; }
-    }
-
-    for idxs in team_slot.values()  { if idxs.len() > 1 { for &i in idxs { conflicted[i] = true; } } }
-    for idxs in field_slot.values() { if idxs.len() > 1 { for &i in idxs { conflicted[i] = true; } } }
-    for idxs in vol_slot.values()   { if idxs.len() > 1 { for &i in idxs { conflicted[i] = true; } } }
-
-    conflicted.iter().enumerate()
-        .filter_map(|(i, &c)| if c { Some(i) } else { None })
-        .collect()
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ConflictSeverity {
     Warning,
@@ -178,635 +51,135 @@ pub struct AssignmentConflict {
     pub message: String,
 }
 
-pub fn get_assignment_conflicts(config: &TournamentConfig, schedule: &Schedule) -> HashMap<usize, Vec<AssignmentConflict>> {
+/// Strips the leading emoji icon (⚽ 🏆 🤖 💬) from an activity label for text logs.
+fn clean_activity_label(activity: &Activity) -> String {
+    let label = activity.label();
+    if label.starts_with('⚽') || label.starts_with('🏆') || label.starts_with('🤖') || label.starts_with('💬') {
+        label.chars().skip(2).collect::<String>()
+    } else {
+        label
+    }
+}
+
+/// Formats one hard conflict into a UI severity + message. The `who` indices are
+/// positions in `schedule.assignments`; the entity indices carried by the
+/// [`ConflictKind`] are internal indices resolved against `internal`. Returns
+/// `None` for soft penalties, which are not surfaced as conflicts.
+fn format_hard_conflict(
+    internal: &InternalTournamentConfig,
+    config: &TournamentConfig,
+    schedule: &Schedule,
+    conflict: &Conflict,
+) -> Option<(ConflictSeverity, String)> {
+    let primary = *conflict.who.first()?;
+    let assign = schedule.assignments.get(primary)?;
+    let act = clean_activity_label(&assign.activity);
+
+    let field_name = |fi: usize| {
+        let id = &internal.fields[fi].id;
+        config.fields.iter().find(|f| &f.id == id).map(|f| f.name.clone()).unwrap_or_else(|| id.clone())
+    };
+    let vol_name = |vi: usize| {
+        let id = &internal.volunteers[vi].id;
+        config.volunteers.iter().find(|v| &v.id == id).map(|v| v.name.clone()).unwrap_or_else(|| id.clone())
+    };
+    let slot_disp = |si: usize| {
+        let id = &internal.slots[si].id;
+        config.time_slots.iter().find(|s| &s.id == id).map(|s| format!("{} {}-{}", s.day, s.start_time, s.end_time)).unwrap_or_else(|| id.clone())
+    };
+    let team_name = |ti: usize| internal.teams[ti].name.clone();
+    let div_name = || {
+        let did = assign.activity.division_id();
+        config.divisions.iter().find(|d| d.id == did).map(|d| d.name.clone()).unwrap_or_else(|| did.to_string())
+    };
+
+    let result = match conflict.kind {
+        ConflictKind::SlotKindMismatch => {
+            if matches!(assign.activity, Activity::Interview { .. }) {
+                (ConflictSeverity::Error, format!("Slot Type Error: Interview '{}' assigned to a Competition time slot.", act))
+            } else {
+                (ConflictSeverity::Error, format!("Slot Type Error: Match/Run '{}' assigned to an Interview time slot.", act))
+            }
+        }
+        ConflictKind::FieldUnsuitable { field_idx } => (ConflictSeverity::Error, format!("Field Suitability: Field '{}' is not suitable for '{}'.", field_name(field_idx), act)),
+        ConflictKind::FieldMissing => (ConflictSeverity::Error, format!("Field Missing: No field/arena assigned for '{}'.", act)),
+        ConflictKind::VolUnavailable { vol_idx, slot_idx } => (ConflictSeverity::Error, format!("Volunteer Availability: '{}' is not available during slot '{}'.", vol_name(vol_idx), slot_disp(slot_idx))),
+        ConflictKind::VolUnqualified { vol_idx } => (ConflictSeverity::Error, format!("Volunteer Capability: '{}' lacks the required qualifications for '{}'.", vol_name(vol_idx), act)),
+        ConflictKind::ConflictOfInterest { vol_idx, team_idx } => (ConflictSeverity::Error, format!("Conflict of Interest: '{}' has a conflict of interest with team '{}'.", vol_name(vol_idx), team_name(team_idx))),
+        ConflictKind::UnderRostered { required, assigned } => (ConflictSeverity::Warning, format!("Under-Rostered: '{}' requires at least {} volunteer(s), but only {} assigned.", act, required, assigned)),
+        ConflictKind::InterviewsDisabled => (ConflictSeverity::Error, format!("Interviews are disabled on the day '{}' is scheduled.", act)),
+        ConflictKind::DurationExceedsDay => (ConflictSeverity::Error, format!("Duration Error: Activity '{}' exceeds the end of the day.", act)),
+        ConflictKind::DailyShiftCapExceeded { vol_idx } => (ConflictSeverity::Error, format!("Volunteer Shift Cap: '{}' exceeds the daily shift cap.", vol_name(vol_idx))),
+        ConflictKind::TeamDoubleBooked { team_idx } => (ConflictSeverity::Error, format!("Team Double-Booking: Team '{}' is scheduled for overlapping activities.", team_name(team_idx))),
+        ConflictKind::FieldDoubleBooked { field_idx } => (ConflictSeverity::Error, format!("Field Double-Booking: Field/Arena '{}' is double-booked.", field_name(field_idx))),
+        ConflictKind::VolDoubleBooked { vol_idx } => (ConflictSeverity::Warning, format!("Volunteer Double-Booking: '{}' is double-booked.", vol_name(vol_idx))),
+        ConflictKind::StageOrder => (ConflictSeverity::Error, format!("Stage Order: In division '{}', a later-stage match is scheduled before an earlier-stage match.", div_name())),
+        ConflictKind::StageOverlap => (ConflictSeverity::Error, format!("Stage Overlap: In division '{}', an earlier-stage match overlaps a later stage.", div_name())),
+        ConflictKind::FieldVarietyStrict { team_idx, field_idx } => (ConflictSeverity::Error, format!("Field Variety: Team '{}' is assigned field '{}' more than once.", team_name(team_idx), field_name(field_idx))),
+        // Soft penalties are not surfaced as conflicts.
+        _ => return None,
+    };
+    Some(result)
+}
+
+/// Per-assignment hard conflicts for the schedule, keyed by assignment index.
+/// Derived from the same engine as [`evaluate_schedule_cost`], so the conflicts
+/// shown always match the cost the solver optimised.
+pub fn get_assignment_conflicts(
+    config: &TournamentConfig,
+    schedule: &Schedule,
+    params: &SolverParams,
+) -> HashMap<usize, Vec<AssignmentConflict>> {
+    let (internal, records, dropped) = evaluate_schedule_conflicts(config, schedule, params);
     let mut result: HashMap<usize, Vec<AssignmentConflict>> = HashMap::new();
 
-    // Build overlap maps: (bucket_idx, key) -> list of assignment indices
-    let mut team_slot: HashMap<(usize, String), Vec<usize>> = HashMap::new();
-    let mut field_slot: HashMap<(usize, String), Vec<usize>> = HashMap::new();
-    let mut vol_slot: HashMap<(usize, String), Vec<usize>> = HashMap::new();
-    let mut div_assignments: HashMap<String, Vec<DivAssignInfoWithIdx>> = HashMap::new(); // div_id -> vec<(min_idx, max_idx, round_index, stage, is_int, assign_idx)>
-
-    let slot_map: HashMap<&str, &crate::model::TimeSlot> = config
-        .time_slots
-        .iter()
-        .map(|slot| (slot.id.as_str(), slot))
-        .collect();
-
-    let slot_idx_map: HashMap<&str, usize> = config
-        .time_slots
-        .iter()
-        .enumerate()
-        .map(|(idx, slot)| (slot.id.as_str(), idx))
-        .collect();
-
-    for (i, assign) in schedule.assignments.iter().enumerate() {
-        let slot_id = &assign.time_slot_id;
-        let activity = &assign.activity;
-        let div_id = activity.division_id();
-
-        let division = match config.divisions.iter().find(|d| d.id == div_id) {
-            Some(d) => d,
-            None => {
-                result.entry(i).or_default().push(AssignmentConflict {
-                    severity: ConflictSeverity::Error,
-                    message: format!("Internal Error: Division '{}' not found.", div_id),
-                });
-                continue;
-            }
-        };
-
-        let activity_name = {
-            let label = activity.label();
-            // Remove emoji icons like ⚽, 🏆, 🤖, 💬 at the start for text logs
-            if label.starts_with('⚽') || label.starts_with('🏆') || label.starts_with('🤖') || label.starts_with('💬') {
-                label.chars().skip(2).collect::<String>()
-            } else {
-                label
-            }
-        };
-
-        let occupied_slots = get_occupied_slots(config, slot_id, activity.duration_minutes());
-
-        let mut min_idx = usize::MAX;
-        let mut max_idx = 0;
-        let mut has_idx = false;
-
-        for slot_overlap_id in &occupied_slots {
-            if let Some(&idx) = slot_idx_map.get(slot_overlap_id.as_str()) {
-                min_idx = min_idx.min(idx);
-                max_idx = max_idx.max(idx);
-                has_idx = true;
+    for conflict in distinct_hard_conflicts(&records) {
+        if let Some((severity, message)) = format_hard_conflict(&internal, config, schedule, &conflict) {
+            for &idx in &conflict.who {
+                result.entry(idx).or_default().push(AssignmentConflict { severity, message: message.clone() });
             }
         }
+    }
 
-        if has_idx {
-            div_assignments.entry(div_id.to_string()).or_default().push((min_idx, max_idx, activity.round_index(), activity.stage(), matches!(activity, Activity::Interview { .. }), i));
-        }
-
-        let start_min = config.time_slots.iter().find(|s| s.id == *slot_id).map(|s| s.start_minutes()).unwrap_or(0);
-        let end_min = start_min + activity.duration_minutes();
-        let day_idx = config.time_slots.iter().find(|s| s.id == *slot_id).map(|s| {
-            config.day_configs.iter().position(|dc| dc.day.to_lowercase() == s.day.to_lowercase()).unwrap_or(0)
-        }).unwrap_or(0);
-        let bucket_size = 5u32;
-        let buckets_per_day = 24 * 60 / bucket_size;
-        let day_offset = day_idx as u32 * buckets_per_day;
-
-        let first_bucket = (start_min / bucket_size) as usize;
-        let last_bucket = ((end_min - 1) / bucket_size) as usize;
-        let buckets: Vec<usize> = (first_bucket..=last_bucket).map(|b| day_offset as usize + b).collect();
-
-        for b_idx in &buckets {
-            for team in activity.teams() {
-                team_slot.entry((*b_idx, team.to_string())).or_default().push(i);
-            }
-        }
-
-        if let Some(f_id) = &assign.field_id {
-            for b_idx in &buckets {
-                field_slot.entry((*b_idx, f_id.clone())).or_default().push(i);
-            }
-            let suitable = config.fields.iter().find(|f| f.id == *f_id)
-                .is_some_and(|f| is_field_suitable_for_activity(config, f, activity));
-            if !suitable {
-                let field_name = config.fields.iter().find(|f| f.id == *f_id).map_or(f_id.clone(), |f| f.name.clone());
-                result.entry(i).or_default().push(AssignmentConflict {
-                    severity: ConflictSeverity::Error,
-                    message: format!("Field Suitability: Field '{}' is not suitable for '{}'.", field_name, activity_name),
-                });
-            }
-        } else {
-            result.entry(i).or_default().push(AssignmentConflict {
+    for idx in dropped {
+        if let Some(a) = schedule.assignments.get(idx) {
+            result.entry(idx).or_default().push(AssignmentConflict {
                 severity: ConflictSeverity::Error,
-                message: format!("Field Missing: No field/arena assigned for '{}'.", activity_name),
+                message: format!("Internal Error: Division '{}' not found.", a.activity.division_id()),
             });
-        }
-
-        let req = match activity {
-            Activity::Interview { .. } => division.interview_volunteers_required,
-            _ => division.volunteers_required,
-        };
-        if assign.volunteer_ids.len() < req {
-            result.entry(i).or_default().push(AssignmentConflict {
-                severity: ConflictSeverity::Warning,
-                message: format!("Under-Rostered: Requires at least {} volunteers, but only {} assigned.", req, assign.volunteer_ids.len()),
-            });
-        }
-
-        for vol_id in &assign.volunteer_ids {
-            for b_idx in &buckets {
-                vol_slot.entry((*b_idx, vol_id.clone())).or_default().push(i);
-            }
-            if let Some(vol) = config.volunteers.iter().find(|v| v.id == *vol_id) {
-                // Attendance
-                let slot = config.time_slots.iter().find(|s| s.id == *slot_id).unwrap();
-                if matches!(vol.status_for_day(&slot.day), crate::model::AttendanceStatus::NoShow) {
-                    result.entry(i).or_default().push(AssignmentConflict {
-                        severity: ConflictSeverity::Error,
-                        message: format!("Volunteer Attendance: '{}' is marked as a NO-SHOW for {}.", vol.name, slot.day),
-                    });
-                }
-
-                // Availability
-                for slot_overlap_id in &occupied_slots {
-                    if !vol.availabilities.contains(slot_overlap_id) {
-                        let overlap_slot = slot_map.get(slot_overlap_id.as_str());
-                        let overlap_slot_name = overlap_slot.map_or(slot_overlap_id.clone(), |s| format!("{} {}-{}", s.day, s.start_time, s.end_time));
-                        result.entry(i).or_default().push(AssignmentConflict {
-                            severity: ConflictSeverity::Error,
-                            message: format!("Volunteer Availability: '{}' is not available during slot '{}'.", vol.name, overlap_slot_name),
-                        });
-                    }
-                }
-                
-                // Capability
-                if !is_volunteer_qualified(vol, activity, div_id) {
-                    let is_int = matches!(activity, Activity::Interview { .. });
-                    let is_ivr = vol.capabilities.as_ref()
-                        .is_some_and(|c| c.contains(&"Interview".to_string()));
-                    if config.strict_capabilities || is_int || is_ivr {
-                        result.entry(i).or_default().push(AssignmentConflict {
-                            severity: ConflictSeverity::Error,
-                            message: format!("Volunteer Capability: '{}' lacks required qualifications for this activity.", vol.name),
-                        });
-                    }
-                }
-                
-                // Conflict of interest
-                for team_name in activity.teams() {
-                    if let Some(team) = config.teams.iter().find(|t| t.name == team_name)
-                        && vol.conflict_organizations.contains(&team.organization) {
-                            result.entry(i).or_default().push(AssignmentConflict {
-                                severity: ConflictSeverity::Error,
-                                message: format!("Conflict of Interest: '{}' has a conflict with organization '{}' (Team '{}').", vol.name, team.organization, team_name),
-                            });
-                        }
-                }
-            } else {
-                result.entry(i).or_default().push(AssignmentConflict {
-                    severity: ConflictSeverity::Error,
-                    message: format!("Invalid Assignment: Unknown volunteer ID '{}'.", vol_id),
-                });
-            }
-        }
-
-        // Slot kind and Duration check
-        if let Some(s) = slot_map.get(slot_id.as_str()) {
-            let is_interview = matches!(activity, Activity::Interview { .. });
-            if is_interview && s.kind == FieldKind::Competition {
-                result.entry(i).or_default().push(AssignmentConflict {
-                    severity: ConflictSeverity::Error,
-                    message: "Interview assigned to Competition time slot.".to_string(),
-                });
-            } else if !is_interview && s.kind == FieldKind::Interview {
-                result.entry(i).or_default().push(AssignmentConflict {
-                    severity: ConflictSeverity::Error,
-                    message: "Match/Run assigned to Interview time slot.".to_string(),
-                });
-            }
-
-            if is_interview {
-                let day_cfg = config.day_configs.iter().find(|dc| dc.day.to_lowercase() == s.day.to_lowercase());
-                if let Some(dc) = day_cfg
-                    && !dc.interviews_enabled {
-                        result.entry(i).or_default().push(AssignmentConflict {
-                            severity: ConflictSeverity::Error,
-                            message: format!("Interviews are disabled on {}.", dc.day),
-                        });
-                    }
-            }
-
-            let day_end = config.time_slots.iter()
-                .filter(|other| other.day.to_lowercase() == s.day.to_lowercase())
-                .map(|other| other.start_minutes() + other.duration_minutes())
-                .max()
-                .unwrap_or(0);
-            if s.start_minutes() + activity.duration_minutes() > day_end {
-                result.entry(i).or_default().push(AssignmentConflict {
-                    severity: ConflictSeverity::Error,
-                    message: format!("Duration Error: Activity ({} min) exceeds the end of the day.", activity.duration_minutes()),
-                });
-            }
-        }
-    }
-
-    // Process overlaps
-    for ((bucket_idx, team), idxs) in team_slot {
-        if idxs.len() > 1 {
-            let bucket_size = 5u32;
-            let buckets_per_day = 24 * 60 / bucket_size;
-            let day_idx = bucket_idx / buckets_per_day as usize;
-            let start_min = (bucket_idx % buckets_per_day as usize) * bucket_size as usize;
-            let day_name = config.day_configs.get(day_idx).map(|dc| dc.day.as_str()).unwrap_or("Unknown");
-            let time_str = format_minutes_to_time(start_min as u32);
-            let slot_name = format!("{} {}", day_name, time_str);
-
-            for &i in &idxs {
-                result.entry(i).or_default().push(AssignmentConflict {
-                    severity: ConflictSeverity::Error,
-                    message: format!("Team Double-Booking: Team '{}' is scheduled for {} activities simultaneously during slot '{}'.", team, idxs.len(), slot_name),
-                });
-            }
-        }
-    }
-    for ((bucket_idx, f_id), idxs) in field_slot {
-        if idxs.len() > 1 {
-            let bucket_size = 5u32;
-            let buckets_per_day = 24 * 60 / bucket_size;
-            let day_idx = bucket_idx / buckets_per_day as usize;
-            let start_min = (bucket_idx % buckets_per_day as usize) * bucket_size as usize;
-            let day_name = config.day_configs.get(day_idx).map(|dc| dc.day.as_str()).unwrap_or("Unknown");
-            let time_str = format_minutes_to_time(start_min as u32);
-            let slot_name = format!("{} {}", day_name, time_str);
-
-            let field_name = config.fields.iter().find(|f| f.id == f_id).map_or(f_id, |f| f.name.clone());
-            for &i in &idxs {
-                result.entry(i).or_default().push(AssignmentConflict {
-                    severity: ConflictSeverity::Error,
-                    message: format!("Field Double-Booking: Field/Arena '{}' is double-booked during slot '{}'.", field_name, slot_name),
-                });
-            }
-        }
-    }
-    // Process volunteer double-booking
-    for ((bucket_idx, vol_id), idxs) in vol_slot {
-        if idxs.len() > 1 {
-            let bucket_size = 5u32;
-            let buckets_per_day = 24 * 60 / bucket_size;
-            let day_idx = bucket_idx / buckets_per_day as usize;
-            let start_min = (bucket_idx % buckets_per_day as usize) * bucket_size as usize;
-            let day_name = config.day_configs.get(day_idx).map(|dc| dc.day.as_str()).unwrap_or("Unknown");
-            let time_str = format_minutes_to_time(start_min as u32);
-            let slot_name = format!("{} {}", day_name, time_str);
-
-            let vol_name = config.volunteers.iter().find(|v| v.id == vol_id).map_or(vol_id, |v| v.name.clone());
-            for &i in &idxs {
-                result.entry(i).or_default().push(AssignmentConflict {
-                    severity: ConflictSeverity::Warning, // User asked for volunteer conflict as warning
-                    message: format!("Volunteer Double-Booking: Volunteer '{}' is double-booked during slot '{}'.", vol_name, slot_name),
-                });
-            }
-        }
-    }
-
-    // Process RR-Finals overlaps and stage ordering
-    for assignments in div_assignments.values_mut() {
-        assignments.sort_by_key(|a| a.0);
-        for i in 0..assignments.len() {
-            for j in i + 1..assignments.len() {
-                let (_min1, max1, _round1, stage1, is_int1, idx1) = assignments[i];
-                let (min2, _max2, _round2, stage2, is_int2, idx2) = assignments[j];
-
-                if is_int1 || is_int2 { continue; }
-
-                // Same division, chronological order: _min1 <= min2
-                if stage1 != stage2 {
-                    let is_3pl_gf = (stage1 == 4 && stage2 == 5) || (stage1 == 5 && stage2 == 4);
-                    if is_3pl_gf {
-                        // Exception: 3PL and GF can overlap or happen in any order.
-                        continue;
-                    }
-                    
-                    if stage1 > stage2 {
-                        let msg = "Stage Order: Matches from a later stage (e.g. Finals) are scheduled before matches from an earlier stage (e.g. Round Robin).".to_string();
-                        result.entry(idx1).or_default().push(AssignmentConflict {
-                            severity: ConflictSeverity::Error,
-                            message: msg.clone(),
-                        });
-                        result.entry(idx2).or_default().push(AssignmentConflict {
-                            severity: ConflictSeverity::Error,
-                            message: msg,
-                        });
-                    } else if max1 >= min2 {
-                        // stage1 < stage2: check for temporal overlap
-                        let msg = "Stage Overlap: Matches from an earlier stage (e.g. Round Robin) should not happen during a later stage (e.g. Finals).".to_string();
-                        result.entry(idx1).or_default().push(AssignmentConflict {
-                            severity: ConflictSeverity::Error,
-                            message: msg.clone(),
-                        });
-                        result.entry(idx2).or_default().push(AssignmentConflict {
-                            severity: ConflictSeverity::Error,
-                            message: msg,
-                        });
-                    }
-                }
-            }
         }
     }
 
     result
 }
 
-pub fn get_schedule_conflicts(config: &TournamentConfig, schedule: &Schedule) -> Vec<String> {
-    let mut conflicts = Vec::new();
+/// Flat, sorted list of the schedule's distinct hard conflicts as human-readable
+/// strings. Its length is the canonical hard-conflict count shown to the user,
+/// and matches the hard cost the solver reports (both are zero together).
+pub fn get_schedule_conflicts(
+    config: &TournamentConfig,
+    schedule: &Schedule,
+    params: &SolverParams,
+) -> Vec<String> {
+    let (internal, records, dropped) = evaluate_schedule_conflicts(config, schedule, params);
+    let mut conflicts: Vec<String> = Vec::new();
 
-    let mut team_overlap = HashMap::new();
-    let mut field_overlap = HashMap::new();
-    let mut volunteer_overlap = HashMap::new();
-
-    let mut division_assignments: HashMap<String, Vec<DivAssignInfoWithName>> = HashMap::new(); // div_id -> vec<(min_idx, max_idx, round_index, stage, is_int, activity_name)>
-
-    let slot_map: HashMap<&str, &crate::model::TimeSlot> = config
-        .time_slots
-        .iter()
-        .map(|slot| (slot.id.as_str(), slot))
-        .collect();
-
-    let slot_idx_map: HashMap<&str, usize> = config
-        .time_slots
-        .iter()
-        .enumerate()
-        .map(|(idx, slot)| (slot.id.as_str(), idx))
-        .collect();
-
-    for assign in &schedule.assignments {
-        let slot_id = &assign.time_slot_id;
-        let field_id = &assign.field_id;
-        let activity = &assign.activity;
-        let div_id = activity.division_id();
-        let division = match config.divisions.iter().find(|d| d.id == div_id) {
-            Some(d) => d,
-            None => {
-                conflicts.push(format!("Internal Error: Division '{}' not found in config.", div_id));
-                continue;
-            }
-        };
-
-        let slot_name = slot_map.get(slot_id.as_str())
-            .map_or(slot_id.clone(), |s| format!("{} {}-{}", s.day, s.start_time, s.end_time));
-
-        let activity_name = {
-            let label = activity.label();
-            // Remove emoji icons like ⚽, 🏆, 🤖, 💬 at the start for text logs
-            if label.starts_with('⚽') || label.starts_with('🏆') || label.starts_with('🤖') || label.starts_with('💬') {
-                label.chars().skip(2).collect::<String>()
-            } else {
-                label
-            }
-        };
-
-        let occupied_slots = get_occupied_slots(config, slot_id, activity.duration_minutes());
-
-        let mut min_idx = usize::MAX;
-        let mut max_idx = 0;
-        let mut has_idx = false;
-
-        for slot_overlap_id in &occupied_slots {
-            if let Some(&idx) = slot_idx_map.get(slot_overlap_id.as_str()) {
-                min_idx = min_idx.min(idx);
-                max_idx = max_idx.max(idx);
-                has_idx = true;
-            }
-        }
-
-        if has_idx {
-            division_assignments.entry(div_id.to_string()).or_default().push((min_idx, max_idx, activity.round_index(), activity.stage(), matches!(activity, Activity::Interview { .. }), activity_name.clone()));
-        }
-
-        let start_min = config.time_slots.iter().find(|s| s.id == *slot_id).map(|s| s.start_minutes()).unwrap_or(0);
-        let end_min = start_min + activity.duration_minutes();
-        let day_idx = config.time_slots.iter().find(|s| s.id == *slot_id).map(|s| {
-            config.day_configs.iter().position(|dc| dc.day.to_lowercase() == s.day.to_lowercase()).unwrap_or(0)
-        }).unwrap_or(0);
-        let bucket_size = 5u32;
-        let buckets_per_day = 24 * 60 / bucket_size;
-        let day_offset = day_idx as u32 * buckets_per_day;
-
-        let first_bucket = (start_min / bucket_size) as usize;
-        let last_bucket = ((end_min - 1) / bucket_size) as usize;
-        let buckets: Vec<usize> = (first_bucket..=last_bucket).map(|b| day_offset as usize + b).collect();
-
-        for b_idx in &buckets {
-            for team in activity.teams() {
-                let entry = team_overlap
-                    .entry(*b_idx)
-                    .or_insert_with(HashMap::new);
-                *entry.entry(team.to_string()).or_insert(0) += 1;
-            }
-        }
-
-        if let Some(f_id) = field_id {
-            let field = config.fields.iter().find(|f| f.id == *f_id);
-            let field_name = field.map_or(f_id.clone(), |f| f.name.clone());
-
-            for b_idx in &buckets {
-                let entry = field_overlap
-                    .entry(*b_idx)
-                    .or_insert_with(HashMap::new);
-                *entry.entry(f_id.clone()).or_insert(0) += 1;
-            }
-
-            let field_suitable = field.is_some_and(|f| {
-                is_field_suitable_for_activity(config, f, activity)
-            });
-            if !field_suitable {
-                conflicts.push(format!(
-                    "Field Suitability: Field '{}' is not suitable for '{}' in slot '{}'.",
-                    field_name, activity_name, slot_name
-                ));
-            }
-        } else {
-            conflicts.push(format!(
-                "Field Missing: No field/arena assigned for '{}' in slot '{}'.",
-                activity_name, slot_name
-            ));
-        }
-
-        for volunteer_id in &assign.volunteer_ids {
-            for b_idx in &buckets {
-                let entry = volunteer_overlap
-                    .entry(*b_idx)
-                    .or_insert_with(HashMap::new);
-                *entry.entry(volunteer_id.clone()).or_insert(0) += 1;
-            }
-
-            if let Some(volunteer) = config.volunteers.iter().find(|v| v.id == *volunteer_id) {
-                for slot_overlap_id in &occupied_slots {
-                    if !volunteer.availabilities.contains(slot_overlap_id) {
-                        let overlap_slot = slot_map.get(slot_overlap_id.as_str());
-                        let overlap_slot_name = overlap_slot.map_or(slot_overlap_id.clone(), |s| format!("{} {}-{}", s.day, s.start_time, s.end_time));
-                        conflicts.push(format!(
-                            "Volunteer Availability: Volunteer '{}' is assigned to '{}' which spans to slot '{}' but is not marked as available then.",
-                            volunteer.name, activity_name, overlap_slot_name
-                        ));
-                    }
-                }
-
-                if !is_volunteer_qualified(volunteer, activity, div_id) {
-                    let is_interview_activity = matches!(activity, Activity::Interview { .. });
-                    let is_interviewer = volunteer.capabilities.as_ref().is_some_and(|caps| caps.contains(&"Interview".to_string()));
-
-                    if config.strict_capabilities || is_interview_activity || is_interviewer {
-                        let required_cap_desc = if is_interview_activity {
-                            "Interview capability".to_string()
-                        } else {
-                            format!("qualification for division '{}'", division.name)
-                        };
-                        conflicts.push(format!(
-                            "Volunteer Capability: Volunteer '{}' is assigned to '{}' in slot '{}' but lacks required {}.",
-                            volunteer.name, activity_name, slot_name, required_cap_desc
-                        ));
-                    }
-                }
-
-                for team_name in activity.teams() {
-                    if let Some(team) = config.teams.iter().find(|t| t.name == team_name)
-                        && volunteer.conflict_organizations.contains(&team.organization) {
-                            conflicts.push(format!(
-                                "Conflict of Interest: Volunteer '{}' has a conflict of interest with organization '{}' (Team '{}') scheduled in slot '{}'.",
-                                volunteer.name, team.organization, team_name, slot_name
-                            ));
-                        }
-                }
-            } else {
-                conflicts.push(format!(
-                    "Invalid Assignment: Unknown volunteer ID '{}' is assigned in slot '{}'.",
-                    volunteer_id, slot_name
-                ));
-            }
-        }
-
-        let req_volunteers = match activity {
-            Activity::Interview { .. } => division.interview_volunteers_required,
-            _ => division.volunteers_required,
-        };
-        if assign.volunteer_ids.len() < req_volunteers {
-            conflicts.push(format!(
-                "Under-Rostered: '{}' in slot '{}' has only {} volunteer(s) assigned, but requires at least {}.",
-                activity_name, slot_name, assign.volunteer_ids.len(), req_volunteers
-            ));
-        }
-
-        if let Some(slot) = slot_map.get(slot_id.as_str()) {
-            let is_interview = matches!(activity, Activity::Interview { .. });
-            if is_interview && slot.kind == FieldKind::Competition {
-                conflicts.push(format!("Slot Type Error: Interview '{}' assigned to Competition time slot '{}'.", activity_name, slot_name));
-            } else if !is_interview && slot.kind == FieldKind::Interview {
-                conflicts.push(format!("Slot Type Error: Match/Run '{}' assigned to Interview time slot '{}'.", activity_name, slot_name));
-            }
-
-            if is_interview {
-                let day_cfg = config.day_configs.iter().find(|dc| dc.day.to_lowercase() == slot.day.to_lowercase());
-                if let Some(dc) = day_cfg
-                    && !dc.interviews_enabled {
-                        conflicts.push(format!("Interviews are disabled on {}.", dc.day));
-                    }
-            }
-
-            let day_end = config.time_slots.iter()
-                .filter(|s| s.day.to_lowercase() == slot.day.to_lowercase())
-                .map(|s| s.start_minutes() + s.duration_minutes())
-                .max()
-                .unwrap_or(0);
-            if slot.start_minutes() + activity.duration_minutes() > day_end {
-                conflicts.push(format!(
-                    "Duration Error: Activity '{}' ({} min) starting at slot '{}' exceeds the end of the day.",
-                    activity_name, activity.duration_minutes(), slot_name
-                ));
-            }
+    for conflict in distinct_hard_conflicts(&records) {
+        if let Some((_severity, message)) = format_hard_conflict(&internal, config, schedule, &conflict) {
+            conflicts.push(message);
         }
     }
 
-    for (bucket_idx, teams) in team_overlap {
-        for (team, count) in teams {
-            if count > 1 {
-                let bucket_size = 5u32;
-                let buckets_per_day = 24 * 60 / bucket_size;
-                let day_idx = bucket_idx / buckets_per_day as usize;
-                let start_min = (bucket_idx % buckets_per_day as usize) * bucket_size as usize;
-                let day_name = config.day_configs.get(day_idx).map(|dc| dc.day.as_str()).unwrap_or("Unknown");
-                let time_str = format_minutes_to_time(start_min as u32);
-                conflicts.push(format!(
-                    "Team Double-Booking: Team '{}' is scheduled for {} activities simultaneously around {} {}.",
-                    team, count, day_name, time_str
-                ));
-            }
-        }
-    }
-
-    for (bucket_idx, fields) in field_overlap {
-        for (f_id, count) in fields {
-            if count > 1 {
-                let bucket_size = 5u32;
-                let buckets_per_day = 24 * 60 / bucket_size;
-                let day_idx = bucket_idx / buckets_per_day as usize;
-                let start_min = (bucket_idx % buckets_per_day as usize) * bucket_size as usize;
-                let day_name = config.day_configs.get(day_idx).map(|dc| dc.day.as_str()).unwrap_or("Unknown");
-                let time_str = format_minutes_to_time(start_min as u32);
-                let field_name = config.fields.iter().find(|f| f.id == f_id).map_or(f_id, |f| f.name.clone());
-                conflicts.push(format!(
-                    "Field Double-Booking: Field/Arena '{}' is double-booked for {} activities around {} {}.",
-                    field_name, count, day_name, time_str
-                ));
-            }
-        }
-    }
-
-    for (bucket_idx, volunteers) in volunteer_overlap {
-        for (vol_id, count) in volunteers {
-            if count > 1 {
-                let bucket_size = 5u32;
-                let buckets_per_day = 24 * 60 / bucket_size;
-                let day_idx = bucket_idx / buckets_per_day as usize;
-                let start_min = (bucket_idx % buckets_per_day as usize) * bucket_size as usize;
-                let day_name = config.day_configs.get(day_idx).map(|dc| dc.day.as_str()).unwrap_or("Unknown");
-                let time_str = format_minutes_to_time(start_min as u32);
-                let vol_name = config.volunteers.iter().find(|v| v.id == vol_id).map_or(vol_id, |v| v.name.clone());
-                conflicts.push(format!(
-                    "Volunteer Double-Booking: Volunteer '{}' is double-booked for {} duties around {} {}.",
-                    vol_name, count, day_name, time_str
-                ));
-            }
-        }
-    }
-
-    // Process RR-Finals overlaps and stage ordering
-    for (div_id, assignments) in &mut division_assignments {
-        assignments.sort_by_key(|a| a.0);
-        let div_name = config.divisions.iter().find(|d| d.id == *div_id).map(|d| d.name.as_str()).unwrap_or(div_id.as_str());
-        for i in 0..assignments.len() {
-            for j in i + 1..assignments.len() {
-                let (min1, max1, _round1, stage1, is_int1, name1) = &assignments[i];
-                let (min2, _max2, _round2, stage2, is_int2, name2) = &assignments[j];
-
-                if *is_int1 || *is_int2 { continue; }
-
-                // Same division, chronological order: min1 <= min2
-                if stage1 != stage2 {
-                    let is_3pl_gf = (*stage1 == 4 && *stage2 == 5) || (*stage1 == 5 && *stage2 == 4);
-                    if is_3pl_gf {
-                        // Exception: 3PL and GF can overlap or happen in any order.
-                        continue;
-                    }
-
-                    if stage1 > stage2 {
-                        let day1 = &config.time_slots[*min1].day;
-                        let time1 = &config.time_slots[*min1].start_time;
-                        let day2 = &config.time_slots[*min2].day;
-                        let time2 = &config.time_slots[*min2].start_time;
-                        conflicts.push(format!(
-                            "Stage Order: In division '{}', later stage match '{}' ({} {}) is scheduled before earlier stage match '{}' ({} {}).",
-                            div_name, name1, day1, time1, name2, day2, time2
-                        ));
-                    } else if *max1 >= *min2 {
-                        // stage1 < stage2: check for temporal overlap
-                        let day = &config.time_slots[*min1].day;
-                        let time1 = &config.time_slots[*min1].start_time;
-                        let time2 = &config.time_slots[*min2].start_time;
-                        conflicts.push(format!(
-                            "Stage Overlap: In division '{}', match '{}' ({}) overlaps with later stage match '{}' ({}) on {}.",
-                            div_name, name1, time1, name2, time2, day
-                        ));
-                    }
-                }
-            }
+    for idx in dropped {
+        if let Some(a) = schedule.assignments.get(idx) {
+            conflicts.push(format!("Internal Error: Division '{}' not found.", a.activity.division_id()));
         }
     }
 
     conflicts.sort();
     conflicts
 }
+
 
 #[cfg(test)]
 #[cfg(test)]
@@ -848,7 +221,9 @@ mod tests {
             TimeSlot { id: "s2".into(), day: "Sat".into(), start_time: "09:30".into(), end_time: "09:50".into(), kind: FieldKind::Competition },
         ];
 
-        let params = SolverParams::default();
+        // Isolate the field-balance dimension: the peak-period penalty also reacts
+        // to how these toy schedules cluster in time, which would confound the check.
+        let params = SolverParams { peak_period_weight: 0.0, ..SolverParams::default() };
 
         // Schedule 1: Field 3 is overloaded with matches
         let schedule1 = Schedule {
@@ -917,7 +292,9 @@ mod tests {
             TimeSlot { id: "s2".into(), day: "Sat".into(), start_time: "09:30".into(), end_time: "09:50".into(), kind: FieldKind::Competition },
         ];
 
-        let params = SolverParams::default();
+        // Isolate the field-balance dimension: the peak-period penalty also reacts
+        // to how these toy schedules cluster in time, which would confound the check.
+        let params = SolverParams { peak_period_weight: 0.0, ..SolverParams::default() };
 
         let schedule1 = Schedule {
             assignments: vec![
@@ -1077,7 +454,7 @@ mod tests {
         assert_eq!(cost2.0, 0.0, "Sequential RR and Finals should have no hard conflicts");
         
         // Also check conflicts report
-        let conflicts1 = get_schedule_conflicts(&config, &schedule1);
+        let conflicts1 = get_schedule_conflicts(&config, &schedule1, &params);
         assert!(conflicts1.iter().any(|c| c.contains("Stage Overlap")));
     }
 
@@ -1126,7 +503,7 @@ mod tests {
         };
 
         let cost = evaluate_schedule_cost(&config, &schedule, &params);
-        let conflicts = get_schedule_conflicts(&config, &schedule);
+        let conflicts = get_schedule_conflicts(&config, &schedule, &params);
 
         assert!(cost.0 >= 10.0, "3PL before SF should be a hard conflict (got {})", cost.0);
         assert!(conflicts.iter().any(|c| c.contains("Stage Order")), "Conflict message should contain 'Stage Order'");

@@ -577,8 +577,8 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
     diagnostics
 }
 
-pub fn validate_schedule(config: &TournamentConfig, schedule: &crate::model::Schedule) -> Vec<DiagnosticMessage> {
-    let assignment_conflicts = crate::scheduler::get_assignment_conflicts(config, schedule);
+pub fn validate_schedule(config: &TournamentConfig, schedule: &crate::model::Schedule, params: &crate::scheduler::SolverParams) -> Vec<DiagnosticMessage> {
+    let assignment_conflicts = crate::scheduler::get_assignment_conflicts(config, schedule, params);
     let mut messages = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
