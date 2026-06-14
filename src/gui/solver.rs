@@ -332,13 +332,36 @@ impl AppState {
                                 .on_hover_text("Penalises scheduling technical interviews late in the day.\n0.0 = Ignore, 0.5 = Default.");
                                 ui.end_row();
 
-                                ui.label(RichText::new("Interview-to-Match Buffer:").color(Color32::from_rgb(209, 213, 219)));
+                                ui.label(RichText::new("Min Interview↔Match Break:").color(Color32::from_rgb(209, 213, 219)));
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::DragValue::new(&mut self.solver_team_min_break_minutes)
+                                            .clamp_range(0..=60)
+                                            .suffix(" min")
+                                    )
+                                    .on_hover_text("HARD constraint: a team's interview and match can never be scheduled closer than this.\n0 = no minimum (off). Default 10.");
+                                    if self.solver_team_min_break_minutes == 0 {
+                                        ui.label(RichText::new("off").italics().color(Color32::from_rgb(107, 114, 128)));
+                                    }
+                                });
+                                ui.end_row();
+
+                                ui.label(RichText::new("Comfortable Break Target:").color(Color32::from_rgb(209, 213, 219)));
+                                ui.add(
+                                    egui::DragValue::new(&mut self.solver_team_break_buffer_minutes)
+                                        .clamp_range(0..=120)
+                                        .suffix(" min")
+                                )
+                                .on_hover_text("Soft target gap between a team's interview and match. Gaps below this are penalised, scaled by how far under they fall.\nDefault 30.");
+                                ui.end_row();
+
+                                ui.label(RichText::new("Interview↔Match Buffer Weight:").color(Color32::from_rgb(209, 213, 219)));
                                 ui.add(
                                     egui::Slider::new(&mut self.solver_interview_match_gap_weight, 0.0..=5.0)
                                         .step_by(0.1)
                                         .show_value(true)
                                 )
-                                .on_hover_text("Penalises scheduling a match too close to a team's interview.\n0.0 = Ignore, 1.0 = Default.");
+                                .on_hover_text("How strongly to push interview↔match gaps toward the comfortable target above.\n0.0 = Ignore, 1.0 = Default.");
                                 ui.end_row();
 
                                 ui.label(RichText::new("Team Wait-Time Mode:").color(Color32::from_rgb(209, 213, 219)));

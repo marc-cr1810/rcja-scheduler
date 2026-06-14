@@ -275,20 +275,24 @@ impl<'a> FastEvaluator<'a> {
             }
         }
 
+        // Team break rules. The hard minimum-break floor must be visible to
+        // hard-only sinks (mutation targeting), so this runs above the soft
+        // return; the soft buffer / wait-time / back-to-back parts inside the
+        // helper are themselves gated on `want_soft`.
+        for t_idx in 0..self.config.teams.len() {
+            for d_idx in 0..self.config.days.len() {
+                let list = &mut self.team_day_assignments[t_idx][d_idx];
+                list.sort_by_key(|&idx| schedule.assignments[idx].slot_idx);
+                Self::report_team_day_penalties(self.params, self.config, schedule, list, t_idx, want_soft, sink);
+            }
+        }
+
         // Everything below is purely soft; sinks that only want hard conflicts
         // (mutation targeting) skip it entirely.
         if !want_soft {
             return;
         }
 
-        // Grouped soft penalties
-        for t_idx in 0..self.config.teams.len() {
-            for d_idx in 0..self.config.days.len() {
-                let list = &mut self.team_day_assignments[t_idx][d_idx];
-                list.sort_by_key(|&idx| schedule.assignments[idx].slot_idx);
-                Self::report_team_day_penalties(self.params, self.config, schedule, list, sink);
-            }
-        }
         for v_idx in 0..self.config.volunteers.len() {
             for d_idx in 0..self.config.days.len() {
                 let list = &mut self.vol_day_assignments[v_idx][d_idx];
@@ -449,8 +453,48 @@ impl<'a> FastEvaluator<'a> {
         sink.into_indices()
     }
 
-    fn report_team_day_penalties<S: ConflictSink>(params: &SolverParams, config: &InternalTournamentConfig, schedule: &InternalSchedule, list: &[usize], sink: &mut S) {
+    fn report_team_day_penalties<S: ConflictSink>(params: &SolverParams, config: &InternalTournamentConfig, schedule: &InternalSchedule, list: &[usize], team_idx: usize, want_soft: bool, sink: &mut S) {
         if list.is_empty() { return; }
+
+        // Interview↔match break, measured as the real wall-clock gap (minutes)
+        // between the end of one activity and the start of the next. `list` is
+        // sorted by slot index, i.e. chronologically within the day, so adjacent
+        // entries are the consecutive activities whose gap actually binds.
+        for w in list.windows(2) {
+            let (i1, i2) = (w[0], w[1]);
+            let slot1 = &config.slots[schedule.assignments[i1].slot_idx];
+            let slot2 = &config.slots[schedule.assignments[i2].slot_idx];
+            if slot1.day_idx != slot2.day_idx { continue; }
+
+            let act1 = &config.activities[i1];
+            let act2 = &config.activities[i2];
+            // Only interview→match (or match→interview) transitions are covered
+            // here; match↔match spacing is handled by back-to-back / wait-time.
+            if act1.is_interview == act2.is_interview { continue; }
+
+            let end1 = slot1.start_minutes + act1.duration_minutes;
+            // Overlaps are already a hard double-booking; skip them here.
+            if slot2.start_minutes < end1 { continue; }
+            let gap = slot2.start_minutes - end1;
+
+            // Hard floor: any closer than the minimum break is a hard conflict.
+            if params.team_min_break_minutes > 0 && gap < params.team_min_break_minutes {
+                let mult = if act1.is_final || act2.is_final { params.finals_priority_multiplier } else { 1.0 };
+                sink.report(CostClass::Hard, mult, ConflictKind::TeamMinBreak { team_idx }, &[i1, i2]);
+            }
+
+            // Soft comfortable buffer beyond the floor, scaled by how far under
+            // the target the gap falls (closer ⇒ larger penalty).
+            if want_soft
+                && params.interview_match_gap_weight > 0.0
+                && params.team_break_buffer_minutes > 0
+                && gap < params.team_break_buffer_minutes {
+                let shortfall = (params.team_break_buffer_minutes - gap) as f64 / params.team_break_buffer_minutes as f64;
+                sink.report(CostClass::Soft, shortfall * params.interview_match_gap_weight, ConflictKind::InterviewMatchGap, &[i1, i2]);
+            }
+        }
+
+        if !want_soft { return; }
 
         // Wait Time
         if params.team_wait_time_weight > 0.0 && list.len() > 1 {
@@ -466,39 +510,17 @@ impl<'a> FastEvaluator<'a> {
             }
         }
 
-        // Back-to-back and Interview-Match Gap
-        for i in 0..list.len() {
-            let idx1 = list[i];
-            let assign1 = &schedule.assignments[idx1];
+        // Back-to-back: the next activity starts exactly when this one ends
+        // (same day; these lists are per-day). Compared in minutes so it stays
+        // correct with non-uniform slot durations.
+        for w in list.windows(2) {
+            let (idx1, idx2) = (w[0], w[1]);
             let act1 = &config.activities[idx1];
-
-            if i + 1 < list.len() {
-                let idx2 = list[i+1];
-                let assign2 = &schedule.assignments[idx2];
-
-                // Back-to-back: the next activity starts exactly when this one
-                // ends (same day; these lists are per-day). Compared in minutes
-                // so it stays correct with non-uniform slot durations.
-                let slot1 = &config.slots[assign1.slot_idx];
-                let slot2 = &config.slots[assign2.slot_idx];
-                if slot1.day_idx == slot2.day_idx
-                    && slot2.start_minutes == slot1.start_minutes + act1.duration_minutes {
-                    sink.report(CostClass::Soft, params.team_back_to_back_weight, ConflictKind::TeamBackToBack, &[idx1, idx2]);
-                }
-            }
-
-            // Interview gap (scan all other activities for this team on this day)
-            if params.interview_match_gap_weight > 0.0 {
-                for &idx2 in list.iter().skip(i + 1) {
-                    let act2 = &config.activities[idx2];
-                    if act1.is_interview != act2.is_interview {
-                        let assign2 = &schedule.assignments[idx2];
-                        let gap = assign2.slot_idx.abs_diff(assign1.slot_idx);
-                        if gap < 2 {
-                            sink.report(CostClass::Soft, params.interview_match_gap_weight, ConflictKind::InterviewMatchGap, &[idx1, idx2]);
-                        }
-                    }
-                }
+            let slot1 = &config.slots[schedule.assignments[idx1].slot_idx];
+            let slot2 = &config.slots[schedule.assignments[idx2].slot_idx];
+            if slot1.day_idx == slot2.day_idx
+                && slot2.start_minutes == slot1.start_minutes + act1.duration_minutes {
+                sink.report(CostClass::Soft, params.team_back_to_back_weight, ConflictKind::TeamBackToBack, &[idx1, idx2]);
             }
         }
     }
@@ -856,6 +878,65 @@ mod tests {
 
         assert_eq!(indices, expected);
         assert_eq!(indices, vec![0, 1], "both stage-ordered matches should be flagged");
+    }
+
+    /// An interview immediately followed by a match for the same team (the
+    /// reported 14:12 interview → 14:20 game case) is a hard conflict under the
+    /// default minimum break, and the gap is measured in real minutes — not slot
+    /// indices — so it fires regardless of how interview/competition slots interleave.
+    #[test]
+    fn interview_then_match_violates_minimum_break() {
+        let mut config = TournamentConfig::default();
+        config.divisions = vec![Division {
+            id: "div1".into(), name: "Div 1".into(), mode: SchedulingMode::HeadToHead,
+            games_per_team: 1, volunteers_required: 0, duration_minutes: 20,
+            allowed_fields: None, interviews_enabled: true,
+            interview_volunteers_required: 0, interview_duration_minutes: 8,
+            finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
+            finals_third_place_playoff: false, color: None,
+        }];
+        // Interview 14:12–14:20 then a match starting exactly at 14:20 → 0-minute gap.
+        config.time_slots = vec![
+            TimeSlot { id: "i1".into(), day: "Sat".into(), start_time: "14:12".into(), end_time: "14:20".into(), kind: FieldKind::Interview },
+            TimeSlot { id: "c1".into(), day: "Sat".into(), start_time: "14:20".into(), end_time: "14:40".into(), kind: FieldKind::Competition },
+        ];
+        config.fields = vec![
+            Field { id: "tbl".into(), name: "Table B".into(), kind: FieldKind::Interview, allowed_divisions: None },
+            Field { id: "fld".into(), name: "Field 7".into(), kind: FieldKind::Competition, allowed_divisions: None },
+        ];
+        config.day_configs = vec![DayGenConfig { day: "Sat".into(), interviews_enabled: true, ..Default::default() }];
+
+        let activities = vec![
+            Activity::Interview { id: "iv".into(), team: "T1".into(), division_id: "div1".into(), duration_minutes: 8 },
+            Activity::Match { id: "m".into(), team_a: "T1".into(), team_b: "T2".into(), division_id: "div1".into(), duration_minutes: 20, stage: MatchStage::RoundRobin { cycle: 0, round: 0 } },
+        ];
+        let internal_config = InternalTournamentConfig::compile(&config, &activities);
+        let schedule = crate::scheduler::internal::InternalSchedule {
+            assignments: vec![
+                crate::scheduler::internal::InternalAssignment { slot_idx: 0, field_idx: Some(0), volunteer_indices: vec![] },
+                crate::scheduler::internal::InternalAssignment { slot_idx: 1, field_idx: Some(1), volunteer_indices: vec![] },
+            ],
+        };
+
+        // Default: a 10-minute minimum break ⇒ the 0-minute gap is a hard conflict.
+        let params = SolverParams::default();
+        let mut e = FastEvaluator::new(&internal_config, &params);
+        let mut rec = RecordSink::default();
+        e.evaluate(&schedule, &mut rec);
+        let breaks: Vec<_> = rec.records.iter()
+            .filter(|c| matches!(c.kind, ConflictKind::TeamMinBreak { .. }))
+            .collect();
+        assert_eq!(breaks.len(), 1, "expected one minimum-break hard conflict, got {:?}", rec.records);
+        assert_eq!(breaks[0].class, CostClass::Hard);
+
+        // Mutation targeting (hard-only sink) must also see it.
+        assert!(e.get_conflicted_indices(&schedule).contains(&1));
+
+        // Disabling the floor removes the hard conflict (the gap becomes soft-only).
+        let off = SolverParams { team_min_break_minutes: 0, ..SolverParams::default() };
+        let mut e_off = FastEvaluator::new(&internal_config, &off);
+        let (hard, _soft) = e_off.calculate_total_cost(&schedule);
+        assert_eq!(hard, 0.0, "no minimum break ⇒ no hard conflict");
     }
 
     /// A volunteer marked no-show for a day is unavailable that day, so the

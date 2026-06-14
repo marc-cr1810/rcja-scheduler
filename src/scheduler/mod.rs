@@ -31,8 +31,15 @@ pub struct SolverParams {
     pub vol_capability_weight: f64,
     /// Penalises scheduling interviews late in the day.
     pub interview_late_weight: f64,
-    /// Penalises scheduling a team's interview too close to their match (e.g. < 30 mins).
+    /// Soft penalty weight applied as a team's interview→match gap shrinks below
+    /// `team_break_buffer_minutes`. Scaled by how far under the target the gap is.
     pub interview_match_gap_weight: f64,
+    /// Hard minimum break (in minutes) required between a team's interview and a
+    /// match. Any closer pairing is a hard conflict. 0 = disabled.
+    pub team_min_break_minutes: u32,
+    /// Soft "comfortable" target gap (in minutes) between a team's interview and a
+    /// match. Gaps below this are softly penalised via `interview_match_gap_weight`.
+    pub team_break_buffer_minutes: u32,
     /// Soft penalty for assigning a volunteer to multiple different divisions.
     pub vol_specialist_mode: SpecialistMode,
     /// Penalises long gaps between a team's matches on the same day.
@@ -66,6 +73,8 @@ impl Default for SolverParams {
             vol_capability_weight: 0.5,
             interview_late_weight: 0.5,
             interview_match_gap_weight: 1.0,
+            team_min_break_minutes: 10,
+            team_break_buffer_minutes: 30,
             vol_specialist_mode: SpecialistMode::Off,
             team_wait_time_weight: 0.3,
             field_variety_strict: false,

@@ -64,6 +64,9 @@ pub enum ConflictKind {
     StageOverlap,
     /// Strict field-variety: a team is assigned the same field more than once.
     FieldVarietyStrict { team_idx: usize, field_idx: usize },
+    /// A team's interview and match are scheduled closer than the required
+    /// minimum break (in minutes), leaving no rest between them.
+    TeamMinBreak { team_idx: usize },
 
     // --- Soft, attributable ---
     /// A volunteer lacks a non-strict division capability (soft penalty).

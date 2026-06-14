@@ -116,6 +116,7 @@ fn format_hard_conflict(
         ConflictKind::StageOrder => (ConflictSeverity::Error, format!("Stage Order: In division '{}', a later-stage match is scheduled before an earlier-stage match.", div_name())),
         ConflictKind::StageOverlap => (ConflictSeverity::Error, format!("Stage Overlap: In division '{}', an earlier-stage match overlaps a later stage.", div_name())),
         ConflictKind::FieldVarietyStrict { team_idx, field_idx } => (ConflictSeverity::Error, format!("Field Variety: Team '{}' is assigned field '{}' more than once.", team_name(team_idx), field_name(field_idx))),
+        ConflictKind::TeamMinBreak { team_idx } => (ConflictSeverity::Error, format!("Insufficient Break: Team '{}' has an interview and a match scheduled too close together (below the minimum break).", team_name(team_idx))),
         // Soft penalties are not surfaced as conflicts.
         _ => return None,
     };
