@@ -520,7 +520,7 @@ mod tests {
             games_per_team: 2, volunteers_required: 0, duration_minutes: 20,
             allowed_fields: None, interviews_enabled: false, interview_volunteers_required: 0,
             interview_duration_minutes: 0, finals_enabled: false, finals_rounds: None,
-            finals_duration_minutes: None, finals_third_place_playoff: false, color: None,
+            finals_duration_minutes: None, finals_third_place_playoff: false, color: None, min_match_break_minutes: None,
         });
         for t in ["A", "B", "C", "D"] {
             config.teams.push(Team { name: t.into(), division_id: "d1".into(), organization: t.into() });

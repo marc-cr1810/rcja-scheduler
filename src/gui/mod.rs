@@ -351,6 +351,8 @@ impl AppState {
             interview_match_gap_weight: self.solver_interview_match_gap_weight,
             team_min_break_minutes: self.solver_team_min_break_minutes,
             team_break_buffer_minutes: self.solver_team_break_buffer_minutes,
+            team_match_min_break_minutes: self.solver_team_match_min_break_minutes,
+            team_match_break_buffer_minutes: self.solver_team_match_break_buffer_minutes,
             vol_specialist_mode: self.solver_vol_specialist_mode,
             team_wait_time_weight: self.solver_team_wait_time_weight,
             field_variety_strict: self.solver_field_variety_strict,

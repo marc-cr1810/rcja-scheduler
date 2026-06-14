@@ -67,6 +67,9 @@ pub enum ConflictKind {
     /// A team's interview and match are scheduled closer than the required
     /// minimum break (in minutes), leaving no rest between them.
     TeamMinBreak { team_idx: usize },
+    /// A team's two consecutive matches are scheduled closer than the required
+    /// recharge break (global, or the division's override).
+    TeamMatchBreak { team_idx: usize },
 
     // --- Soft, attributable ---
     /// A volunteer lacks a non-strict division capability (soft penalty).

@@ -731,7 +731,7 @@ impl AppState {
             finals_rounds: None,
             finals_duration_minutes: None,
             finals_third_place_playoff: false,
-            color: Some(random_color),
+            color: Some(random_color), min_match_break_minutes: None,
         });
         id
     }

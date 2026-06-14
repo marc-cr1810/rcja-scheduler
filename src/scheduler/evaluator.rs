@@ -117,6 +117,7 @@ fn format_hard_conflict(
         ConflictKind::StageOverlap => (ConflictSeverity::Error, format!("Stage Overlap: In division '{}', an earlier-stage match overlaps a later stage.", div_name())),
         ConflictKind::FieldVarietyStrict { team_idx, field_idx } => (ConflictSeverity::Error, format!("Field Variety: Team '{}' is assigned field '{}' more than once.", team_name(team_idx), field_name(field_idx))),
         ConflictKind::TeamMinBreak { team_idx } => (ConflictSeverity::Error, format!("Insufficient Break: Team '{}' has an interview and a match scheduled too close together (below the minimum break).", team_name(team_idx))),
+        ConflictKind::TeamMatchBreak { team_idx } => (ConflictSeverity::Error, format!("Insufficient Recharge: Team '{}' has two matches scheduled too close together (below the minimum recharge break).", team_name(team_idx))),
         // Soft penalties are not surfaced as conflicts.
         _ => return None,
     };
@@ -205,7 +206,7 @@ mod tests {
                 interview_volunteers_required: 0, interview_duration_minutes: 0,
                 finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
                 finals_third_place_playoff: false,
-                color: None,
+                color: None, min_match_break_minutes: None,
             },
             Division { 
                 id: "div2".into(), name: "Div 2".into(), mode: SchedulingMode::HeadToHead, 
@@ -214,7 +215,7 @@ mod tests {
                 interview_volunteers_required: 0, interview_duration_minutes: 0,
                 finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
                 finals_third_place_playoff: false,
-                color: None,
+                color: None, min_match_break_minutes: None,
             },
         ];
         config.time_slots = vec![
@@ -276,7 +277,7 @@ mod tests {
                 interview_volunteers_required: 0, interview_duration_minutes: 0,
                 finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
                 finals_third_place_playoff: false,
-                color: None,
+                color: None, min_match_break_minutes: None,
             },
             Division { 
                 id: "div2".into(), name: "Div 2".into(), mode: SchedulingMode::HeadToHead, 
@@ -285,7 +286,7 @@ mod tests {
                 interview_volunteers_required: 0, interview_duration_minutes: 0,
                 finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
                 finals_third_place_playoff: false,
-                color: None,
+                color: None, min_match_break_minutes: None,
             },
         ];
         config.time_slots = vec![
@@ -343,7 +344,7 @@ mod tests {
                 interview_volunteers_required: 0, interview_duration_minutes: 0,
                 finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
                 finals_third_place_playoff: false,
-                color: None,
+                color: None, min_match_break_minutes: None,
             },
         ];
         config.time_slots = vec![
@@ -400,7 +401,7 @@ mod tests {
                 interview_volunteers_required: 0, interview_duration_minutes: 0,
                 finals_enabled: true, finals_rounds: Some(FinalsRounds::Grand), finals_duration_minutes: Some(20),
                 finals_third_place_playoff: false,
-                color: None,
+                color: None, min_match_break_minutes: None,
             },
         ];
         config.time_slots = vec![
@@ -470,7 +471,7 @@ mod tests {
                 interview_volunteers_required: 0, interview_duration_minutes: 0,
                 finals_enabled: true, finals_rounds: Some(FinalsRounds::Semis), finals_duration_minutes: Some(20),
                 finals_third_place_playoff: true,
-                color: None,
+                color: None, min_match_break_minutes: None,
             },
         ];
         config.time_slots = vec![

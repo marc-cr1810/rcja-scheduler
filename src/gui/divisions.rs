@@ -178,6 +178,7 @@ impl AppState {
                                 finals_duration_minutes: finals_dur,
                                 finals_third_place_playoff: self.new_div_finals_third_place_playoff,
                                 color: Some(self.new_div_color),
+                                min_match_break_minutes: None,
                             });
 
                             self.new_div_name.clear();
@@ -398,6 +399,31 @@ impl AppState {
                                 if ui.add(egui::DragValue::new(&mut div.interview_volunteers_required).clamp_range(1..=4)).changed() {
                                     divisions_changed = true;
                                 }
+                            }
+                        });
+
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            let mut has_override = div.min_match_break_minutes.is_some();
+                            if ui.checkbox(&mut has_override, "Override recharge break")
+                                .on_hover_text("Set a division-specific minimum break between this division's consecutive matches/runs, overriding the global solver default.")
+                                .changed()
+                            {
+                                div.min_match_break_minutes = if has_override {
+                                    Some(self.solver_team_match_min_break_minutes)
+                                } else {
+                                    None
+                                };
+                                divisions_changed = true;
+                            }
+                            if let Some(ref mut mins) = div.min_match_break_minutes {
+                                if ui.add(egui::DragValue::new(mins).clamp_range(0..=120).suffix(" min")).changed() {
+                                    divisions_changed = true;
+                                }
+                                ui.label(RichText::new("(0 = no recharge break for this division)").size(10.0).color(Color32::from_rgb(107, 114, 128)));
+                            } else {
+                                ui.label(RichText::new(format!("Inheriting global default ({} min)", self.solver_team_match_min_break_minutes))
+                                    .size(10.0).color(Color32::from_rgb(107, 114, 128)));
                             }
                         });
 

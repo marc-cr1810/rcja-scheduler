@@ -68,6 +68,10 @@ pub struct Division {
     #[serde(default)]
     pub finals_third_place_playoff: bool,
     pub color: Option<[u8; 3]>, // RGB color
+    /// Per-division override (minutes) for the minimum recharge break between a
+    /// team's consecutive matches. `None` inherits the global solver setting.
+    #[serde(default)]
+    pub min_match_break_minutes: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -487,7 +491,7 @@ mod tests {
             allowed_fields: None, interviews_enabled: true, interview_volunteers_required: 1,
             interview_duration_minutes: 10, finals_enabled: true,
             finals_rounds: Some(FinalsRounds::Semis), finals_duration_minutes: Some(25),
-            finals_third_place_playoff: true, color: Some([10, 20, 30]),
+            finals_third_place_playoff: true, color: Some([10, 20, 30]), min_match_break_minutes: None,
         });
         config.teams.push(Team { name: "Alpha".into(), division_id: "d1".into(), organization: "Org".into() });
         config.time_slots.push(TimeSlot {

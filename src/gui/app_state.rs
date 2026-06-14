@@ -78,6 +78,8 @@ pub struct AppState {
     pub solver_interview_match_gap_weight: f64,
     pub solver_team_min_break_minutes: u32,
     pub solver_team_break_buffer_minutes: u32,
+    pub solver_team_match_min_break_minutes: u32,
+    pub solver_team_match_break_buffer_minutes: u32,
     pub solver_vol_specialist_mode: crate::model::SpecialistMode,
     pub solver_team_wait_time_weight: f64,
     pub solver_field_variety_strict: bool,
@@ -192,6 +194,8 @@ impl Default for AppState {
             solver_interview_match_gap_weight: 1.0,
             solver_team_min_break_minutes: 10,
             solver_team_break_buffer_minutes: 30,
+            solver_team_match_min_break_minutes: 10,
+            solver_team_match_break_buffer_minutes: 20,
             solver_vol_specialist_mode: crate::model::SpecialistMode::Off,
             solver_team_wait_time_weight: 0.3,
             solver_field_variety_strict: false,
@@ -321,7 +325,7 @@ impl AppState {
             finals_rounds: Some(crate::model::FinalsRounds::Grand),
             finals_duration_minutes: Some(25),
             finals_third_place_playoff: false,
-            color: Some([129, 140, 248]),
+            color: Some([129, 140, 248]), min_match_break_minutes: None,
         });
 
         self.config.divisions.push(Division {
@@ -339,7 +343,7 @@ impl AppState {
             finals_rounds: None,
             finals_duration_minutes: None,
             finals_third_place_playoff: false,
-            color: Some([52, 211, 153]),
+            color: Some([52, 211, 153]), min_match_break_minutes: None,
         });
 
         // Set default division id for selections

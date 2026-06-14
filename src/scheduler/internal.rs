@@ -43,6 +43,9 @@ pub struct InternalDivision {
     pub mode: SchedulingMode,
     pub volunteers_required: usize,
     pub interview_volunteers_required: usize,
+    /// Per-division override for the minimum match recharge break (minutes).
+    /// `None` means inherit the global solver setting.
+    pub min_match_break_minutes: Option<u32>,
 }
 
 #[allow(dead_code)]
@@ -225,6 +228,7 @@ impl InternalTournamentConfig {
             mode: d.mode,
             volunteers_required: d.volunteers_required,
             interview_volunteers_required: d.interview_volunteers_required,
+            min_match_break_minutes: d.min_match_break_minutes,
         }).collect();
 
         // Distinct activity durations. Each gets a "class" index so the solver
@@ -440,7 +444,7 @@ mod tests {
             allowed_fields: None, interviews_enabled: true, interview_volunteers_required: 0,
             interview_duration_minutes: 8, finals_enabled: true,
             finals_rounds: Some(FinalsRounds::Grand), finals_duration_minutes: None,
-            finals_third_place_playoff: false, color: None,
+            finals_third_place_playoff: false, color: None, min_match_break_minutes: None,
         });
         for (t, org) in [("A", "o1"), ("B", "o1"), ("C", "o2"), ("D", "o2"), ("E", "o3"), ("F", "o3")] {
             config.teams.push(Team { name: t.into(), division_id: "d1".into(), organization: org.into() });

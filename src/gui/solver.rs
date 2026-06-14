@@ -364,6 +364,29 @@ impl AppState {
                                 .on_hover_text("How strongly to push interview↔match gaps toward the comfortable target above.\n0.0 = Ignore, 1.0 = Default.");
                                 ui.end_row();
 
+                                ui.label(RichText::new("Min Match Recharge Break:").color(Color32::from_rgb(209, 213, 219)));
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::DragValue::new(&mut self.solver_team_match_min_break_minutes)
+                                            .clamp_range(0..=120)
+                                            .suffix(" min")
+                                    )
+                                    .on_hover_text("HARD constraint (global default): a team's consecutive matches can never be closer than this, giving robots time to recharge.\nIndividual divisions can override this in the Divisions tab.\n0 = no minimum (off). Default 10.");
+                                    if self.solver_team_match_min_break_minutes == 0 {
+                                        ui.label(RichText::new("off").italics().color(Color32::from_rgb(107, 114, 128)));
+                                    }
+                                });
+                                ui.end_row();
+
+                                ui.label(RichText::new("Comfortable Match Gap Target:").color(Color32::from_rgb(209, 213, 219)));
+                                ui.add(
+                                    egui::DragValue::new(&mut self.solver_team_match_break_buffer_minutes)
+                                        .clamp_range(0..=120)
+                                        .suffix(" min")
+                                )
+                                .on_hover_text("Soft target gap between a team's consecutive matches. Gaps below this are penalised (scaled by 'Team Back-to-Back Rest').\nDefault 20.");
+                                ui.end_row();
+
                                 ui.label(RichText::new("Team Wait-Time Mode:").color(Color32::from_rgb(209, 213, 219)));
                                 ui.add(
                                     egui::Slider::new(&mut self.solver_team_wait_time_weight, 0.0..=3.0)

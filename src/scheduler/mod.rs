@@ -40,6 +40,12 @@ pub struct SolverParams {
     /// Soft "comfortable" target gap (in minutes) between a team's interview and a
     /// match. Gaps below this are softly penalised via `interview_match_gap_weight`.
     pub team_break_buffer_minutes: u32,
+    /// Global hard minimum break (in minutes) between a team's consecutive
+    /// matches (robot recharge). A division may override this. 0 = disabled.
+    pub team_match_min_break_minutes: u32,
+    /// Soft "comfortable" target gap (in minutes) between a team's consecutive
+    /// matches. Gaps below this are softly penalised via `team_back_to_back_weight`.
+    pub team_match_break_buffer_minutes: u32,
     /// Soft penalty for assigning a volunteer to multiple different divisions.
     pub vol_specialist_mode: SpecialistMode,
     /// Penalises long gaps between a team's matches on the same day.
@@ -75,6 +81,8 @@ impl Default for SolverParams {
             interview_match_gap_weight: 1.0,
             team_min_break_minutes: 10,
             team_break_buffer_minutes: 30,
+            team_match_min_break_minutes: 10,
+            team_match_break_buffer_minutes: 20,
             vol_specialist_mode: SpecialistMode::Off,
             team_wait_time_weight: 0.3,
             field_variety_strict: false,

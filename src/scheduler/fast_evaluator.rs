@@ -456,42 +456,56 @@ impl<'a> FastEvaluator<'a> {
     fn report_team_day_penalties<S: ConflictSink>(params: &SolverParams, config: &InternalTournamentConfig, schedule: &InternalSchedule, list: &[usize], team_idx: usize, want_soft: bool, sink: &mut S) {
         if list.is_empty() { return; }
 
-        // Interview↔match break, measured as the real wall-clock gap (minutes)
-        // between the end of one activity and the start of the next. `list` is
-        // sorted by slot index, i.e. chronologically within the day, so adjacent
-        // entries are the consecutive activities whose gap actually binds.
+        // Break enforcement between a team's consecutive activities. The gap is
+        // the real wall-clock time (minutes) between the end of one activity and
+        // the start of the next — `list` is sorted chronologically, so adjacent
+        // entries are the pair whose gap actually binds. Interview↔match uses the
+        // interview-break settings; match↔match uses the recharge-break settings
+        // (a global floor with an optional per-division override).
         for w in list.windows(2) {
             let (i1, i2) = (w[0], w[1]);
+            let act1 = &config.activities[i1];
+            let act2 = &config.activities[i2];
             let slot1 = &config.slots[schedule.assignments[i1].slot_idx];
             let slot2 = &config.slots[schedule.assignments[i2].slot_idx];
             if slot1.day_idx != slot2.day_idx { continue; }
-
-            let act1 = &config.activities[i1];
-            let act2 = &config.activities[i2];
-            // Only interview→match (or match→interview) transitions are covered
-            // here; match↔match spacing is handled by back-to-back / wait-time.
-            if act1.is_interview == act2.is_interview { continue; }
 
             let end1 = slot1.start_minutes + act1.duration_minutes;
             // Overlaps are already a hard double-booking; skip them here.
             if slot2.start_minutes < end1 { continue; }
             let gap = slot2.start_minutes - end1;
+            let mult = if act1.is_final || act2.is_final { params.finals_priority_multiplier } else { 1.0 };
 
-            // Hard floor: any closer than the minimum break is a hard conflict.
-            if params.team_min_break_minutes > 0 && gap < params.team_min_break_minutes {
-                let mult = if act1.is_final || act2.is_final { params.finals_priority_multiplier } else { 1.0 };
-                sink.report(CostClass::Hard, mult, ConflictKind::TeamMinBreak { team_idx }, &[i1, i2]);
+            if act1.is_interview != act2.is_interview {
+                // Interview ↔ match.
+                if params.team_min_break_minutes > 0 && gap < params.team_min_break_minutes {
+                    sink.report(CostClass::Hard, mult, ConflictKind::TeamMinBreak { team_idx }, &[i1, i2]);
+                }
+                if want_soft
+                    && params.interview_match_gap_weight > 0.0
+                    && params.team_break_buffer_minutes > 0
+                    && gap < params.team_break_buffer_minutes {
+                    let shortfall = (params.team_break_buffer_minutes - gap) as f64 / params.team_break_buffer_minutes as f64;
+                    sink.report(CostClass::Soft, shortfall * params.interview_match_gap_weight, ConflictKind::InterviewMatchGap, &[i1, i2]);
+                }
+            } else if !act1.is_interview {
+                // Match ↔ match (robot recharge). A per-division override, when set,
+                // replaces the global floor for this team's division.
+                let floor = config.divisions[act1.division_idx]
+                    .min_match_break_minutes
+                    .unwrap_or(params.team_match_min_break_minutes);
+                if floor > 0 && gap < floor {
+                    sink.report(CostClass::Hard, mult, ConflictKind::TeamMatchBreak { team_idx }, &[i1, i2]);
+                }
+                if want_soft
+                    && params.team_back_to_back_weight > 0.0
+                    && params.team_match_break_buffer_minutes > 0
+                    && gap < params.team_match_break_buffer_minutes {
+                    let shortfall = (params.team_match_break_buffer_minutes - gap) as f64 / params.team_match_break_buffer_minutes as f64;
+                    sink.report(CostClass::Soft, shortfall * params.team_back_to_back_weight, ConflictKind::TeamBackToBack, &[i1, i2]);
+                }
             }
-
-            // Soft comfortable buffer beyond the floor, scaled by how far under
-            // the target the gap falls (closer ⇒ larger penalty).
-            if want_soft
-                && params.interview_match_gap_weight > 0.0
-                && params.team_break_buffer_minutes > 0
-                && gap < params.team_break_buffer_minutes {
-                let shortfall = (params.team_break_buffer_minutes - gap) as f64 / params.team_break_buffer_minutes as f64;
-                sink.report(CostClass::Soft, shortfall * params.interview_match_gap_weight, ConflictKind::InterviewMatchGap, &[i1, i2]);
-            }
+            // Interview ↔ interview: no break rule.
         }
 
         if !want_soft { return; }
@@ -510,19 +524,6 @@ impl<'a> FastEvaluator<'a> {
             }
         }
 
-        // Back-to-back: the next activity starts exactly when this one ends
-        // (same day; these lists are per-day). Compared in minutes so it stays
-        // correct with non-uniform slot durations.
-        for w in list.windows(2) {
-            let (idx1, idx2) = (w[0], w[1]);
-            let act1 = &config.activities[idx1];
-            let slot1 = &config.slots[schedule.assignments[idx1].slot_idx];
-            let slot2 = &config.slots[schedule.assignments[idx2].slot_idx];
-            if slot1.day_idx == slot2.day_idx
-                && slot2.start_minutes == slot1.start_minutes + act1.duration_minutes {
-                sink.report(CostClass::Soft, params.team_back_to_back_weight, ConflictKind::TeamBackToBack, &[idx1, idx2]);
-            }
-        }
     }
 
     fn report_vol_day_penalties<S: ConflictSink>(params: &SolverParams, config: &InternalTournamentConfig, schedule: &InternalSchedule, list: &[usize], sink: &mut S) {
@@ -763,7 +764,7 @@ mod tests {
                 interview_volunteers_required: 0, interview_duration_minutes: 0,
                 finals_enabled: true, finals_rounds: Some(FinalsRounds::Semis), finals_duration_minutes: Some(20),
                 finals_third_place_playoff: true,
-                color: None,
+                color: None, min_match_break_minutes: None,
             },
         ];
         config.time_slots = vec![
@@ -810,7 +811,7 @@ mod tests {
             allowed_fields: None, interviews_enabled: false,
             interview_volunteers_required: 0, interview_duration_minutes: 0,
             finals_enabled: true, finals_rounds: Some(FinalsRounds::Semis), finals_duration_minutes: Some(20),
-            finals_third_place_playoff: true, color: None,
+            finals_third_place_playoff: true, color: None, min_match_break_minutes: None,
         }];
         config.time_slots = vec![
             TimeSlot { id: "s1".into(), day: "Sat".into(), start_time: "09:00".into(), end_time: "09:20".into(), kind: FieldKind::Competition },
@@ -893,7 +894,7 @@ mod tests {
             allowed_fields: None, interviews_enabled: true,
             interview_volunteers_required: 0, interview_duration_minutes: 8,
             finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
-            finals_third_place_playoff: false, color: None,
+            finals_third_place_playoff: false, color: None, min_match_break_minutes: None,
         }];
         // Interview 14:12–14:20 then a match starting exactly at 14:20 → 0-minute gap.
         config.time_slots = vec![
@@ -939,6 +940,66 @@ mod tests {
         assert_eq!(hard, 0.0, "no minimum break ⇒ no hard conflict");
     }
 
+    /// Two of the same team's matches scheduled with only a 5-minute gap violate
+    /// the default recharge break (hard), and a per-division override of 0 turns
+    /// it off just for that division.
+    #[test]
+    fn consecutive_matches_violate_recharge_break() {
+        let make = |div_break: Option<u32>| {
+            let mut config = TournamentConfig::default();
+            config.divisions = vec![Division {
+                id: "div1".into(), name: "Div 1".into(), mode: SchedulingMode::HeadToHead,
+                games_per_team: 2, volunteers_required: 0, duration_minutes: 20,
+                allowed_fields: None, interviews_enabled: false,
+                interview_volunteers_required: 0, interview_duration_minutes: 0,
+                finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
+                finals_third_place_playoff: false, color: None, min_match_break_minutes: div_break,
+            }];
+            // 09:00–09:20 then 09:25–09:45 → a 5-minute gap for team T1.
+            config.time_slots = vec![
+                TimeSlot { id: "c1".into(), day: "Sat".into(), start_time: "09:00".into(), end_time: "09:20".into(), kind: FieldKind::Competition },
+                TimeSlot { id: "c2".into(), day: "Sat".into(), start_time: "09:25".into(), end_time: "09:45".into(), kind: FieldKind::Competition },
+            ];
+            config.fields = vec![
+                Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: None },
+                Field { id: "f2".into(), name: "Field 2".into(), kind: FieldKind::Competition, allowed_divisions: None },
+            ];
+            config.day_configs = vec![DayGenConfig { day: "Sat".into(), ..Default::default() }];
+
+            let activities = vec![
+                Activity::Match { id: "m1".into(), team_a: "T1".into(), team_b: "T2".into(), division_id: "div1".into(), duration_minutes: 20, stage: MatchStage::RoundRobin { cycle: 0, round: 0 } },
+                Activity::Match { id: "m2".into(), team_a: "T1".into(), team_b: "T3".into(), division_id: "div1".into(), duration_minutes: 20, stage: MatchStage::RoundRobin { cycle: 0, round: 1 } },
+            ];
+            let internal_config = InternalTournamentConfig::compile(&config, &activities);
+            let schedule = crate::scheduler::internal::InternalSchedule {
+                assignments: vec![
+                    crate::scheduler::internal::InternalAssignment { slot_idx: 0, field_idx: Some(0), volunteer_indices: vec![] },
+                    crate::scheduler::internal::InternalAssignment { slot_idx: 1, field_idx: Some(1), volunteer_indices: vec![] },
+                ],
+            };
+            (internal_config, schedule)
+        };
+
+        // Default 10-minute floor, no division override ⇒ the 5-minute gap is hard.
+        let (cfg, sched) = make(None);
+        let params = SolverParams::default();
+        let mut e = FastEvaluator::new(&cfg, &params);
+        let mut rec = RecordSink::default();
+        e.evaluate(&sched, &mut rec);
+        let breaks: Vec<_> = rec.records.iter()
+            .filter(|c| matches!(c.kind, ConflictKind::TeamMatchBreak { .. }))
+            .collect();
+        assert_eq!(breaks.len(), 1, "expected one recharge-break hard conflict, got {:?}", rec.records);
+        assert_eq!(breaks[0].class, CostClass::Hard);
+        assert!(e.get_conflicted_indices(&sched).contains(&0) && e.get_conflicted_indices(&sched).contains(&1));
+
+        // A per-division override of 0 disables the recharge floor for this division.
+        let (cfg_off, sched_off) = make(Some(0));
+        let mut e_off = FastEvaluator::new(&cfg_off, &params);
+        let (hard, _soft) = e_off.calculate_total_cost(&sched_off);
+        assert_eq!(hard, 0.0, "division override of 0 ⇒ no recharge hard conflict");
+    }
+
     /// A volunteer marked no-show for a day is unavailable that day, so the
     /// solver and the diagnostics both see the conflict.
     #[test]
@@ -950,7 +1011,7 @@ mod tests {
             allowed_fields: None, interviews_enabled: false,
             interview_volunteers_required: 0, interview_duration_minutes: 0,
             finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
-            finals_third_place_playoff: false, color: None,
+            finals_third_place_playoff: false, color: None, min_match_break_minutes: None,
         }];
         config.teams = vec![
             Team { name: "A".into(), division_id: "div1".into(), organization: "OrgA".into() },
