@@ -518,20 +518,154 @@ impl genpdf::elements::CellDecorator for RuleDecorator {
     }
 }
 
-/// Cell decorator for the main schedule tables: a heavy rule under the header
-/// row (row 0) and a light rule under every body row, giving clean ledger-style
-/// separation without any filled backgrounds.
-struct ScheduleRuleDecorator;
+/// Cell decorator that draws a rule along the bottom edge of every cell. Used
+/// for the schedule header (heavy primary rule, `strong`) and the body rows
+/// (light rule), giving clean ledger-style separation without filled blocks.
+struct BottomRuleDecorator {
+    color: style::Color,
+    strong: bool,
+}
 
-impl genpdf::elements::CellDecorator for ScheduleRuleDecorator {
-    fn decorate_cell(&mut self, _column: usize, row: usize, _has_more: bool, area: genpdf::render::Area<'_>, _style: style::Style) {
+impl genpdf::elements::CellDecorator for BottomRuleDecorator {
+    fn decorate_cell(&mut self, _column: usize, _row: usize, _has_more: bool, area: genpdf::render::Area<'_>, _style: style::Style) {
         let h = area.size().height;
-        if row == 0 {
-            draw_hline(&area, h, C_PRIMARY);
-            draw_hline(&area, h * 0.985, C_PRIMARY);
-        } else {
-            draw_hline(&area, h, C_RULE);
+        draw_hline(&area, h, self.color);
+        if self.strong {
+            draw_hline(&area, h * 0.985, self.color);
         }
+    }
+}
+
+// Column labels and widths for the schedule tables, kept together so the
+// repeated header always lines up with the body columns.
+const SCHEDULE_COLUMNS: [&str; 5] = ["TIME", "ROUND", "FIELD", "ACTIVITY", "DIVISION"];
+const SCHEDULE_WEIGHTS: [usize; 5] = [4, 3, 3, 8, 6];
+
+/// Cell padding (mm) applied to every schedule cell via `.padded(PAD)`. Shared
+/// so row-height measurement matches what is actually rendered.
+const PAD: u8 = 2;
+
+/// One schedule row: the styled text for each column.
+struct ScheduleRow {
+    cells: Vec<(String, style::Style)>,
+}
+
+/// A schedule table that keeps each row intact across page boundaries and
+/// re-prints its column header at the top of every page it spans.
+///
+/// genpdf 0.2's `TableLayout` draws the header only once and will happily split a
+/// tall (word-wrapped) row across a page break, leaving an orphaned fragment.
+/// This element instead owns the rows as data: on each `render` call it draws a
+/// fresh header, then places rows one at a time, measuring each against the
+/// remaining space and stopping before one would overflow. The document re-calls
+/// `render` with a new full-page area whenever `has_more` is set, so the header
+/// reappears and the remaining rows continue cleanly on the next page.
+struct RepeatingScheduleTable {
+    rows: Vec<ScheduleRow>,
+    next: usize,
+}
+
+impl RepeatingScheduleTable {
+    fn build_header() -> elements::TableLayout {
+        let mut header = elements::TableLayout::new(SCHEDULE_WEIGHTS.to_vec());
+        header.set_cell_decorator(BottomRuleDecorator { color: C_PRIMARY, strong: true });
+        let th = style::Style::new().bold().with_font_size(FS_TH).with_color(C_PRIMARY);
+        let mut row = header.row();
+        for label in SCHEDULE_COLUMNS {
+            row.push_element(elements::Paragraph::new(label).styled(th).padded(PAD));
+        }
+        row.push().ok();
+        header
+    }
+
+    fn build_row(row: &ScheduleRow) -> elements::TableLayout {
+        let mut table = elements::TableLayout::new(SCHEDULE_WEIGHTS.to_vec());
+        table.set_cell_decorator(BottomRuleDecorator { color: C_RULE, strong: false });
+        let mut r = table.row();
+        for (text, st) in &row.cells {
+            r.push_element(elements::Paragraph::new(text.clone()).styled(*st).padded(PAD));
+        }
+        r.push().ok();
+        table
+    }
+
+    /// Conservative height of `row` when laid out at `table_width`, mirroring
+    /// genpdf's greedy word wrapping. A one-line safety margin is added so a
+    /// slight estimate miss can never cause a mid-row page split.
+    fn row_height(context: &genpdf::Context, table_width: genpdf::Mm, row: &ScheduleRow) -> genpdf::Mm {
+        let weight_sum: usize = SCHEDULE_WEIGHTS.iter().sum();
+        let pad = genpdf::Mm::from(PAD);
+        let mut max_h = genpdf::Mm::from(0u8);
+        for (i, (text, st)) in row.cells.iter().enumerate() {
+            let col_w = table_width * (SCHEDULE_WEIGHTS[i] as f64 / weight_sum as f64);
+            let avail = col_w - pad - pad;
+            let lines = wrapped_line_count(context, st, text, avail) + 1; // +1 safety
+            let h = st.line_height(&context.font_cache) * lines as f64 + pad + pad;
+            max_h = max_h.max(h);
+        }
+        max_h
+    }
+}
+
+/// Greedy first-fit word-wrap line count for `text` at width `avail`, using the
+/// same glyph metrics genpdf uses when it renders the paragraph.
+fn wrapped_line_count(context: &genpdf::Context, st: &style::Style, text: &str, avail: genpdf::Mm) -> usize {
+    let zero = genpdf::Mm::from(0u8);
+    let space = st.str_width(&context.font_cache, " ");
+    let mut lines = 1usize;
+    let mut cur = zero;
+    for word in text.split_whitespace() {
+        let w = st.str_width(&context.font_cache, word);
+        if cur <= zero {
+            cur = w;
+        } else if cur + space + w <= avail {
+            cur = cur + space + w;
+        } else {
+            lines += 1;
+            cur = w;
+        }
+    }
+    lines
+}
+
+impl Element for RepeatingScheduleTable {
+    fn render(
+        &mut self,
+        context: &genpdf::Context,
+        mut area: genpdf::render::Area<'_>,
+        style: style::Style,
+    ) -> Result<genpdf::RenderResult, genpdf::error::Error> {
+        let mut result = genpdf::RenderResult::default();
+        if self.next >= self.rows.len() {
+            return Ok(result);
+        }
+
+        let mut header = Self::build_header();
+        let header_result = header.render(context, area.clone(), style)?;
+        area.add_offset(genpdf::Position::new(0, header_result.size.height));
+        result.size = result.size.stack_vertical(header_result.size);
+
+        let table_width = area.size().width;
+        let mut placed_any = false;
+        while self.next < self.rows.len() {
+            let row = &self.rows[self.next];
+            let needed = Self::row_height(context, table_width, row);
+            // Break to a fresh page before a row would overflow — unless nothing
+            // has been placed yet on this page (a row taller than a whole page),
+            // in which case render it anyway to guarantee forward progress.
+            if needed > area.size().height && placed_any {
+                break;
+            }
+
+            let row_result = Self::build_row(row).render(context, area.clone(), style)?;
+            area.add_offset(genpdf::Position::new(0, row_result.size.height));
+            result.size = result.size.stack_vertical(row_result.size);
+            placed_any = true;
+            self.next += 1;
+        }
+
+        result.has_more = self.next < self.rows.len();
+        Ok(result)
     }
 }
 
@@ -542,18 +676,9 @@ fn render_schedule_section(doc: &mut genpdf::Document, config: &crate::model::To
         .styled(style::Style::new().bold().with_font_size(FS_SECTION).with_color(C_PRIMARY)));
     doc.push(elements::Break::new(0.4));
 
-    // One row per assignment, sorted by day / time / field, with a colour-coded
-    // header underline and consistent column widths.
-    let mut table = elements::TableLayout::new(vec![4, 3, 3, 8, 6]);
-    table.set_cell_decorator(ScheduleRuleDecorator);
-
-    let th = style::Style::new().bold().with_font_size(FS_TH).with_color(C_PRIMARY);
-    let mut h_row = table.row();
-    for label in ["TIME", "ROUND", "FIELD", "ACTIVITY", "DIVISION"] {
-        h_row.push_element(elements::Paragraph::new(label).styled(th).padded(2));
-    }
-    h_row.push().ok();
-
+    // One row per assignment, sorted by day / time / field. Rows are collected
+    // as data so RepeatingScheduleTable can keep each row whole across page
+    // breaks and repeat the column header on every page.
     let mut sorted: Vec<&ScheduleAssignment> = assignments.to_vec();
     sorted.sort_by_key(|a| {
         let slot = config.time_slots.iter().find(|s| s.id == a.time_slot_id);
@@ -563,6 +688,13 @@ fn render_schedule_section(doc: &mut genpdf::Document, config: &crate::model::To
         )
     });
 
+    let time_style = style::Style::new().bold().with_font_size(FS_BODY);
+    let round_style = style::Style::new().with_font_size(FS_BODY).with_color(C_MUTED);
+    let field_style = style::Style::new().with_font_size(FS_BODY);
+    let activity_style = style::Style::new().bold().with_font_size(FS_BODY);
+    let division_style = style::Style::new().with_font_size(FS_META).with_color(C_MUTED);
+
+    let mut rows = Vec::new();
     for assign in sorted {
         let slot = match config.time_slots.iter().find(|s| s.id == assign.time_slot_id) {
             Some(s) => s,
@@ -572,39 +704,37 @@ fn render_schedule_section(doc: &mut genpdf::Document, config: &crate::model::To
             .and_then(|fid| config.fields.iter().find(|f| f.id == *fid))
             .map_or_else(|| "-".to_string(), |f| clean_text(&f.name));
 
-        let time_str = format!("{} {}", day_abbr(&slot.day), slot.start_time);
-
-        let mut row = table.row();
-        row.push_element(elements::Paragraph::new(time_str)
-            .styled(style::Style::new().bold().with_font_size(FS_BODY)).padded(2));
-        row.push_element(elements::Paragraph::new(assign.activity.round_label())
-            .styled(style::Style::new().with_font_size(FS_BODY).with_color(C_MUTED)).padded(2));
-        row.push_element(elements::Paragraph::new(field_name)
-            .styled(style::Style::new().with_font_size(FS_BODY)).padded(2));
-        row.push_element(elements::Paragraph::new(clean_text(&assign.activity.export_label()))
-            .styled(style::Style::new().bold().with_font_size(FS_BODY)).padded(2));
-        row.push_element(elements::Paragraph::new(clean_text(&get_activity_metadata(config, &assign.activity)))
-            .styled(style::Style::new().with_font_size(FS_META).with_color(C_MUTED)).padded(2));
-        row.push().ok();
+        rows.push(ScheduleRow {
+            cells: vec![
+                (format!("{} {}", day_abbr(&slot.day), slot.start_time), time_style),
+                (assign.activity.round_label(), round_style),
+                (field_name, field_style),
+                (clean_text(&assign.activity.export_label()), activity_style),
+                (clean_text(&get_activity_metadata(config, &assign.activity)), division_style),
+            ],
+        });
     }
-    doc.push(table);
+
+    doc.push(RepeatingScheduleTable { rows, next: 0 });
     doc.push(elements::Break::new(1.0));
 }
 
-/// Renders a single team's personal schedule as a self-contained card: a name /
-/// organisation header, a divider, then one compact row per activity.
-fn render_team_card(config: &crate::model::TournamentConfig, team: &Team, assignments: &[ScheduleAssignment]) -> elements::LinearLayout {
-    let mut card = elements::LinearLayout::vertical();
-    card.push(elements::Paragraph::new(clean_text(&team.name))
-        .styled(style::Style::new().bold().with_font_size(FS_BODY + 1).with_color(C_PRIMARY)));
-    if !team.organization.trim().is_empty() {
-        card.push(elements::Paragraph::new(clean_text(&team.organization))
-            .styled(style::Style::new().with_font_size(FS_META).with_color(C_MUTED)));
-    }
-    card.push(elements::Break::new(0.2));
-    card.push(rule_element(C_RULE, false));
-    card.push(elements::Break::new(0.2));
+// Column widths for the per-activity rows inside a team card.
+const TEAM_WEIGHTS: [usize; 3] = [4, 8, 5];
 
+fn team_name_style() -> style::Style { style::Style::new().bold().with_font_size(FS_BODY + 1).with_color(C_PRIMARY) }
+fn team_org_style() -> style::Style { style::Style::new().with_font_size(FS_META).with_color(C_MUTED) }
+
+/// A single team's personal schedule, pre-extracted as plain data so the grid
+/// can both measure and build each card during rendering.
+struct TeamCard {
+    name: String,
+    org: String,
+    rows: Vec<(String, String, String)>, // (time, detail, field)
+}
+
+/// Collects and sorts one team's assignments into a printable [`TeamCard`].
+fn prepare_team_card(config: &crate::model::TournamentConfig, team: &Team, assignments: &[ScheduleAssignment]) -> TeamCard {
     let mut team_assigns: Vec<_> = assignments.iter()
         .filter(|a| a.activity.teams().contains(&team.name.as_str()))
         .collect();
@@ -613,13 +743,7 @@ fn render_team_card(config: &crate::model::TournamentConfig, team: &Team, assign
         slot.map(|s| (s.day.clone(), crate::gui::helpers::parse_time_to_minutes(&s.start_time)))
     });
 
-    if team_assigns.is_empty() {
-        card.push(elements::Paragraph::new("No scheduled activities")
-            .styled(style::Style::new().italic().with_font_size(FS_META).with_color(C_MUTED)));
-        return card;
-    }
-
-    let mut table = elements::TableLayout::new(vec![4, 8, 5]);
+    let mut rows = Vec::new();
     for assign in team_assigns {
         let slot = match config.time_slots.iter().find(|s| s.id == assign.time_slot_id) {
             Some(s) => s,
@@ -628,7 +752,6 @@ fn render_team_card(config: &crate::model::TournamentConfig, team: &Team, assign
         let field_name = assign.field_id.as_ref()
             .and_then(|fid| config.fields.iter().find(|f| f.id == *fid))
             .map_or_else(|| "-".to_string(), |f| clean_text(&f.name));
-
         let detail = match &assign.activity {
             crate::model::Activity::Match { team_a, team_b, .. } => {
                 let opp = if team_a == &team.name { team_b } else { team_a };
@@ -637,20 +760,136 @@ fn render_team_card(config: &crate::model::TournamentConfig, team: &Team, assign
             crate::model::Activity::Run { run_number, .. } => format!("Run #{}", run_number),
             crate::model::Activity::Interview { .. } => "Interview".to_string(),
         };
+        rows.push((format!("{} {}", day_abbr(&slot.day), slot.start_time), detail, field_name));
+    }
 
-        let time_str = format!("{} {}", day_abbr(&slot.day), slot.start_time);
+    TeamCard {
+        name: clean_text(&team.name),
+        org: if team.organization.trim().is_empty() { String::new() } else { clean_text(&team.organization) },
+        rows,
+    }
+}
+
+/// Builds the renderable card element: a name / organisation header, a divider,
+/// then one compact row per activity.
+fn build_team_card(card: &TeamCard) -> elements::LinearLayout {
+    let mut c = elements::LinearLayout::vertical();
+    c.push(elements::Paragraph::new(card.name.clone()).styled(team_name_style()));
+    if !card.org.is_empty() {
+        c.push(elements::Paragraph::new(card.org.clone()).styled(team_org_style()));
+    }
+    c.push(elements::Break::new(0.2));
+    c.push(rule_element(C_RULE, false));
+    c.push(elements::Break::new(0.2));
+
+    if card.rows.is_empty() {
+        c.push(elements::Paragraph::new("No scheduled activities")
+            .styled(style::Style::new().italic().with_font_size(FS_META).with_color(C_MUTED)));
+        return c;
+    }
+
+    let mut table = elements::TableLayout::new(TEAM_WEIGHTS.to_vec());
+    for (time, detail, field) in &card.rows {
         let mut row = table.row();
-        row.push_element(elements::Paragraph::new(time_str)
+        row.push_element(elements::Paragraph::new(time.clone())
             .styled(style::Style::new().bold().with_font_size(FS_META)));
-        row.push_element(elements::Paragraph::new(detail)
+        row.push_element(elements::Paragraph::new(detail.clone())
             .styled(style::Style::new().with_font_size(FS_META)));
-        row.push_element(elements::Paragraph::new(field_name)
+        row.push_element(elements::Paragraph::new(field.clone())
             .aligned(genpdf::Alignment::Right)
             .styled(style::Style::new().with_font_size(FS_META).with_color(C_MUTED)));
         row.push().ok();
     }
-    card.push(table);
-    card
+    c.push(table);
+    c
+}
+
+/// Conservative rendered height of a card at the given content width, mirroring
+/// the components built in [`build_team_card`] so the grid can keep a card whole.
+fn card_height(context: &genpdf::Context, content_w: genpdf::Mm, card: &TeamCard, base_style: style::Style) -> genpdf::Mm {
+    let name_lh = team_name_style().line_height(&context.font_cache);
+    let meta_lh = team_org_style().line_height(&context.font_cache);
+    let base_lh = base_style.line_height(&context.font_cache);
+
+    let mut h = name_lh * wrapped_line_count(context, &team_name_style(), &card.name, content_w) as f64;
+    if !card.org.is_empty() {
+        h += meta_lh * wrapped_line_count(context, &team_org_style(), &card.org, content_w) as f64;
+    }
+    // The two 0.2-line breaks around the divider, plus the divider rule itself.
+    h += base_lh * 0.4 + style::Style::new().with_font_size(1).line_height(&context.font_cache);
+
+    if card.rows.is_empty() {
+        h += meta_lh;
+    } else {
+        let weight_sum: usize = TEAM_WEIGHTS.iter().sum();
+        let st = style::Style::new().with_font_size(FS_META);
+        for (time, detail, field) in &card.rows {
+            let lt = wrapped_line_count(context, &st, time, content_w * (TEAM_WEIGHTS[0] as f64 / weight_sum as f64));
+            let ld = wrapped_line_count(context, &st, detail, content_w * (TEAM_WEIGHTS[1] as f64 / weight_sum as f64));
+            let lf = wrapped_line_count(context, &st, field, content_w * (TEAM_WEIGHTS[2] as f64 / weight_sum as f64));
+            h += meta_lh * lt.max(ld).max(lf) as f64;
+        }
+    }
+
+    h + base_lh * 2.0 // safety margin so an estimate miss never splits a card
+}
+
+/// A two-up grid of team cards that never splits a card across a page boundary.
+///
+/// Like [`RepeatingScheduleTable`], it owns its content as data and paginates
+/// during `render`: each pair of cards is measured against the remaining space
+/// and deferred whole to the next page if it would not fit.
+struct TeamGrid {
+    cards: Vec<TeamCard>,
+    next: usize,
+}
+
+impl Element for TeamGrid {
+    fn render(
+        &mut self,
+        context: &genpdf::Context,
+        mut area: genpdf::render::Area<'_>,
+        style: style::Style,
+    ) -> Result<genpdf::RenderResult, genpdf::error::Error> {
+        let mut result = genpdf::RenderResult::default();
+        // Half the grid width, less the 4mm padding applied to each side of a card.
+        let content_w = area.size().width * 0.5 - genpdf::Mm::from(8u8);
+
+        let mut placed_any = false;
+        while self.next < self.cards.len() {
+            let left = &self.cards[self.next];
+            let right = self.cards.get(self.next + 1);
+            let pair_h = card_height(context, content_w, left, style)
+                .max(right.map_or(genpdf::Mm::from(0u8), |r| card_height(context, content_w, r, style)));
+            if pair_h > area.size().height && placed_any {
+                break;
+            }
+
+            let mut row_table = elements::TableLayout::new(vec![1, 1]);
+            let mut row = row_table.row();
+            row.push_element(build_team_card(left).padded(4));
+            match right {
+                Some(r) => row.push_element(build_team_card(r).padded(4)),
+                None => { row.push_element(elements::Paragraph::new("")); }
+            }
+            row.push().ok();
+
+            let row_result = row_table.render(context, area.clone(), style)?;
+            area.add_offset(genpdf::Position::new(0, row_result.size.height));
+            result.size = result.size.stack_vertical(row_result.size);
+            placed_any = true;
+            self.next += if right.is_some() { 2 } else { 1 };
+
+            // Gap between card rows.
+            let mut gap = elements::Break::new(0.6);
+            let gap_result = gap.render(context, area.clone(), style)?;
+            area.add_offset(genpdf::Position::new(0, gap_result.size.height));
+            result.size = result.size.stack_vertical(gap_result.size);
+        }
+
+        result.has_more = self.next < self.cards.len();
+        Ok(result)
+    }
 }
 
 fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title: &str, assignments: &[ScheduleAssignment], report_type: ReportType) -> Option<genpdf::Document> {
@@ -726,22 +965,10 @@ fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title
         teams
     };
 
-    let mut teams_iter = teams_to_show.into_iter().peekable();
-    while let Some(team1) = teams_iter.next() {
-        let team2 = teams_iter.next();
-
-        let mut row_table = elements::TableLayout::new(vec![1, 1]);
-        let mut row = row_table.row();
-        for team in [Some(team1), team2] {
-            match team {
-                Some(team) => row.push_element(render_team_card(config, team, assignments).padded(4)),
-                None => { row.push_element(elements::Paragraph::new("")); }
-            }
-        }
-        row.push().ok();
-        doc.push(row_table);
-        doc.push(elements::Break::new(0.6));
-    }
+    let cards: Vec<TeamCard> = teams_to_show.iter()
+        .map(|team| prepare_team_card(config, team, assignments))
+        .collect();
+    doc.push(TeamGrid { cards, next: 0 });
 
     // --- Footer ---
     doc.push(elements::Break::new(1.0));
