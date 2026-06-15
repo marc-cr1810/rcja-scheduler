@@ -155,7 +155,8 @@ impl AppState {
                     ui.add_space(8.0);
                     if ui.button(RichText::new("+ Create Division").strong().color(Color32::WHITE)).clicked()
                         && !self.new_div_name.trim().is_empty() {
-                            let id = sanitize_name(&self.new_div_name);
+                            let existing_ids: Vec<String> = self.config.divisions.iter().map(|d| d.id.clone()).collect();
+                            let id = crate::scheduler::unique_id(&sanitize_name(&self.new_div_name), &existing_ids);
                             let finals_dur = if self.new_div_finals_enabled && self.new_div_custom_finals_duration {
                                 Some(self.new_div_finals_duration)
                             } else {

@@ -50,3 +50,22 @@ pub fn sanitize_name(name: &str) -> String {
         .collect::<String>()
         .to_lowercase()
 }
+
+/// Returns an id based on `base` that does not collide with any string in
+/// `existing`, appending `_2`, `_3`, … if needed. Because [`sanitize_name`]
+/// strips all separators, distinct display names like "U12" and "U 12" sanitize
+/// to the same base; this keeps their ids distinct so teams don't silently land
+/// in the wrong division/field.
+pub fn unique_id(base: &str, existing: &[String]) -> String {
+    if !existing.iter().any(|e| e == base) {
+        return base.to_string();
+    }
+    let mut n = 2;
+    loop {
+        let candidate = format!("{}_{}", base, n);
+        if !existing.iter().any(|e| *e == candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}

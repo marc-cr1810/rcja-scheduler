@@ -16,7 +16,7 @@ pub use solver::solve_schedule;
 #[allow(unused_imports)]
 pub use evaluator::{evaluate_schedule_cost, get_schedule_conflicts, get_occupied_slots, get_assignment_conflicts, AssignmentConflict, ConflictSeverity};
 pub use activity::generate_activities;
-pub use utils::{sanitize_name, is_field_suitable_for_activity};
+pub use utils::{sanitize_name, unique_id, is_field_suitable_for_activity};
 
 /// Solver parameters
 #[derive(Debug, Clone)]
@@ -97,7 +97,7 @@ impl Default for SolverParams {
             vol_travel_weight: 0.3,
             round_order_weight: 5.0,
             vol_daily_shift_cap: 0,
-            peak_period_weight: 10.0,
+            peak_period_weight: 0.1,
             finals_priority_multiplier: 2.0,
             cancel_flag: None,
             seed: None,

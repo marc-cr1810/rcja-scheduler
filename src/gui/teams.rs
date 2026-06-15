@@ -283,9 +283,15 @@ impl AppState {
                                 let a1 = &team_activities[i];
                                 let a2 = &team_activities[i+1];
                                 if a1.0 == a2.0 {
-                                    let gap = a2.1 - (a1.1 + a1.2);
-                                    if gap < min_gap { min_gap = gap; }
-                                    if gap > max_gap { max_gap = gap; }
+                                    // Same-team activities can overlap after manual drag-and-drop
+                                    // editing, which would make `start2 - end1` underflow. Skip
+                                    // overlapping pairs and clamp with saturating_sub for safety.
+                                    let end1 = a1.1 + a1.2;
+                                    if a2.1 >= end1 {
+                                        let gap = a2.1 - end1;
+                                        if gap < min_gap { min_gap = gap; }
+                                        if gap > max_gap { max_gap = gap; }
+                                    }
                                 }
                             }
 

@@ -925,7 +925,16 @@ impl AppState {
         let assign = &sched.assignments[assign_idx];
         let activity = &assign.activity;
         let slot_id = &assign.time_slot_id;
-        let slot = self.config.time_slots.iter().find(|s| s.id == *slot_id).unwrap();
+        // The assignment may reference a slot that no longer exists (e.g. a config
+        // loaded from disk that's out of sync with the schedule). Bail out cleanly
+        // rather than panicking.
+        let slot = match self.config.time_slots.iter().find(|s| s.id == *slot_id) {
+            Some(s) => s,
+            None => {
+                self.active_substitution = None;
+                return;
+            }
+        };
 
         let mut sub_to_add = None;
         let mut sub_to_clear_missing = false;
@@ -1050,9 +1059,11 @@ impl AppState {
         if let Some(ref mut sched) = self.schedule {
             let assign = &mut sched.assignments[assign_idx];
             let slot_id = assign.time_slot_id.clone();
-            let slot = self.config.time_slots.iter().find(|s| s.id == slot_id).unwrap();
-            let day = slot.day.clone();
-            
+            let day = match self.config.time_slots.iter().find(|s| s.id == slot_id) {
+                Some(slot) => slot.day.clone(),
+                None => { self.active_substitution = None; return; }
+            };
+
             // Find a no-show to replace, or just add if there's room
             let mut replaced = false;
             for vol_id in &mut assign.volunteer_ids {
@@ -1077,8 +1088,10 @@ impl AppState {
         if let Some(ref mut sched) = self.schedule {
             let assign = &mut sched.assignments[assign_idx];
             let slot_id = assign.time_slot_id.clone();
-            let slot = self.config.time_slots.iter().find(|s| s.id == slot_id).unwrap();
-            let day = slot.day.clone();
+            let day = match self.config.time_slots.iter().find(|s| s.id == slot_id) {
+                Some(slot) => slot.day.clone(),
+                None => { self.active_substitution = None; return; }
+            };
 
             let vols = self.config.volunteers.clone();
             assign.volunteer_ids.retain(|id| {

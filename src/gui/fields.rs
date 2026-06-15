@@ -15,7 +15,8 @@ impl AppState {
             let res = ui.text_edit_singleline(&mut self.new_field_name);
             if (ui.button("+ Add Field").clicked() || (res.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))))
                 && !self.new_field_name.trim().is_empty() {
-                    let id = sanitize_name(&self.new_field_name);
+                    let existing_ids: Vec<String> = self.config.fields.iter().map(|f| f.id.clone()).collect();
+                    let id = crate::scheduler::unique_id(&sanitize_name(&self.new_field_name), &existing_ids);
                     self.config.fields.push(Field {
                         id,
                         name: self.new_field_name.clone(),
@@ -105,7 +106,8 @@ impl AppState {
             let res = ui.text_edit_singleline(&mut self.new_table_name);
             if (ui.button("+ Add Table").clicked() || (res.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))))
                 && !self.new_table_name.trim().is_empty() {
-                    let id = sanitize_name(&self.new_table_name);
+                    let existing_ids: Vec<String> = self.config.fields.iter().map(|f| f.id.clone()).collect();
+                    let id = crate::scheduler::unique_id(&sanitize_name(&self.new_table_name), &existing_ids);
                     self.config.fields.push(Field {
                         id,
                         name: self.new_table_name.clone(),

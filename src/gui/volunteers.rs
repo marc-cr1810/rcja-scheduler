@@ -197,8 +197,11 @@ impl AppState {
         let num_cols = active_slots.len() + 5;
         let mut to_delete = None;
 
-        // Clone division mapping to avoid double borrows on config
-        let division_names_map: HashMap<String, String> = divisions_list.into_iter().collect();
+        // Lookup map for display names; iteration for UI uses `divisions_list`
+        // (a Vec) so checkbox order stays stable across frames. Iterating a
+        // freshly-built HashMap each frame reshuffles entries (per-instance hash
+        // seed) and makes the capability dropdown flicker.
+        let division_names_map: HashMap<String, String> = divisions_list.iter().cloned().collect();
 
         egui::ScrollArea::horizontal()
             .id_source("volunteers_avail_scroll")
@@ -268,7 +271,7 @@ impl AppState {
                             }
 
                             if let Some(ref mut caps) = vol.capabilities {
-                                for (div_id, div_name) in &division_names_map {
+                                for (div_id, div_name) in &divisions_list {
                                     let mut has_div = caps.contains(div_id);
                                     if ui.checkbox(&mut has_div, div_name).changed() {
                                         if has_div {

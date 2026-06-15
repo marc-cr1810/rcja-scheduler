@@ -200,13 +200,18 @@ impl AppState {
                 });
 
                 for assign in vol_assigns {
-                    let slot = self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id).unwrap();
+                    let slot = match self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id) {
+                        Some(s) => s,
+                        None => continue,
+                    };
                     let field = assign.field_id.as_ref().and_then(|fid| self.config.fields.iter().find(|f| f.id == *fid));
                     let div = self.config.divisions.iter().find(|d| d.id == assign.activity.division_id());
-                    
+
                     csv.push_str(&format!(
                         "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
-                        vol.name, slot.start_time, slot.day, field.map_or("", |f| &f.name), assign.activity.export_label(), div.map_or("", |d| &d.name)
+                        csv_field(&vol.name), csv_field(&slot.start_time), csv_field(&slot.day),
+                        csv_field(field.map_or("", |f| &f.name)), csv_field(&assign.activity.export_label()),
+                        csv_field(div.map_or("", |d| &d.name))
                     ));
                 }
             }
@@ -361,7 +366,7 @@ fn generate_csv_content_internal(config: &crate::model::TournamentConfig, assign
         let field = assign.field_id.as_ref().and_then(|fid| config.fields.iter().find(|f| f.id == *fid));
         let division = config.divisions.iter().find(|d| d.id == assign.activity.division_id());
         
-        let time_str = slot.map_or("".to_string(), |s| format!("{} {}", &s.day[..3], s.start_time));
+        let time_str = slot.map_or("".to_string(), |s| format!("{} {}", day_abbr(&s.day), s.start_time));
         let div_name = division.map_or("", |d| &d.name);
         let field_name = field.map_or("", |f| &f.name);
         
@@ -384,7 +389,9 @@ fn generate_csv_content_internal(config: &crate::model::TournamentConfig, assign
 
         csv.push_str(&format!(
             "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
-            field_name, time_str, div_name, assign.activity.export_label(), team_a, org_a, team_b, org_b, vol_names
+            csv_field(field_name), csv_field(&time_str), csv_field(div_name),
+            csv_field(&assign.activity.export_label()), csv_field(team_a), csv_field(org_a),
+            csv_field(team_b), csv_field(org_b), csv_field(&vol_names)
         ));
     }
     csv
@@ -507,11 +514,14 @@ fn render_schedule_section(doc: &mut genpdf::Document, config: &crate::model::To
     });
 
     for slot_id in slot_ids {
-        let slot = config.time_slots.iter().find(|s| s.id == *slot_id).unwrap();
+        let slot = match config.time_slots.iter().find(|s| s.id == *slot_id) {
+            Some(s) => s,
+            None => continue,
+        };
         let mut slot_assigns: Vec<_> = assignments.iter().filter(|a| a.time_slot_id == *slot_id).collect();
         slot_assigns.sort_by_key(|a| a.field_id.clone());
 
-        let time_str = format!("{} {}", &slot.day[..3], slot.start_time);
+        let time_str = format!("{} {}", day_abbr(&slot.day), slot.start_time);
         let round_str = slot_assigns.first().map_or("".to_string(), |a| a.activity.round_label());
 
         let mut row = table.row();
@@ -659,14 +669,17 @@ fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title
                     });
 
                     for assign in team_assigns {
-                        let slot = config.time_slots.iter().find(|s| s.id == assign.time_slot_id).unwrap();
+                        let slot = match config.time_slots.iter().find(|s| s.id == assign.time_slot_id) {
+                            Some(s) => s,
+                            None => continue,
+                        };
                         let field_name = assign.field_id.as_ref()
                             .and_then(|fid| config.fields.iter().find(|f| f.id == *fid))
                             .map_or("—", |f| &f.name);
 
                         let mut match_line = elements::TableLayout::new(vec![4, 10, 5]);
                         let mut m_row = match_line.row();
-                        let time_str = format!("{} {}", &slot.day[..3], slot.start_time);
+                        let time_str = format!("{} {}", day_abbr(&slot.day), slot.start_time);
                         m_row.push_element(elements::Paragraph::new(time_str).styled(style::Style::new().bold().with_font_size(9)));
 
                         let opponent = match &assign.activity {
@@ -721,7 +734,9 @@ impl AppState {
         let mut divisions_found = HashSet::new();
         for line in lines {
             let parts = split_csv_line(line);
-            if parts.len() < 7 { continue; }
+            // Match finalize_csv_import's requirement so divisions only appear in
+            // the picker for rows that will actually be importable.
+            if parts.len() < 11 { continue; }
             let div_name = parts[6].trim();
             if !div_name.is_empty() {
                 divisions_found.insert(div_name.to_string());
@@ -788,7 +803,8 @@ impl AppState {
         }
 
         // Create new
-        let id = sanitize_name(name);
+        let existing_ids: Vec<String> = self.config.divisions.iter().map(|d| d.id.clone()).collect();
+        let id = crate::scheduler::unique_id(&sanitize_name(name), &existing_ids);
         let mode = if name.to_lowercase().contains("soccer") {
             SchedulingMode::HeadToHead
         } else {
@@ -837,6 +853,20 @@ fn clean_filename(name: &str) -> String {
 
 fn clean_text(text: &str) -> String {
     text.chars().filter(|c| c.is_ascii()).collect()
+}
+
+/// Escapes a value for a quoted CSV field per RFC 4180: doubles any embedded
+/// quotes. The caller is responsible for wrapping the result in `"`. Without
+/// this, a name containing `"` or a newline corrupts the row layout.
+fn csv_field(value: &str) -> String {
+    value.replace('"', "\"\"")
+}
+
+/// First three characters of a day name (e.g. "Saturday" -> "Sat"), falling back
+/// to the whole string when shorter. Uses char boundaries so non-ASCII or short
+/// day strings can never panic the way `&day[..3]` would.
+fn day_abbr(day: &str) -> &str {
+    day.get(..3).unwrap_or(day)
 }
 
 fn split_csv_line(line: &str) -> Vec<String> {
