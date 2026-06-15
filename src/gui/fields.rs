@@ -81,7 +81,7 @@ impl AppState {
                             }
                         }
                     } else {
-                        ui.label(RichText::new("Allows All Divisions").color(theme::TEXT_MUTED));
+                        ui.label(RichText::new("Allows All Divisions").color(theme::text_muted()));
                     }
                 });
 

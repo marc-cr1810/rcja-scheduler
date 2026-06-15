@@ -17,8 +17,8 @@ impl AppState {
         
         if config_error_count > 0 {
             egui::Frame::none()
-                .fill(theme::DANGER_BG)
-                .stroke(Stroke::new(1.0, theme::DANGER_BORDER))
+                .fill(theme::danger_bg())
+                .stroke(Stroke::new(1.0, theme::danger_border()))
                 .rounding(8.0)
                 .inner_margin(12.0)
                 .show(ui, |ui| {
@@ -34,7 +34,7 @@ impl AppState {
         }
 
         egui::Frame::none()
-            .fill(theme::CARD_BG)
+            .fill(theme::card_bg())
             .rounding(8.0)
             .inner_margin(12.0)
             .show(ui, |ui| {
@@ -66,7 +66,7 @@ impl AppState {
                     let can_solve = !is_solving && config_error_count == 0;
                     let solve_button_text = if is_solving { "⏳ Solving..." } else { "⚙ Generate Schedule" };
                     let solve_button = egui::Button::new(RichText::new(solve_button_text).strong().color(Color32::WHITE))
-                        .fill(if can_solve { theme::ACCENT_STRONG } else { theme::BORDER })
+                        .fill(if can_solve { theme::accent_strong() } else { theme::border() })
                         .rounding(6.0)
                         .min_size(egui::vec2(150.0, 35.0));
 
@@ -106,7 +106,7 @@ impl AppState {
 
                 // Fairness Mode selector
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("⚖ Volunteer Fairness Mode:").strong().color(theme::TEXT));
+                    ui.label(RichText::new("⚖ Volunteer Fairness Mode:").strong().color(theme::text()));
                     ui.add_space(8.0);
 
                     let modes: &[(FairnessMode, &str, &str, Color32, Color32)] = &[
@@ -114,15 +114,15 @@ impl AppState {
                             FairnessMode::Off,
                             "Off",
                             "Pure random volunteer selection (original behaviour). No fairness adjustment.",
-                            theme::BORDER,
-                            theme::TEXT_FAINT,
+                            theme::border(),
+                            theme::text_faint(),
                         ),
                         (
                             FairnessMode::Balanced,
                             "⚖ Balanced",
                             "Weighted-random selection biased toward under-utilised volunteers.\nVolunteers with fewer shifts relative to their availability are preferred.\nRecommended for most tournaments.",
-                            theme::SUCCESS_BG,
-                            theme::SUCCESS,
+                            theme::success_bg(),
+                            theme::success(),
                         ),
                         (
                             FairnessMode::Strict,
@@ -137,8 +137,8 @@ impl AppState {
                         let is_active = self.solver_fairness_mode == *mode;
                         let (bg, text_col) = if is_active {
                             match mode {
-                                FairnessMode::Off => (theme::BORDER, Color32::WHITE),
-                                FairnessMode::Balanced => (theme::SUCCESS_BORDER, Color32::WHITE),
+                                FairnessMode::Off => (theme::border(), Color32::WHITE),
+                                FairnessMode::Balanced => (theme::success_border(), Color32::WHITE),
                                 FairnessMode::Strict => (Color32::from_rgb(234, 88, 12), Color32::WHITE),
                             }
                         } else {
@@ -164,13 +164,13 @@ impl AppState {
 
                 // Volunteer consecutive shift penalty
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("🔁 Volunteer Rest Penalty:").strong().color(theme::TEXT));
+                    ui.label(RichText::new("🔁 Volunteer Rest Penalty:").strong().color(theme::text()));
                     ui.add_space(8.0);
 
                     let is_on = self.solver_vol_consecutive_weight > 0.0;
                     let toggle_label = if is_on { "● On" } else { "○ Off" };
-                    let toggle_color = if is_on { theme::SUCCESS_BORDER } else { theme::TEXT_FAINT };
-                    let toggle_bg    = if is_on { theme::SUCCESS_BG } else { theme::SURFACE };
+                    let toggle_color = if is_on { theme::success_border() } else { theme::text_faint() };
+                    let toggle_bg    = if is_on { theme::success_bg() } else { theme::surface() };
 
                     let toggle_btn = egui::Button::new(RichText::new(toggle_label).strong().color(toggle_color))
                         .fill(toggle_bg)
@@ -190,7 +190,7 @@ impl AppState {
 
                     if self.solver_vol_consecutive_weight > 0.0 {
                         ui.add_space(6.0);
-                        ui.label(RichText::new("Weight:").color(theme::TEXT_MUTED));
+                        ui.label(RichText::new("Weight:").color(theme::text_muted()));
                         ui.add(
                             egui::DragValue::new(&mut self.solver_vol_consecutive_weight)
                                 .clamp_range(0.1f64..=5.0)
@@ -204,7 +204,7 @@ impl AppState {
 
                 // Volunteer Specialist Mode
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("🎯 Volunteer Specialist Mode:").strong().color(theme::TEXT));
+                    ui.label(RichText::new("🎯 Volunteer Specialist Mode:").strong().color(theme::text()));
                     ui.add_space(8.0);
 
                     let modes: &[(SpecialistMode, &str, &str, Color32, Color32)] = &[
@@ -212,14 +212,14 @@ impl AppState {
                             SpecialistMode::Off,
                             "Off",
                             "Volunteers can be assigned to any division they are qualified for.",
-                            theme::BORDER,
-                            theme::TEXT_FAINT,
+                            theme::border(),
+                            theme::text_faint(),
                         ),
                         (
                             SpecialistMode::Balanced,
                             "🎯 Focused",
                             "Try to keep volunteers within a single division (e.g. don't swap someone between different Soccer divisions).",
-                            theme::INFO_BG, // Dark blue
+                            theme::info_bg(), // Dark blue
                             Color32::from_rgb(96, 165, 250), // Light blue
                         ),
                         (
@@ -235,7 +235,7 @@ impl AppState {
                         let is_active = self.solver_vol_specialist_mode == *mode;
                         let (bg, text_col) = if is_active {
                             match mode {
-                                SpecialistMode::Off => (theme::BORDER, Color32::WHITE),
+                                SpecialistMode::Off => (theme::border(), Color32::WHITE),
                                 SpecialistMode::Balanced => (Color32::from_rgb(37, 99, 235), Color32::WHITE),
                                 SpecialistMode::Strict => (Color32::from_rgb(126, 34, 206), Color32::WHITE),
                             }
@@ -260,7 +260,7 @@ impl AppState {
 
                 // Volunteer Travel & Shift Cap
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("📍 Volunteer Travel Penalty:").strong().color(theme::TEXT));
+                    ui.label(RichText::new("📍 Volunteer Travel Penalty:").strong().color(theme::text()));
                     ui.add(
                         egui::DragValue::new(&mut self.solver_vol_travel_weight)
                             .clamp_range(0.0f64..=3.0)
@@ -270,7 +270,7 @@ impl AppState {
 
                     ui.add_space(20.0);
 
-                    ui.label(RichText::new("🕒 Max Shifts/Day:").strong().color(theme::TEXT));
+                    ui.label(RichText::new("🕒 Max Shifts/Day:").strong().color(theme::text()));
                     ui.add(
                         egui::DragValue::new(&mut self.solver_vol_daily_shift_cap)
                             .clamp_range(0..=20)
@@ -283,7 +283,7 @@ impl AppState {
                 egui::CollapsingHeader::new(
                     RichText::new("⚙ Advanced Solver Settings")
                         .strong()
-                        .color(theme::TEXT_MUTED)
+                        .color(theme::text_muted())
                 )
                 .id_source("advanced_solver_weights")
                 .default_open(false)
@@ -293,7 +293,7 @@ impl AppState {
                         RichText::new("Fine-tune the optimization priorities. Higher values force the solver to avoid these conditions more strictly.")
                             .small()
                             .italics()
-                            .color(theme::TEXT_MUTED)
+                            .color(theme::text_muted())
                     );
                     ui.add_space(6.0);
 
@@ -302,7 +302,7 @@ impl AppState {
                             .num_columns(2)
                             .spacing([15.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label(RichText::new("Team Back-to-Back Rest:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Team Back-to-Back Rest:").color(theme::text_dim()));
                                 ui.add(
                                     egui::Slider::new(&mut self.solver_team_back_to_back_weight, 0.0..=3.0)
                                         .step_by(0.1)
@@ -311,7 +311,7 @@ impl AppState {
                                 .on_hover_text("Penalises scheduling a team for consecutive matches on the same day.\n0.0 = Ignore, 1.0 = Default.");
                                 ui.end_row();
 
-                                ui.label(RichText::new("Field/Arena Variety:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Field/Arena Variety:").color(theme::text_dim()));
                                 ui.add(
                                     egui::Slider::new(&mut self.solver_field_variety_weight, 0.0..=3.0)
                                         .step_by(0.1)
@@ -320,7 +320,7 @@ impl AppState {
                                 .on_hover_text("Encourages the solver to vary the fields/arenas teams play on.\n0.0 = Ignore, 0.5 = Default.");
                                 ui.end_row();
 
-                                ui.label(RichText::new("Field Workload Balance:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Field Workload Balance:").color(theme::text_dim()));
                                 ui.add(
                                     egui::Slider::new(&mut self.solver_field_balance_weight, 0.0..=5.0)
                                         .step_by(0.1)
@@ -329,7 +329,7 @@ impl AppState {
                                 .on_hover_text("Penalises uneven activity load distribution across different fields.\n0.0 = Ignore, 1.5 = Default.");
                                 ui.end_row();
 
-                                ui.label(RichText::new("Volunteer Capability Match:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Volunteer Capability Match:").color(theme::text_dim()));
                                 ui.add(
                                     egui::Slider::new(&mut self.solver_vol_capability_weight, 0.0..=3.0)
                                         .step_by(0.1)
@@ -338,7 +338,7 @@ impl AppState {
                                 .on_hover_text("Soft penalty for assigning a volunteer to a division outside their capability list.\n0.0 = Ignore, 0.5 = Default.");
                                 ui.end_row();
 
-                                ui.label(RichText::new("Interview Prioritisation:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Interview Prioritisation:").color(theme::text_dim()));
                                 ui.add(
                                     egui::Slider::new(&mut self.solver_interview_late_weight, 0.0..=5.0)
                                         .step_by(0.1)
@@ -347,7 +347,7 @@ impl AppState {
                                 .on_hover_text("Penalises scheduling technical interviews late in the day.\n0.0 = Ignore, 0.5 = Default.");
                                 ui.end_row();
 
-                                ui.label(RichText::new("Min Interview↔Match Break:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Min Interview↔Match Break:").color(theme::text_dim()));
                                 ui.horizontal(|ui| {
                                     ui.add(
                                         egui::DragValue::new(&mut self.solver_team_min_break_minutes)
@@ -356,12 +356,12 @@ impl AppState {
                                     )
                                     .on_hover_text("HARD constraint: a team's interview and match can never be scheduled closer than this.\n0 = no minimum (off). Default 10.");
                                     if self.solver_team_min_break_minutes == 0 {
-                                        ui.label(RichText::new("off").italics().color(theme::TEXT_FAINT));
+                                        ui.label(RichText::new("off").italics().color(theme::text_faint()));
                                     }
                                 });
                                 ui.end_row();
 
-                                ui.label(RichText::new("Comfortable Break Target:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Comfortable Break Target:").color(theme::text_dim()));
                                 ui.add(
                                     egui::DragValue::new(&mut self.solver_team_break_buffer_minutes)
                                         .clamp_range(0..=120)
@@ -370,7 +370,7 @@ impl AppState {
                                 .on_hover_text("Soft target gap between a team's interview and match. Gaps below this are penalised, scaled by how far under they fall.\nDefault 30.");
                                 ui.end_row();
 
-                                ui.label(RichText::new("Interview↔Match Buffer Weight:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Interview↔Match Buffer Weight:").color(theme::text_dim()));
                                 ui.add(
                                     egui::Slider::new(&mut self.solver_interview_match_gap_weight, 0.0..=5.0)
                                         .step_by(0.1)
@@ -379,7 +379,7 @@ impl AppState {
                                 .on_hover_text("How strongly to push interview↔match gaps toward the comfortable target above.\n0.0 = Ignore, 1.0 = Default.");
                                 ui.end_row();
 
-                                ui.label(RichText::new("Min Match Recharge Break:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Min Match Recharge Break:").color(theme::text_dim()));
                                 ui.horizontal(|ui| {
                                     ui.add(
                                         egui::DragValue::new(&mut self.solver_team_match_min_break_minutes)
@@ -388,12 +388,12 @@ impl AppState {
                                     )
                                     .on_hover_text("HARD constraint (global default): a team's consecutive matches can never be closer than this, giving robots time to recharge.\nIndividual divisions can override this in the Divisions tab.\n0 = no minimum (off). Default 10.");
                                     if self.solver_team_match_min_break_minutes == 0 {
-                                        ui.label(RichText::new("off").italics().color(theme::TEXT_FAINT));
+                                        ui.label(RichText::new("off").italics().color(theme::text_faint()));
                                     }
                                 });
                                 ui.end_row();
 
-                                ui.label(RichText::new("Comfortable Match Gap Target:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Comfortable Match Gap Target:").color(theme::text_dim()));
                                 ui.add(
                                     egui::DragValue::new(&mut self.solver_team_match_break_buffer_minutes)
                                         .clamp_range(0..=120)
@@ -402,7 +402,7 @@ impl AppState {
                                 .on_hover_text("Soft target gap between a team's consecutive matches. Gaps below this are penalised (scaled by 'Team Back-to-Back Rest').\nDefault 20.");
                                 ui.end_row();
 
-                                ui.label(RichText::new("Team Wait-Time Mode:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Team Wait-Time Mode:").color(theme::text_dim()));
                                 ui.add(
                                     egui::Slider::new(&mut self.solver_team_wait_time_weight, 0.0..=3.0)
                                         .step_by(0.1)
@@ -411,12 +411,12 @@ impl AppState {
                                 .on_hover_text("Penalises long gaps between a team's games on the same day.\n0.0 = Ignore, 0.3 = Default.");
                                 ui.end_row();
 
-                                ui.label(RichText::new("Arena Variety Strictness:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Arena Variety Strictness:").color(theme::text_dim()));
                                 ui.checkbox(&mut self.solver_field_variety_strict, "")
                                     .on_hover_text("If enabled, playing on the same field twice becomes a HARD conflict.");
                                 ui.end_row();
 
-                                ui.label(RichText::new("Round Sequencing Priority:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Round Sequencing Priority:").color(theme::text_dim()));
                                 ui.add(
                                     egui::Slider::new(&mut self.solver_round_order_weight, 0.0..=10.0)
                                         .step_by(0.5)
@@ -425,7 +425,7 @@ impl AppState {
                                 .on_hover_text("Ensures all Round 1 matches happen before Round 2 starts.\n0.0 = Ignore, 5.0 = Default.");
                                 ui.end_row();
 
-                                ui.label(RichText::new("Peak Period Balancing:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Peak Period Balancing:").color(theme::text_dim()));
                                 ui.add(
                                     egui::Slider::new(&mut self.solver_peak_period_weight, 0.0..=2.0)
                                         .step_by(0.1)
@@ -434,7 +434,7 @@ impl AppState {
                                 .on_hover_text("Encourages spreading games evenly across the day to avoid crowd surges.\n0.0 = Ignore, 0.1 = Default.");
                                 ui.end_row();
 
-                                ui.label(RichText::new("Finals Priority Boost:").color(theme::TEXT_DIM));
+                                ui.label(RichText::new("Finals Priority Boost:").color(theme::text_dim()));
                                 ui.add(
                                     egui::Slider::new(&mut self.solver_finals_priority_multiplier, 1.0..=10.0)
                                         .step_by(0.5)
@@ -449,9 +449,9 @@ impl AppState {
                 if !is_solving && !self.solve_message.is_empty() {
                     ui.add_space(8.0);
                     let cost_color = if self.solve_status.contains("No Conflicts") {
-                        theme::SUCCESS
+                        theme::success()
                     } else {
-                        theme::DANGER
+                        theme::danger()
                     };
                     ui.label(RichText::new(&self.solve_message).strong().color(cost_color));
 
@@ -462,7 +462,7 @@ impl AppState {
                             egui::CollapsingHeader::new(
                                 RichText::new(format!("⚠ Detailed Conflict Diagnostics ({})", conflicts.len()))
                                     .strong()
-                                    .color(theme::DANGER)
+                                    .color(theme::danger())
                             )
                             .id_source("detailed_conflict_diagnostics")
                             .default_open(true)
@@ -470,8 +470,8 @@ impl AppState {
                                 ui.scope(|ui| {
                                         for conflict in conflicts {
                                             ui.horizontal(|ui| {
-                                                ui.label(RichText::new("•").color(theme::DANGER));
-                                                ui.label(RichText::new(conflict).color(theme::TEXT));
+                                                ui.label(RichText::new("•").color(theme::danger()));
+                                                ui.label(RichText::new(conflict).color(theme::text()));
                                             });
                                         }
                                     });
@@ -486,12 +486,12 @@ impl AppState {
         if self.schedule.is_some() {
             // ── Timeline View Settings ──────────────────────────────────────────
             egui::Frame::none()
-                .fill(theme::CARD_BG)
+                .fill(theme::card_bg())
                 .rounding(8.0)
                 .inner_margin(12.0)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("🔍 Timeline Settings:").strong().color(theme::TEXT_MUTED));
+                        ui.label(RichText::new("🔍 Timeline Settings:").strong().color(theme::text_muted()));
                         ui.add_space(10.0);
                         
                         ui.label("Zoom:");
@@ -534,11 +534,11 @@ impl AppState {
 
             // ── Manual Editing Controls ─────────────────────────────────────────
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Schedule Management:").strong().color(theme::TEXT_MUTED));
+                ui.label(RichText::new("Schedule Management:").strong().color(theme::text_muted()));
                 ui.add_space(8.0);
                 
                 let lock_label = if self.schedule_locked { "🔒 Schedule Locked" } else { "🔓 Schedule Unlocked (Edit Mode)" };
-                let lock_color = if self.schedule_locked { theme::TEXT_FAINT } else { Color32::from_rgb(251, 146, 60) };
+                let lock_color = if self.schedule_locked { theme::text_faint() } else { Color32::from_rgb(251, 146, 60) };
                 let lock_btn = egui::Button::new(RichText::new(lock_label).strong().color(Color32::WHITE))
                     .fill(lock_color)
                     .rounding(6.0)
@@ -583,9 +583,9 @@ impl AppState {
                         let all_btn = egui::Button::new(
                             RichText::new("📅 All Games")
                                 .strong()
-                                .color(if is_all { Color32::WHITE } else { theme::TEXT_MUTED })
+                                .color(if is_all { Color32::WHITE } else { theme::text_muted() })
                         )
-                        .fill(if is_all { theme::ACCENT_STRONG } else { Color32::TRANSPARENT })
+                        .fill(if is_all { theme::accent_strong() } else { Color32::TRANSPARENT })
                         .rounding(6.0)
                         .min_size(egui::vec2(110.0, 28.0));
                         if ui.add(all_btn).clicked() {
@@ -607,7 +607,7 @@ impl AppState {
                             let tab_btn = egui::Button::new(
                                 RichText::new(format!("🏟 {}", div_name))
                                     .strong()
-                                    .color(if is_active { Color32::WHITE } else { theme::TEXT_MUTED })
+                                    .color(if is_active { Color32::WHITE } else { theme::text_muted() })
                             )
                             .fill(if is_active {
                                 Color32::from_rgba_unmultiplied(border_col.r(), border_col.g(), border_col.b(), 60)
@@ -617,7 +617,7 @@ impl AppState {
                             .stroke(if is_active {
                                 Stroke::new(1.5, border_col)
                             } else {
-                                Stroke::new(0.5, theme::BORDER)
+                                Stroke::new(0.5, theme::border())
                             })
                             .rounding(6.0)
                             .min_size(egui::vec2(110.0, 28.0));
@@ -650,7 +650,7 @@ impl AppState {
         } else {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
-                ui.label(RichText::new("No Schedule Generated Yet").size(16.0).color(theme::TEXT_FAINT).strong());
+                ui.label(RichText::new("No Schedule Generated Yet").size(16.0).color(theme::text_faint()).strong());
                 ui.label("Review configuration warnings and click 'Generate Schedule' to create your tournament roster.");
             });
         }
@@ -666,7 +666,7 @@ impl AppState {
         let mut attendance_toggle: Option<(String, String, AttendanceStatus)> = None; // (vol_id, day, next_status)
 
         ui.horizontal(|ui| {
-            ui.label(RichText::new("VOLUNTEER ASSIGNMENT ROSTERS").strong().color(theme::TEXT_MUTED));
+            ui.label(RichText::new("VOLUNTEER ASSIGNMENT ROSTERS").strong().color(theme::text_muted()));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if !self.vol_roster_search.is_empty()
                     && ui.button("Clear").clicked() {
@@ -682,7 +682,7 @@ impl AppState {
         if let Some(ref sched) = self.schedule {
             // ── Tools & Sorting ──
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Sort by:").size(11.0).color(theme::TEXT_MUTED));
+                ui.label(RichText::new("Sort by:").size(11.0).color(theme::text_muted()));
                 ui.selectable_value(&mut self.vol_roster_sort_by, VolRosterSort::Name, "Name");
                 ui.selectable_value(&mut self.vol_roster_sort_by, VolRosterSort::Shifts, "Shifts");
                 ui.selectable_value(&mut self.vol_roster_sort_by, VolRosterSort::Conflicts, "Conflicts");
@@ -723,11 +723,11 @@ impl AppState {
             if min_shifts == usize::MAX { min_shifts = 0; }
 
             ui.horizontal_wrapped(|ui| {
-                crate::gui::helpers::draw_stat_card(ui, "📋", "Total Assignments", &total_shifts.to_string(), theme::ACCENT);
-                crate::gui::helpers::draw_stat_card(ui, "👤", "Active Volunteers", &active_vols.to_string(), theme::SUCCESS);
+                crate::gui::helpers::draw_stat_card(ui, "📋", "Total Assignments", &total_shifts.to_string(), theme::accent());
+                crate::gui::helpers::draw_stat_card(ui, "👤", "Active Volunteers", &active_vols.to_string(), theme::success());
                 let avg = if active_vols > 0 { total_shifts as f32 / active_vols as f32 } else { 0.0 };
-                crate::gui::helpers::draw_stat_card(ui, "⚖", "Avg Shifts/Vol", &format!("{:.1}", avg), theme::WARNING);
-                crate::gui::helpers::draw_stat_card(ui, "📊", "Shift Range", &format!("{} - {}", min_shifts, max_shifts), theme::ACCENT_ALT);
+                crate::gui::helpers::draw_stat_card(ui, "⚖", "Avg Shifts/Vol", &format!("{:.1}", avg), theme::warning());
+                crate::gui::helpers::draw_stat_card(ui, "📊", "Shift Range", &format!("{} - {}", min_shifts, max_shifts), theme::accent_alt());
             });
             ui.add_space(15.0);
 
@@ -771,7 +771,7 @@ impl AppState {
 
             for (vol, vol_assign_indices, has_conflict) in vol_data {
                 let header_text = format!("👤 {} ({} shifts)", vol.name, vol_assign_indices.len());
-                let mut header_color = if has_conflict { theme::DANGER } else { Color32::WHITE };
+                let mut header_color = if has_conflict { theme::danger() } else { Color32::WHITE };
                 
                 if vol.attendance_status.values().any(|s| matches!(s, AttendanceStatus::NoShow)) {
                     header_color = Color32::from_rgb(185, 28, 28);
@@ -809,7 +809,7 @@ impl AppState {
                             .id_source(format!("vol_roster_{}", vol.id))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    if ui.button(RichText::new("🗑 Clear All Shifts").color(theme::DANGER)).on_hover_text("Remove this volunteer from all assigned activities").clicked() {
+                                    if ui.button(RichText::new("🗑 Clear All Shifts").color(theme::danger())).on_hover_text("Remove this volunteer from all assigned activities").clicked() {
                                         vol_to_clear = Some(vol.id.clone());
                                     }
                                     if ui.button("📅 View Availability").clicked() {
@@ -831,13 +831,13 @@ impl AppState {
                                         ui.label(RichText::new(format!(
                                             "  ⏰ {} | 📍 {} | {}",
                                             slot_time, location, assign.activity.label()
-                                        )).color(theme::TEXT_DIM));
+                                        )).color(theme::text_dim()));
 
                                         if let Some(conflicts) = self.assignment_conflicts.get(&idx)
                                             && !conflicts.is_empty() {
                                                 let has_error = conflicts.iter().any(|c| matches!(c.severity, crate::scheduler::ConflictSeverity::Error));
                                                 let icon = if has_error { "❌" } else { "⚠" };
-                                                let color = if has_error { theme::DANGER } else { theme::WARNING };
+                                                let color = if has_error { theme::danger() } else { theme::warning() };
                                                 ui.label(RichText::new(icon).color(color).strong()).on_hover_ui(|ui| {
                                                     ui.vertical(|ui| {
                                                         for c in conflicts {
@@ -855,9 +855,9 @@ impl AppState {
                     for day in &active_days {
                         let status = vol.status_for_day(day);
                         let (btn_text, btn_color, btn_text_color) = match status {
-                            AttendanceStatus::Pending => ("⏳", theme::WARNING, Color32::BLACK),
-                            AttendanceStatus::CheckedIn => ("✅", theme::SUCCESS, Color32::BLACK),
-                            AttendanceStatus::NoShow => ("❌", theme::DANGER, Color32::WHITE),
+                            AttendanceStatus::Pending => ("⏳", theme::warning(), Color32::BLACK),
+                            AttendanceStatus::CheckedIn => ("✅", theme::success(), Color32::BLACK),
+                            AttendanceStatus::NoShow => ("❌", theme::danger(), Color32::WHITE),
                         };
 
                         let day_abbr = day.get(..3).unwrap_or(day.as_str());
@@ -969,7 +969,7 @@ impl AppState {
             .show(ui.ctx(), |ui| {
                 ui.vertical(|ui| {
                     ui.label(RichText::new(format!("Replacing for: {}", activity.label())).strong());
-                    ui.label(RichText::new(format!("⏰ {} | 📍 {}", slot.start_time, assign.field_id.as_deref().unwrap_or("Open"))).size(11.0).color(theme::TEXT_MUTED));
+                    ui.label(RichText::new(format!("⏰ {} | 📍 {}", slot.start_time, assign.field_id.as_deref().unwrap_or("Open"))).size(11.0).color(theme::text_muted()));
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(8.0);
@@ -1023,7 +1023,7 @@ impl AppState {
                     viable_subs.sort_by_key(|(_, _, _, count)| *count);
 
                     if viable_subs.is_empty() {
-                        ui.label(RichText::new("⚠ No qualified substitutes found who are available and conflict-free.").italics().color(theme::DANGER));
+                        ui.label(RichText::new("⚠ No qualified substitutes found who are available and conflict-free.").italics().color(theme::danger()));
                     } else {
                         ui.label(RichText::new("Select a substitute:").strong());
                         ui.add_space(4.0);
@@ -1031,8 +1031,8 @@ impl AppState {
                         egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                             for (v_id, v_name, v_status, count) in viable_subs {
                                 let (status_icon, _status_color) = match v_status {
-                                    AttendanceStatus::CheckedIn => ("✅", theme::SUCCESS),
-                                    _ => ("⏳", theme::WARNING),
+                                    AttendanceStatus::CheckedIn => ("✅", theme::success()),
+                                    _ => ("⏳", theme::warning()),
                                 };
 
                                 ui.horizontal(|ui| {
@@ -1040,7 +1040,7 @@ impl AppState {
                                         sub_to_add = Some(v_id);
                                     }
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(format!("{} shifts", count)).size(10.0).color(theme::TEXT_MUTED));
+                                        ui.label(RichText::new(format!("{} shifts", count)).size(10.0).color(theme::text_muted()));
                                     });
                                 });
                                 ui.add_space(2.0);
@@ -1058,7 +1058,7 @@ impl AppState {
                         }
                         
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button(RichText::new("Clear Missing").color(theme::DANGER)).on_hover_text("Remove no-show volunteers from this assignment").clicked() {
+                            if ui.button(RichText::new("Clear Missing").color(theme::danger())).on_hover_text("Remove no-show volunteers from this assignment").clicked() {
                                 sub_to_clear_missing = true;
                             }
                         });
@@ -1157,7 +1157,7 @@ impl AppState {
 
         for day in &days {
             ui.add_space(30.0);
-            ui.label(RichText::new(day.to_uppercase()).strong().size(18.0).color(theme::ACCENT_MID));
+            ui.label(RichText::new(day.to_uppercase()).strong().size(18.0).color(theme::accent_mid()));
             ui.add_space(10.0);
 
             let day_slots = slots_by_day.get(day).unwrap();
@@ -1221,7 +1221,7 @@ impl AppState {
                                 egui::vec2(col_width, 25.0)
                             );
                             let mut child_ui = ui.child_ui(label_rect, egui::Layout::centered_and_justified(egui::Direction::LeftToRight));
-                            child_ui.label(RichText::new(&f.name).strong().color(theme::TEXT_DIM));
+                            child_ui.label(RichText::new(&f.name).strong().color(theme::text_dim()));
                         }
 
                         // Grid
@@ -1247,7 +1247,7 @@ impl AppState {
                                 let y = (min - day_start_min) as f32 * pixels_per_minute;
                                 let line_y = rect.min.y + timeline_padding_top + y;
                                 let is_major = min % 30 == 0;
-                                let stroke_color = if is_major { Color32::from_rgb(75, 85, 99) } else { theme::BORDER };
+                                let stroke_color = if is_major { Color32::from_rgb(75, 85, 99) } else { theme::border() };
                                 let stroke_width = if is_major { 0.6 } else { 0.3 };
                                 painter.line_segment(
                                     [egui::pos2(rect.min.x + time_col_width, line_y), egui::pos2(rect.max.x - col_spacing, line_y)],
@@ -1257,7 +1257,7 @@ impl AppState {
                                 let mn = min % 60;
                                 let time_str = format!("{:02}:{:02}", hr, mn);
                                 if is_major || pixels_per_minute >= 1.5 {
-                                    let label_color = if is_major { theme::TEXT_MUTED } else { theme::TEXT_FAINT };
+                                    let label_color = if is_major { theme::text_muted() } else { theme::text_faint() };
                                     let font_size = if is_major { 11.0 } else { 9.0 };
                                     painter.text(egui::pos2(rect.min.x + 5.0, line_y), egui::Align2::LEFT_CENTER, time_str, egui::FontId::proportional(font_size), label_color);
                                 }
@@ -1266,9 +1266,9 @@ impl AppState {
 
                         for (f_idx, _) in sorted_fields.iter().enumerate() {
                             let x = time_col_width + f_idx as f32 * (col_width + col_spacing);
-                            painter.line_segment([egui::pos2(rect.min.x + x, rect.min.y), egui::pos2(rect.min.x + x, rect.max.y)], Stroke::new(0.5, theme::BORDER));
+                            painter.line_segment([egui::pos2(rect.min.x + x, rect.min.y), egui::pos2(rect.min.x + x, rect.max.y)], Stroke::new(0.5, theme::border()));
                             let right_x = x + col_width;
-                            painter.line_segment([egui::pos2(rect.min.x + right_x, rect.min.y), egui::pos2(rect.min.x + right_x, rect.max.y)], Stroke::new(0.5, theme::BORDER));
+                            painter.line_segment([egui::pos2(rect.min.x + right_x, rect.min.y), egui::pos2(rect.min.x + right_x, rect.max.y)], Stroke::new(0.5, theme::border()));
                         }
 
                         // Drop highlights and move logic
@@ -1409,7 +1409,7 @@ impl AppState {
 
             if !open_space_assignments.is_empty() {
                 ui.add_space(20.0);
-                ui.label(RichText::new("INTERVIEWS & UNALLOCATED EVENTS").strong().color(theme::TEXT_MUTED));
+                ui.label(RichText::new("INTERVIEWS & UNALLOCATED EVENTS").strong().color(theme::text_muted()));
                 ui.add_space(5.0);
                 for slot in &slots_list {
                     let slot_assigns: Vec<&(usize, &crate::model::ScheduleAssignment)> = open_space_assignments
@@ -1488,7 +1488,7 @@ impl AppState {
         accent: Color32,
     ) {
         if rows.is_empty() {
-            ui.label(RichText::new("No matches scheduled yet.").color(theme::TEXT_FAINT).italics());
+            ui.label(RichText::new("No matches scheduled yet.").color(theme::text_faint()).italics());
             return;
         }
 
@@ -1499,8 +1499,8 @@ impl AppState {
                 for row in rows {
                     let is_finals = row.matches.iter().any(|m| m.is_final);
 
-                    let header_bg = if is_finals { Color32::from_rgb(67, 52, 10) } else { theme::CARD_BG };
-                    let header_accent = if is_finals { theme::WARNING } else { accent };
+                    let header_bg = if is_finals { Color32::from_rgb(67, 52, 10) } else { theme::card_bg() };
+                    let header_accent = if is_finals { theme::warning() } else { accent };
 
                     // Round header
                     egui::Frame::none()
@@ -1537,13 +1537,13 @@ impl AppState {
                                 ui.set_min_width(panel_width - 8.0);
                                 ui.horizontal(|ui| {
                                     ui.allocate_ui(egui::vec2(90.0, 16.0), |ui| {
-                                        ui.label(RichText::new("Day / Time").size(10.5).color(theme::TEXT_FAINT).strong());
+                                        ui.label(RichText::new("Day / Time").size(10.5).color(theme::text_faint()).strong());
                                     });
                                     ui.allocate_ui(egui::vec2(160.0, 16.0), |ui| {
-                                        ui.label(RichText::new("Field / Arena").size(10.5).color(theme::TEXT_FAINT).strong());
+                                        ui.label(RichText::new("Field / Arena").size(10.5).color(theme::text_faint()).strong());
                                     });
                                     ui.label(RichText::new(if is_h2h { "Match" } else { "Team" })
-                                        .size(10.5).color(theme::TEXT_FAINT).strong());
+                                        .size(10.5).color(theme::text_faint()).strong());
                                 });
                             });
 
@@ -1568,11 +1568,11 @@ impl AppState {
                                                 let day_short = if m.day.len() > 3 { &m.day[..3] } else { &m.day };
                                                 let display_time = if m.time.is_empty() { "—".to_string() } else { format!("{} {}", day_short, m.time) };
                                                 ui.label(RichText::new(display_time)
-                                                    .size(12.0).color(theme::TEXT_DIM).monospace());
+                                                    .size(12.0).color(theme::text_dim()).monospace());
                                             });
                                             // Field
                                             ui.allocate_ui(egui::vec2(160.0, 20.0), |ui| {
-                                                let field_color = if m.field_name == "—" { theme::TEXT_FAINT } else { theme::TEXT_MUTED };
+                                                let field_color = if m.field_name == "—" { theme::text_faint() } else { theme::text_muted() };
                                                 ui.label(RichText::new(&m.field_name).size(11.5).color(field_color));
                                             });
                                             // Match or team
@@ -1580,7 +1580,7 @@ impl AppState {
                                                 let icon = if m.is_final { "🏆" } else { "⚽" };
                                                 ui.label(RichText::new(icon).size(12.0));
                                                 ui.label(RichText::new(&m.team_a).strong().size(12.0).color(Color32::WHITE));
-                                                ui.label(RichText::new(" vs ").size(11.5).color(theme::TEXT_FAINT));
+                                                ui.label(RichText::new(" vs ").size(11.5).color(theme::text_faint()));
                                                 ui.label(RichText::new(&m.team_b).strong().size(12.0).color(Color32::WHITE));
                                             } else {
                                                 ui.label(RichText::new("🤖").size(12.0));
@@ -1612,7 +1612,7 @@ impl AppState {
             ui.label(RichText::new("●").size(16.0).color(accent));
             ui.label(RichText::new(div_name).strong().size(15.0).color(Color32::WHITE));
             ui.label(RichText::new(if is_h2h { " · Head-to-Head" } else { " · Individual Run" })
-                .size(11.0).color(theme::TEXT_FAINT));
+                .size(11.0).color(theme::text_faint()));
         });
 
         // Subtitle: explain round count
@@ -1625,7 +1625,7 @@ impl AppState {
                     if finals_rounds.is_empty() { None } else { Some(format!("{} finals stage{}", finals_rounds.len(), if finals_rounds.len() == 1 { "" } else { "s" })) },
                 ].into_iter().flatten().collect();
                 if !parts.is_empty() {
-                    ui.label(RichText::new(parts.join(" + ")).size(11.0).color(theme::TEXT_FAINT).italics());
+                    ui.label(RichText::new(parts.join(" + ")).size(11.0).color(theme::text_faint()).italics());
                 }
             }
         ui.add_space(8.0);
@@ -1639,8 +1639,8 @@ impl AppState {
             ];
             for (tab, label) in tabs {
                 let is_active = self.active_division_sub_tab == tab;
-                let text_color = if is_active { Color32::WHITE } else { theme::TEXT_MUTED };
-                let bg_color = if is_active { theme::ACCENT_STRONG } else { theme::SURFACE };
+                let text_color = if is_active { Color32::WHITE } else { theme::text_muted() };
+                let bg_color = if is_active { theme::accent_strong() } else { theme::surface() };
                 
                 let btn = egui::Button::new(RichText::new(label).strong().color(text_color))
                     .fill(bg_color)
@@ -1660,7 +1660,7 @@ impl AppState {
                 if let Some(rows) = self.division_rounds.get(div_id).cloned() {
                     self.draw_division_rounds_table(ui, div_id, &rows, is_h2h, accent);
                 } else {
-                    ui.label(RichText::new("No rounds scheduled yet.").italics().color(theme::TEXT_FAINT));
+                    ui.label(RichText::new("No rounds scheduled yet.").italics().color(theme::text_faint()));
                 }
             }
             crate::gui::DivisionSubTab::Teams => {
@@ -1675,7 +1675,7 @@ impl AppState {
     fn draw_division_teams(&self, ui: &mut egui::Ui, div_id: &str, accent: Color32) {
         let div_teams: Vec<&crate::model::Team> = self.config.teams.iter().filter(|t| t.division_id == div_id).collect();
         if div_teams.is_empty() {
-            ui.label(RichText::new("No teams in this division.").italics().color(theme::TEXT_FAINT));
+            ui.label(RichText::new("No teams in this division.").italics().color(theme::text_faint()));
             return;
         }
 
@@ -1699,7 +1699,7 @@ impl AppState {
 
                     // Team header
                     egui::Frame::none()
-                        .fill(theme::CARD_BG)
+                        .fill(theme::card_bg())
                         .rounding(egui::Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
                         .inner_margin(egui::Margin::symmetric(12.0, 6.0))
                         .show(ui, |ui| {
@@ -1708,7 +1708,7 @@ impl AppState {
                                 ui.label(RichText::new("👥").size(13.0).color(accent));
                                 ui.label(RichText::new(&team.name).strong().size(13.0).color(Color32::WHITE));
                                 ui.add_space(8.0);
-                                ui.label(RichText::new(format!("({})", team.organization)).size(11.0).color(theme::TEXT_MUTED));
+                                ui.label(RichText::new(format!("({})", team.organization)).size(11.0).color(theme::text_muted()));
                             });
                         });
 
@@ -1728,12 +1728,12 @@ impl AppState {
                                     ui.set_min_width(panel_width - 8.0);
                                     ui.horizontal(|ui| {
                                         ui.allocate_ui(egui::vec2(90.0, 16.0), |ui| {
-                                            ui.label(RichText::new("Day / Time").size(10.5).color(theme::TEXT_FAINT).strong());
+                                            ui.label(RichText::new("Day / Time").size(10.5).color(theme::text_faint()).strong());
                                         });
                                         ui.allocate_ui(egui::vec2(160.0, 16.0), |ui| {
-                                            ui.label(RichText::new("Field / Arena").size(10.5).color(theme::TEXT_FAINT).strong());
+                                            ui.label(RichText::new("Field / Arena").size(10.5).color(theme::text_faint()).strong());
                                         });
-                                        ui.label(RichText::new("Activity").size(10.5).color(theme::TEXT_FAINT).strong());
+                                        ui.label(RichText::new("Activity").size(10.5).color(theme::text_faint()).strong());
                                     });
                                 });
 
@@ -1741,7 +1741,7 @@ impl AppState {
                                 egui::Frame::none()
                                     .inner_margin(egui::Margin::symmetric(12.0, 7.0))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new("No activities scheduled.").small().italics().color(theme::TEXT_FAINT));
+                                        ui.label(RichText::new("No activities scheduled.").small().italics().color(theme::text_faint()));
                                     });
                             } else {
                                 for (a_idx, assign) in team_activities.iter().enumerate() {
@@ -1769,11 +1769,11 @@ impl AppState {
                                                 // Day / Time
                                                 ui.allocate_ui(egui::vec2(90.0, 20.0), |ui| {
                                                     ui.label(RichText::new(format!("{} {}", day_short, time_str))
-                                                        .size(12.0).color(theme::TEXT_DIM).monospace());
+                                                        .size(12.0).color(theme::text_dim()).monospace());
                                                 });
                                                 // Field
                                                 ui.allocate_ui(egui::vec2(160.0, 20.0), |ui| {
-                                                    let field_color = if field_name == "—" { theme::TEXT_FAINT } else { theme::TEXT_MUTED };
+                                                    let field_color = if field_name == "—" { theme::text_faint() } else { theme::text_muted() };
                                                     ui.label(RichText::new(&field_name).size(11.5).color(field_color));
                                                 });
                                                 // Activity
@@ -1802,7 +1802,7 @@ impl AppState {
             });
 
             if interviews.is_empty() {
-                ui.label(RichText::new("No interviews scheduled for this division.").italics().color(theme::TEXT_FAINT));
+                ui.label(RichText::new("No interviews scheduled for this division.").italics().color(theme::text_faint()));
                 return;
             }
 
@@ -1811,7 +1811,7 @@ impl AppState {
             ui.scope(|ui| {
                     // Interviews header
                     egui::Frame::none()
-                        .fill(theme::CARD_BG)
+                        .fill(theme::card_bg())
                         .rounding(egui::Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
                         .inner_margin(egui::Margin::symmetric(12.0, 6.0))
                         .show(ui, |ui| {
@@ -1838,12 +1838,12 @@ impl AppState {
                                     ui.set_min_width(panel_width - 8.0);
                                     ui.horizontal(|ui| {
                                         ui.allocate_ui(egui::vec2(90.0, 16.0), |ui| {
-                                            ui.label(RichText::new("Day / Time").size(10.5).color(theme::TEXT_FAINT).strong());
+                                            ui.label(RichText::new("Day / Time").size(10.5).color(theme::text_faint()).strong());
                                         });
                                         ui.allocate_ui(egui::vec2(160.0, 16.0), |ui| {
-                                            ui.label(RichText::new("Field / Arena").size(10.5).color(theme::TEXT_FAINT).strong());
+                                            ui.label(RichText::new("Field / Arena").size(10.5).color(theme::text_faint()).strong());
                                         });
-                                        ui.label(RichText::new("Activity").size(10.5).color(theme::TEXT_FAINT).strong());
+                                        ui.label(RichText::new("Activity").size(10.5).color(theme::text_faint()).strong());
                                     });
                                 });
 
@@ -1872,11 +1872,11 @@ impl AppState {
                                             // Day / Time
                                             ui.allocate_ui(egui::vec2(90.0, 20.0), |ui| {
                                                 ui.label(RichText::new(format!("{} {}", day_short, time_str))
-                                                    .size(12.0).color(theme::TEXT_DIM).monospace());
+                                                    .size(12.0).color(theme::text_dim()).monospace());
                                             });
                                             // Field
                                             ui.allocate_ui(egui::vec2(160.0, 20.0), |ui| {
-                                                let field_color = if field_name == "—" { theme::TEXT_FAINT } else { theme::TEXT_MUTED };
+                                                let field_color = if field_name == "—" { theme::text_faint() } else { theme::text_muted() };
                                                 ui.label(RichText::new(&field_name).size(11.5).color(field_color));
                                             });
                                             // Activity
@@ -1888,7 +1888,7 @@ impl AppState {
                         });
                 });
         } else {
-            ui.label(RichText::new("Schedule not generated yet.").italics().color(theme::TEXT_FAINT));
+            ui.label(RichText::new("Schedule not generated yet.").italics().color(theme::text_faint()));
         }
     }
 

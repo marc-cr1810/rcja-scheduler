@@ -74,18 +74,18 @@ pub enum ExportMessage {
 /// Pick a status colour for the solver readout in the bottom bar.
 fn solver_status_color(status: &str, solving: bool) -> Color32 {
     if solving {
-        return theme::ACCENT;
+        return theme::accent();
     }
     let s = status.to_ascii_lowercase();
     let unresolved_conflicts = s.contains("conflict") && !s.contains("no conflict");
     if s.contains("fail") || s.contains("error") {
-        theme::DANGER
+        theme::danger()
     } else if s.contains("cancel") || unresolved_conflicts {
-        theme::WARNING
+        theme::warning()
     } else if s.contains("solved") || s.contains("no conflict") {
-        theme::SUCCESS
+        theme::success()
     } else {
-        theme::TEXT_FAINT
+        theme::text_faint()
     }
 }
 
@@ -100,13 +100,13 @@ impl eframe::App for AppState {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.heading(RichText::new("RoboCup Jr Australia Coordinator Workspace").strong().color(theme::ACCENT));
+                        ui.heading(RichText::new("RoboCup Jr Australia Coordinator Workspace").strong().color(theme::accent()));
                         let subtitle = if let Some(path) = &self.current_file_path {
                             format!("Per-Competition Workspace & Schedule Solver - {}", path.display())
                         } else {
                             "Per-Competition Workspace & Schedule Solver - Unsaved".to_string()
                         };
-                        ui.label(RichText::new(subtitle).size(11.0).color(theme::TEXT_MUTED));
+                        ui.label(RichText::new(subtitle).size(11.0).color(theme::text_muted()));
                     });
                     
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -132,6 +132,35 @@ impl eframe::App for AppState {
                                 self.export_to_csv();
                             }
                         }
+
+                        // ── Live theme switcher ──
+                        ui.separator();
+                        let mut chosen: Option<String> = None;
+                        let mut reload = false;
+                        egui::ComboBox::from_id_source("theme_picker")
+                            .selected_text(format!("🎨 {}", self.active_theme_name))
+                            .show_ui(ui, |ui| {
+                                for name in theme::names() {
+                                    if ui.selectable_label(self.active_theme_name == name, &name).clicked() {
+                                        chosen = Some(name);
+                                    }
+                                }
+                                ui.separator();
+                                if ui.button("🔄 Reload from disk")
+                                    .on_hover_text("Re-scan the themes/ folder for *.json files")
+                                    .clicked()
+                                {
+                                    reload = true;
+                                }
+                            });
+                        if reload {
+                            self.active_theme_name = theme::reload(&self.active_theme_name);
+                            setup_custom_style(ui.ctx());
+                        } else if let Some(name) = chosen {
+                            theme::activate_by_name(&name);
+                            self.active_theme_name = name;
+                            setup_custom_style(ui.ctx());
+                        }
                     });
                 });
 
@@ -143,7 +172,7 @@ impl eframe::App for AppState {
                         .inner_margin(6.0)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("📄 Generating tournament documents...").strong().color(theme::ACCENT));
+                                ui.label(RichText::new("📄 Generating tournament documents...").strong().color(theme::accent()));
                                 ui.add(egui::ProgressBar::new(self.export_progress)
                                     .show_percentage()
                                     .animate(true)
@@ -158,8 +187,8 @@ impl eframe::App for AppState {
         // BOTTOM PANEL
         egui::TopBottomPanel::bottom("status_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Status: ").color(theme::TEXT_FAINT));
-                ui.label(RichText::new(&self.status_message).strong().color(theme::TEXT));
+                ui.label(RichText::new("Status: ").color(theme::text_faint()));
+                ui.label(RichText::new(&self.status_message).strong().color(theme::text()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Colour the solver readout (and a leading dot) by state so it
                     // is glanceable: running → accent, clean solve → green,
@@ -176,7 +205,7 @@ impl eframe::App for AppState {
         // SIDE PANEL
         egui::SidePanel::left("navigation_panel").width_range(210.0..=240.0).show(ctx, |ui| {
             ui.add_space(10.0);
-            ui.label(RichText::new("WORKSPACE PANELS").size(10.0).color(theme::TEXT_FAINT).strong());
+            ui.label(RichText::new("WORKSPACE PANELS").size(10.0).color(theme::text_faint()).strong());
             ui.add_space(5.0);
 
             let tab_buttons = vec![
@@ -191,10 +220,10 @@ impl eframe::App for AppState {
 
             for (tab, label) in tab_buttons {
                 let is_active = self.active_tab == tab;
-                let text_color = if is_active { Color32::WHITE } else { theme::TEXT_MUTED };
+                let text_color = if is_active { Color32::WHITE } else { theme::text_muted() };
 
                 let button = egui::Button::new(RichText::new(label).color(text_color).strong())
-                    .fill(if is_active { theme::ACCENT_STRONG } else { Color32::TRANSPARENT })
+                    .fill(if is_active { theme::accent_strong() } else { Color32::TRANSPARENT })
                     .rounding(egui::Rounding::same(6.0))
                     .min_size(egui::vec2(180.0, 32.0));
 
@@ -222,9 +251,9 @@ impl eframe::App for AppState {
                         
                         if error_count > 0 || warn_count > 0 {
                             let (color, text_color, count) = if error_count > 0 {
-                                (theme::DANGER_BORDER, Color32::WHITE, error_count)
+                                (theme::danger_border(), Color32::WHITE, error_count)
                             } else {
-                                (theme::WARNING, Color32::BLACK, warn_count)
+                                (theme::warning(), Color32::BLACK, warn_count)
                             };
 
                             let badge_size = 18.0;

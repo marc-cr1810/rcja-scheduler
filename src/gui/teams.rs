@@ -23,13 +23,13 @@ impl AppState {
     fn draw_team_list(&mut self, ui: &mut egui::Ui) {
         // CSV Import Frame (Always accessible)
         egui::Frame::none()
-            .fill(theme::CARD_BG)
+            .fill(theme::card_bg())
             .rounding(8.0)
             .inner_margin(12.0)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.label(RichText::new("Bulk Import Teams from CSV").strong().color(Color32::WHITE));
-                    ui.label(RichText::new("Import teams from a RoboCup Junior registration CSV file. This will automatically create divisions if they don't exist.").size(11.0).color(theme::TEXT_MUTED));
+                    ui.label(RichText::new("Import teams from a RoboCup Junior registration CSV file. This will automatically create divisions if they don't exist.").size(11.0).color(theme::text_muted()));
                     ui.add_space(5.0);
                     
                     if self.csv_import.is_none() {
@@ -100,7 +100,7 @@ impl AppState {
 
         // Add Individual Team Frame
         egui::Frame::none()
-            .fill(theme::CARD_BG)
+            .fill(theme::card_bg())
             .rounding(8.0)
             .inner_margin(12.0)
             .show(ui, |ui| {
@@ -157,7 +157,7 @@ impl AppState {
 
         // Teams list
         if self.config.teams.is_empty() {
-            ui.label(RichText::new("No teams registered yet.").italics().color(theme::TEXT_MUTED));
+            ui.label(RichText::new("No teams registered yet.").italics().color(theme::text_muted()));
         } else {
             let mut to_remove = None;
             let mut teams_changed = false;
@@ -222,13 +222,13 @@ impl AppState {
         if self.schedule.is_none() {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
-                ui.label(RichText::new("No Schedule Generated").size(16.0).color(theme::TEXT_FAINT).strong());
+                ui.label(RichText::new("No Schedule Generated").size(16.0).color(theme::text_faint()).strong());
                 ui.label("Gap analysis requires a generated schedule to calculate time between activities.");
             });
             return;
         }
 
-        ui.label(RichText::new("TEAM ACTIVITY GAP ANALYSIS").strong().color(theme::TEXT_MUTED));
+        ui.label(RichText::new("TEAM ACTIVITY GAP ANALYSIS").strong().color(theme::text_muted()));
         ui.label("Review wait times and busy periods for each team.");
         ui.add_space(10.0);
 
@@ -308,8 +308,8 @@ impl AppState {
                                 ui.label("-");
                                 ui.label("-");
                             } else {
-                                ui.label(RichText::new(format!("{}m", min_gap)).color(if min_gap < 15 { theme::DANGER } else { Color32::WHITE }));
-                                ui.label(RichText::new(format!("{}m", max_gap)).color(if max_gap > 180 { theme::WARNING } else { Color32::WHITE }));
+                                ui.label(RichText::new(format!("{}m", min_gap)).color(if min_gap < 15 { theme::danger() } else { Color32::WHITE }));
+                                ui.label(RichText::new(format!("{}m", max_gap)).color(if max_gap > 180 { theme::warning() } else { Color32::WHITE }));
                             }
                         } else {
                             ui.label("No activities");

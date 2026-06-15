@@ -129,6 +129,9 @@ pub struct AppState {
     pub vol_roster_show_only_conflicts: bool,
 
     pub active_substitution: Option<usize>, // Index of assignment in schedule
+
+    /// Display name of the currently selected colour theme.
+    pub active_theme_name: String,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -241,6 +244,8 @@ impl Default for AppState {
             vol_roster_show_only_conflicts: false,
 
             active_substitution: None,
+            // Load any themes/*.json files and activate the first theme.
+            active_theme_name: super::theme::init(),
         };
 
         state.update_diagnostics();

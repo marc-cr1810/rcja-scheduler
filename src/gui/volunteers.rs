@@ -48,7 +48,7 @@ impl AppState {
 
         // Add Volunteer
         egui::Frame::none()
-            .fill(theme::CARD_BG)
+            .fill(theme::card_bg())
             .rounding(8.0)
             .inner_margin(12.0)
             .show(ui, |ui| {
@@ -65,7 +65,7 @@ impl AppState {
 
                     ui.add_space(5.0);
                     ui.label(RichText::new("Conflict Organizations:").strong().color(Color32::WHITE));
-                    ui.label(RichText::new("Select any organizations this volunteer belongs to (e.g. their school or club)").size(11.0).color(theme::TEXT_MUTED));
+                    ui.label(RichText::new("Select any organizations this volunteer belongs to (e.g. their school or club)").size(11.0).color(theme::text_muted()));
                     
                     ui.horizontal_wrapped(|ui| {
                         for org in &all_orgs {
@@ -106,7 +106,7 @@ impl AppState {
                     if !fields_list.is_empty() {
                         ui.add_space(5.0);
                         ui.label("Lock to Fields / Interview Tables (optional):");
-                        ui.label(RichText::new("If any are selected, this volunteer will only be rostered on those fields.").size(11.0).color(theme::TEXT_MUTED));
+                        ui.label(RichText::new("If any are selected, this volunteer will only be rostered on those fields.").size(11.0).color(theme::text_muted()));
                         ui.horizontal_wrapped(|ui| {
                             for (fid, fname) in &fields_list {
                                 let mut locked = self.new_vol_locked_fields.contains(fid);
@@ -156,7 +156,7 @@ impl AppState {
         });
         ui.add_space(8.0);
 
-        ui.label(RichText::new("INTERACTIVE AVAILABILITY GRID").strong().color(theme::TEXT_MUTED));
+        ui.label(RichText::new("INTERACTIVE AVAILABILITY GRID").strong().color(theme::text_muted()));
         ui.label("Click cells to toggle volunteer availability for each time slot.");
         ui.add_space(5.0);
 
@@ -233,7 +233,7 @@ impl AppState {
                     // 1. Volunteer Name edit
                     ui.horizontal(|ui| {
                         if vol.availabilities.is_empty() {
-                            ui.label(RichText::new("⚠").color(theme::WARNING))
+                            ui.label(RichText::new("⚠").color(theme::warning()))
                                 .on_hover_text("Volunteer has no available time slots.");
                         }
                         if ui.add_sized([180.0, 20.0], egui::TextEdit::singleline(&mut vol.name)).changed() {
@@ -430,13 +430,13 @@ impl AppState {
         if self.schedule.is_none() {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
-                ui.label(RichText::new("No Schedule Generated").size(16.0).color(theme::TEXT_FAINT).strong());
+                ui.label(RichText::new("No Schedule Generated").size(16.0).color(theme::text_faint()).strong());
                 ui.label("The workload heatmap requires a generated schedule to visualize assignments.");
             });
             return;
         }
 
-        ui.label(RichText::new("VOLUNTEER WORKLOAD HEATMAP").strong().color(theme::TEXT_MUTED));
+        ui.label(RichText::new("VOLUNTEER WORKLOAD HEATMAP").strong().color(theme::text_muted()));
         ui.label("Visualization of shift density across the tournament.");
         ui.add_space(10.0);
 
@@ -455,7 +455,7 @@ impl AppState {
 
         for day in unique_days {
             ui.add_space(15.0);
-            ui.label(RichText::new(&day).strong().size(14.0).color(theme::ACCENT));
+            ui.label(RichText::new(&day).strong().size(14.0).color(theme::accent()));
             ui.add_space(5.0);
 
             let day_slots: Vec<_> = slots.iter().filter(|s| s.day == day).collect();
@@ -485,11 +485,11 @@ impl AppState {
                                     
                                     let (bg, text) = if is_assigned {
                                         day_total += 1;
-                                        (theme::ACCENT_STRONG, Color32::WHITE)
+                                        (theme::accent_strong(), Color32::WHITE)
                                     } else if is_available {
-                                        (theme::SURFACE, theme::TEXT_FAINT)
+                                        (theme::surface(), theme::text_faint())
                                     } else {
-                                        (theme::BG_BASE, theme::BORDER)
+                                        (theme::bg_base(), theme::border())
                                     };
 
                                     let (rect, _resp) = ui.allocate_at_least(egui::vec2(35.0, 18.0), egui::Sense::hover());
@@ -499,7 +499,7 @@ impl AppState {
                                     }
                                 }
                                 
-                                ui.label(RichText::new(day_total.to_string()).strong().color(if day_total > 5 { theme::DANGER } else { Color32::WHITE }));
+                                ui.label(RichText::new(day_total.to_string()).strong().color(if day_total > 5 { theme::danger() } else { Color32::WHITE }));
                                 ui.end_row();
                             }
                         });

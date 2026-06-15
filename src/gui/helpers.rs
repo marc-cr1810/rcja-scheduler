@@ -27,16 +27,31 @@ pub(crate) fn setup_custom_style(ctx: &egui::Context) {
     style.spacing.button_padding = egui::vec2(9.0, 5.0);
 
     // ── Colours / shape ───────────────────────────────────────────────────--
+    // Start from egui's light or dark base depending on the theme's background
+    // brightness, then map the core surfaces/text onto the active theme so the
+    // whole UI (panels, windows, default text) follows the JSON, not just the
+    // bits we paint by hand.
+    let bg = theme::bg_base();
+    let is_light = relative_luminance(bg) > 0.5;
     let visuals = &mut style.visuals;
-    *visuals = egui::Visuals::dark();
-    visuals.widgets.noninteractive.bg_fill = theme::BG_BASE;
-    visuals.widgets.inactive.bg_fill = theme::SURFACE;
-    visuals.widgets.hovered.bg_fill = theme::BORDER;
-    visuals.widgets.active.bg_fill = Color32::from_rgb(75, 85, 99);
-    visuals.widgets.open.bg_fill = Color32::from_rgb(75, 85, 99);
-    visuals.selection.bg_fill = theme::ACCENT_MID;
-    // Used by `Grid::striped(true)` for alternating row backgrounds.
-    visuals.faint_bg_color = theme::ROW_STRIPE;
+    *visuals = if is_light { egui::Visuals::light() } else { egui::Visuals::dark() };
+
+    visuals.panel_fill = bg;
+    visuals.window_fill = theme::card_bg();
+    visuals.extreme_bg_color = theme::surface();
+    visuals.faint_bg_color = theme::row_stripe(); // Grid::striped row tint
+    visuals.override_text_color = Some(theme::text()); // default (un-coloured) text
+    visuals.hyperlink_color = theme::accent();
+
+    visuals.widgets.noninteractive.bg_fill = theme::bg_base();
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, theme::border());
+    visuals.widgets.inactive.bg_fill = theme::surface();
+    visuals.widgets.hovered.bg_fill = theme::border();
+    visuals.widgets.active.bg_fill = theme::accent_mid();
+    visuals.widgets.open.bg_fill = theme::surface();
+    visuals.selection.bg_fill = theme::accent_mid();
+    visuals.selection.stroke = Stroke::new(1.0, theme::accent());
+
     visuals.window_rounding = egui::Rounding::same(12.0);
     visuals.widgets.noninteractive.rounding = egui::Rounding::same(8.0);
     visuals.widgets.inactive.rounding = egui::Rounding::same(6.0);
@@ -46,9 +61,15 @@ pub(crate) fn setup_custom_style(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// Perceptual-ish luminance in 0..1, used to decide light vs dark base visuals.
+fn relative_luminance(c: Color32) -> f32 {
+    let [r, g, b, _] = c.to_array();
+    (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0
+}
+
 pub(crate) fn draw_stat_card(ui: &mut egui::Ui, icon: &str, title: &str, value: &str, color: Color32) {
     egui::Frame::none()
-        .fill(theme::CARD_BG)
+        .fill(theme::card_bg())
         .rounding(8.0)
         .inner_margin(egui::Margin { left: 14.0, right: 16.0, top: 10.0, bottom: 14.0 })
         .show(ui, |ui| {
@@ -62,7 +83,7 @@ pub(crate) fn draw_stat_card(ui: &mut egui::Ui, icon: &str, title: &str, value: 
 
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(icon).size(13.0).color(color));
-                    ui.label(RichText::new(title).size(10.5).color(theme::TEXT_MUTED).strong());
+                    ui.label(RichText::new(title).size(10.5).color(theme::text_muted()).strong());
                 });
                 ui.add_space(2.0);
                 ui.label(RichText::new(value).size(22.0).strong().color(color));
@@ -174,7 +195,7 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
     child_ui.vertical(|ui| {
         ui.horizontal(|ui| {
             let label_text = if is_continuation {
-                RichText::new(format!("{} (cont.)", assign.activity.label())).size(11.5).color(theme::TEXT_MUTED)
+                RichText::new(format!("{} (cont.)", assign.activity.label())).size(11.5).color(theme::text_muted())
             } else {
                 RichText::new(assign.activity.label()).strong().size(11.5).color(Color32::WHITE)
             };
@@ -189,7 +210,7 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
                 let is_no_show = conflicts.iter().any(|c| c.message.contains("NO-SHOW"));
                 
                 let icon = if is_no_show { "🏃" } else if has_error { "❌" } else { "⚠" };
-                let color = if is_no_show || has_error { theme::DANGER } else { theme::WARNING };
+                let color = if is_no_show || has_error { theme::danger() } else { theme::warning() };
                 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let resp = ui.add(egui::Button::new(RichText::new(icon).color(color).strong()).frame(false));
@@ -203,7 +224,7 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
                                 ui.label(format!("{} {}", c_icon, c.message));
                             }
                             ui.add_space(4.0);
-                            ui.label(RichText::new("Click to find substitute").italics().color(theme::TEXT_MUTED));
+                            ui.label(RichText::new("Click to find substitute").italics().color(theme::text_muted()));
                         });
                     });
                 });
@@ -211,7 +232,7 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
         });
 
         if h >= 30.0 {
-            ui.label(RichText::new(format!("⏰ {} - {}", start_time_str, end_time_str)).size(9.5).color(theme::TEXT_DIM));
+            ui.label(RichText::new(format!("⏰ {} - {}", start_time_str, end_time_str)).size(9.5).color(theme::text_dim()));
         }
         
         let volunteer_names: Vec<String> = assign
@@ -237,7 +258,7 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
             let vol_text = if is_continuation {
                 RichText::new(format!("{}: {}", vol_label, names_str)).size(9.5).color(Color32::from_rgb(120, 130, 140))
             } else {
-                let color = if volunteer_names.is_empty() { theme::DANGER } else { theme::TEXT_DIM };
+                let color = if volunteer_names.is_empty() { theme::danger() } else { theme::text_dim() };
                 RichText::new(format!("{}: {}", vol_label, names_str)).size(9.5).color(color)
             };
             
@@ -252,12 +273,12 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
                 ui.label(format!("Division: {}", div_name));
                 
                 if let Some(stage_label) = assign.activity.stage_label() {
-                    ui.label(RichText::new(format!("Stage: {}", stage_label)).strong().color(theme::WARNING));
+                    ui.label(RichText::new(format!("Stage: {}", stage_label)).strong().color(theme::warning()));
                 }
                 
                 let round_label = assign.activity.round_label();
                 if !round_label.is_empty() {
-                    ui.label(RichText::new(round_label).strong().color(theme::ACCENT));
+                    ui.label(RichText::new(round_label).strong().color(theme::accent()));
                 }
 
                 ui.label(format!("Time: {} - {} ({} min)", start_time_str, end_time_str, assign.activity.duration_minutes()));
@@ -284,7 +305,7 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
                 if !conflicts.is_empty() {
                     ui.add_space(4.0);
                     ui.separator();
-                    ui.label(RichText::new("Conflicts:").strong().color(theme::DANGER));
+                    ui.label(RichText::new("Conflicts:").strong().color(theme::danger()));
                     for c in conflicts {
                         let icon = if matches!(c.severity, ConflictSeverity::Error) { "❌" } else { "⚠" };
                         ui.label(format!("{} {}", icon, c.message));
@@ -337,7 +358,7 @@ pub(crate) fn time_edit(value: &mut String) -> egui::TextEdit<'_> {
     let valid = is_valid_hhmm(value);
     let mut edit = egui::TextEdit::singleline(value).desired_width(50.0);
     if !valid {
-        edit = edit.text_color(theme::DANGER);
+        edit = edit.text_color(theme::danger());
     }
     edit
 }
@@ -355,7 +376,7 @@ pub(crate) fn parse_time_to_minutes(t: &str) -> u32 {
 
 pub(crate) fn draw_card<R>(ui: &mut egui::Ui, title: &str, add_space: bool, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::none()
-        .fill(theme::CARD_BG)
+        .fill(theme::card_bg())
         .rounding(8.0)
         .inner_margin(12.0)
         .show(ui, |ui| {
@@ -390,15 +411,15 @@ pub(crate) fn draw_empty_state(
     let mut clicked = false;
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
-        ui.label(RichText::new(icon).size(44.0).color(theme::TEXT_FAINT));
+        ui.label(RichText::new(icon).size(44.0).color(theme::text_faint()));
         ui.add_space(10.0);
-        ui.label(RichText::new(title).size(16.0).strong().color(theme::TEXT_MUTED));
+        ui.label(RichText::new(title).size(16.0).strong().color(theme::text_muted()));
         ui.add_space(2.0);
-        ui.label(RichText::new(body).color(theme::TEXT_FAINT));
+        ui.label(RichText::new(body).color(theme::text_faint()));
         if let Some(label) = cta {
             ui.add_space(14.0);
             let btn = egui::Button::new(RichText::new(label).strong().color(Color32::WHITE))
-                .fill(theme::ACCENT_STRONG)
+                .fill(theme::accent_strong())
                 .rounding(egui::Rounding::same(6.0))
                 .min_size(egui::vec2(0.0, 30.0));
             if ui.add(btn).clicked() {
