@@ -124,9 +124,9 @@ impl eframe::App for AppState {
                         }
                         if self.schedule.is_some() {
                             ui.separator();
-                            let export_btn = egui::Button::new("📤 Full Export (CSV & PDF)");
+                            let export_btn = egui::Button::new("📤 Export...");
                             if ui.add_enabled(!self.is_exporting, export_btn).clicked() {
-                                self.export_full_tournament();
+                                self.show_export_modal = true;
                             }
                             if ui.button("📊 Export Master CSV").clicked() {
                                 self.export_to_csv();
@@ -294,10 +294,76 @@ impl eframe::App for AppState {
                 }
             });
         });
+
+        self.draw_export_modal(ctx);
     }
 }
 
 impl AppState {
+    fn draw_export_modal(&mut self, ctx: &egui::Context) {
+        if !self.show_export_modal {
+            return;
+        }
+
+        let mut open = true;
+        let mut start_export = false;
+        let mut cancel = false;
+
+        egui::Window::new("📤 Configure Export")
+            .collapsible(false)
+            .resizable(false)
+            .default_width(360.0)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .open(&mut open)
+            .show(ctx, |ui| {
+                let opts = &mut self.export_options;
+
+                ui.label(RichText::new("Formats").strong().color(theme::accent()));
+                ui.add_space(2.0);
+                ui.checkbox(&mut opts.pdf, "📄 PDF documents");
+                ui.checkbox(&mut opts.csv, "📊 CSV spreadsheets");
+
+                ui.add_space(8.0);
+                ui.label(RichText::new("Reports").strong().color(theme::accent()));
+                ui.add_space(2.0);
+                ui.checkbox(&mut opts.master, "🗂 Master schedule");
+                ui.checkbox(&mut opts.divisions, "🏆 Per-division schedules");
+                ui.checkbox(&mut opts.teams, "👥 Per-team schedules");
+                ui.checkbox(&mut opts.volunteers, "👤 Per-volunteer schedules");
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                let valid = opts.is_valid();
+                if !valid {
+                    ui.label(RichText::new("Select at least one format and one report.")
+                        .size(11.0).color(theme::warning()));
+                    ui.add_space(4.0);
+                }
+
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(valid, egui::Button::new(RichText::new("📤 Export").strong()))
+                        .clicked()
+                    {
+                        start_export = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+
+        // The window's [X] (`open`) or the Cancel button both just close it.
+        if !open || cancel {
+            self.show_export_modal = false;
+        }
+        if start_export {
+            self.show_export_modal = false;
+            self.export_full_tournament();
+        }
+    }
+
     fn handle_export_messages(&mut self, ctx: &egui::Context) {
         if let Some(ref rx) = self.export_rx {
             while let Ok(msg) = rx.try_recv() {

@@ -252,6 +252,7 @@ impl AppState {
             
             let config = self.config.clone();
             let schedule = self.schedule.clone().unwrap();
+            let opts = self.export_options;
             let tournament_name = clean_filename(&config.competition_name);
             let root = base_path.join(format!("Export_{}", tournament_name));
 
@@ -261,85 +262,105 @@ impl AppState {
                     return;
                 }
 
-                // Top-level format folders
+                // Top-level format folders (only those the user asked for).
                 let csv_root = root.join("csv");
                 let pdf_root = root.join("pdf");
-                let _ = fs::create_dir_all(&csv_root);
-                let _ = fs::create_dir_all(&pdf_root);
+                if opts.csv { let _ = fs::create_dir_all(&csv_root); }
+                if opts.pdf { let _ = fs::create_dir_all(&pdf_root); }
 
-                // Subdirectories within format folders
+                // Subdirectories within format folders, created on demand by the
+                // selected report categories.
                 let csv_div = csv_root.join("Divisions");
                 let csv_team = csv_root.join("Teams");
                 let csv_vol = csv_root.join("Volunteers");
                 let pdf_div = pdf_root.join("Divisions");
                 let pdf_team = pdf_root.join("Teams");
                 let pdf_vol = pdf_root.join("Volunteers");
-
-                let _ = fs::create_dir_all(&csv_div);
-                let _ = fs::create_dir_all(&csv_team);
-                let _ = fs::create_dir_all(&csv_vol);
-                let _ = fs::create_dir_all(&pdf_div);
-                let _ = fs::create_dir_all(&pdf_team);
-                let _ = fs::create_dir_all(&pdf_vol);
+                if opts.divisions {
+                    if opts.csv { let _ = fs::create_dir_all(&csv_div); }
+                    if opts.pdf { let _ = fs::create_dir_all(&pdf_div); }
+                }
+                if opts.teams {
+                    if opts.csv { let _ = fs::create_dir_all(&csv_team); }
+                    if opts.pdf { let _ = fs::create_dir_all(&pdf_team); }
+                }
+                if opts.volunteers {
+                    if opts.csv { let _ = fs::create_dir_all(&csv_vol); }
+                    if opts.pdf { let _ = fs::create_dir_all(&pdf_vol); }
+                }
 
                 let divisions = config.divisions.clone();
                 let teams = config.teams.clone();
                 let volunteers = config.volunteers.clone();
-                let total_steps = 1 + divisions.len() + teams.len() + volunteers.len();
+                let total_steps = (opts.master as usize)
+                    + if opts.divisions { divisions.len() } else { 0 }
+                    + if opts.teams { teams.len() } else { 0 }
+                    + if opts.volunteers { volunteers.len() } else { 0 };
+                let total_steps = total_steps.max(1);
                 let mut current_step = 0;
 
                 let writer = ExportWriter {
                     config: config.clone(),
+                    pdf: opts.pdf,
+                    csv: opts.csv,
                 };
 
-                // 1. Master Schedules
-                writer.write_export_files(&csv_root, &pdf_root, "Master_Schedule", &schedule.assignments, ReportType::Master);
-                current_step += 1;
-                let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
-
-                // 2. Division Schedules
-                for div in &divisions {
-                    let div_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
-                        .filter(|a| a.activity.division_id() == div.id)
-                        .cloned()
-                        .collect();
-                    if !div_assigns.is_empty() {
-                        let div_safe_name = clean_filename(&div.name);
-                        writer.write_export_files(&csv_div, &pdf_div, &div_safe_name, &div_assigns, ReportType::Division);
-                    }
+                // 1. Master Schedule
+                if opts.master {
+                    writer.write_export_files(&csv_root, &pdf_root, "Master_Schedule", &schedule.assignments, ReportType::Master);
                     current_step += 1;
                     let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
+                }
+
+                // 2. Division Schedules
+                if opts.divisions {
+                    for div in &divisions {
+                        let div_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
+                            .filter(|a| a.activity.division_id() == div.id)
+                            .cloned()
+                            .collect();
+                        if !div_assigns.is_empty() {
+                            let div_safe_name = clean_filename(&div.name);
+                            writer.write_export_files(&csv_div, &pdf_div, &div_safe_name, &div_assigns, ReportType::Division);
+                        }
+                        current_step += 1;
+                        let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
+                    }
                 }
 
                 // 3. Team Schedules
-                for team in &teams {
-                    let team_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
-                        .filter(|a| a.activity.teams().contains(&team.name.as_str()))
-                        .cloned()
-                        .collect();
-                    if !team_assigns.is_empty() {
-                        let team_safe_name = clean_filename(&team.name);
-                        writer.write_export_files(&csv_team, &pdf_team, &team_safe_name, &team_assigns, ReportType::Team);
+                if opts.teams {
+                    for team in &teams {
+                        let team_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
+                            .filter(|a| a.activity.teams().contains(&team.name.as_str()))
+                            .cloned()
+                            .collect();
+                        if !team_assigns.is_empty() {
+                            let team_safe_name = clean_filename(&team.name);
+                            writer.write_export_files(&csv_team, &pdf_team, &team_safe_name, &team_assigns, ReportType::Team);
+                        }
+                        current_step += 1;
+                        let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
                     }
-                    current_step += 1;
-                    let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
                 }
 
                 // 4. Volunteer Schedules
-                for vol in &volunteers {
-                    let vol_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
-                        .filter(|a| a.volunteer_ids.contains(&vol.id))
-                        .cloned()
-                        .collect();
-                    if !vol_assigns.is_empty() {
-                        let vol_safe_name = clean_filename(&vol.name);
-                        writer.write_export_files(&csv_vol, &pdf_vol, &vol_safe_name, &vol_assigns, ReportType::Volunteer);
+                if opts.volunteers {
+                    for vol in &volunteers {
+                        let vol_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
+                            .filter(|a| a.volunteer_ids.contains(&vol.id))
+                            .cloned()
+                            .collect();
+                        if !vol_assigns.is_empty() {
+                            let vol_safe_name = clean_filename(&vol.name);
+                            writer.write_export_files(&csv_vol, &pdf_vol, &vol_safe_name, &vol_assigns, ReportType::Volunteer);
+                        }
+                        current_step += 1;
+                        let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
                     }
-                    current_step += 1;
-                    let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
                 }
 
-                let _ = tx.send(ExportMessage::Done(format!("Full export completed to '{}'", root.display())));
+                let _ = tx.send(ExportMessage::Done(format!("Export completed to '{}'", root.display())));
             });
         }
     }
@@ -347,26 +368,29 @@ impl AppState {
 
 struct ExportWriter {
     config: crate::model::TournamentConfig,
+    pdf: bool,
+    csv: bool,
 }
 
 impl ExportWriter {
     fn write_export_files(&self, csv_dir: &std::path::Path, pdf_dir: &std::path::Path, name: &str, assignments: &[ScheduleAssignment], report_type: ReportType) {
-        // CSV
-        let csv_content = generate_csv_content_internal(&self.config, assignments);
-        let csv_path = csv_dir.join(format!("{}.csv", name));
-        let _ = fs::write(csv_path, csv_content);
+        if self.csv {
+            let csv_content = generate_csv_content_internal(&self.config, assignments);
+            let csv_path = csv_dir.join(format!("{}.csv", name));
+            let _ = fs::write(csv_path, csv_content);
+        }
 
-        // PDF
-        let pdf_path = pdf_dir.join(format!("{}.pdf", name));
-        
-        match generate_pdf_document_internal(&self.config, name, assignments, report_type) {
-            Some(doc) => {
-                if let Err(e) = doc.render_to_file(&pdf_path) {
-                    eprintln!("Failed to render PDF {}: {}", pdf_path.display(), e);
+        if self.pdf {
+            let pdf_path = pdf_dir.join(format!("{}.pdf", name));
+            match generate_pdf_document_internal(&self.config, name, assignments, report_type) {
+                Some(doc) => {
+                    if let Err(e) = doc.render_to_file(&pdf_path) {
+                        eprintln!("Failed to render PDF {}: {}", pdf_path.display(), e);
+                    }
                 }
-            }
-            None => {
-                eprintln!("Failed to generate PDF document for {}", name);
+                None => {
+                    eprintln!("Failed to generate PDF document for {}", name);
+                }
             }
         }
     }
