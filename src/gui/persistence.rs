@@ -163,7 +163,7 @@ impl AppState {
 
     pub fn export_to_csv(&mut self) {
         if let Some(ref schedule) = self.schedule {
-            let csv = generate_csv_content_internal(&self.config, &schedule.assignments);
+            let csv = generate_csv_content_internal(&self.config, &schedule.assignments, self.export_options.time_12h);
             
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("CSV", &["csv"])
@@ -210,7 +210,7 @@ impl AppState {
 
                     csv.push_str(&format!(
                         "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
-                        csv_field(&vol.name), csv_field(&slot.start_time), csv_field(&slot.day),
+                        csv_field(&vol.name), csv_field(&format_time_str(&slot.start_time, self.export_options.time_12h)), csv_field(&slot.day),
                         csv_field(field.map_or("", |f| &f.name)), csv_field(&assign.activity.export_label()),
                         csv_field(div.map_or("", |d| &d.name))
                     ));
@@ -303,6 +303,7 @@ impl AppState {
                     config: config.clone(),
                     pdf: opts.pdf,
                     csv: opts.csv,
+                    time_12h: opts.time_12h,
                 };
 
                 // 1. Master Schedule
@@ -370,19 +371,20 @@ struct ExportWriter {
     config: crate::model::TournamentConfig,
     pdf: bool,
     csv: bool,
+    time_12h: bool,
 }
 
 impl ExportWriter {
     fn write_export_files(&self, csv_dir: &std::path::Path, pdf_dir: &std::path::Path, name: &str, assignments: &[ScheduleAssignment], report_type: ReportType) {
         if self.csv {
-            let csv_content = generate_csv_content_internal(&self.config, assignments);
+            let csv_content = generate_csv_content_internal(&self.config, assignments, self.time_12h);
             let csv_path = csv_dir.join(format!("{}.csv", name));
             let _ = fs::write(csv_path, csv_content);
         }
 
         if self.pdf {
             let pdf_path = pdf_dir.join(format!("{}.pdf", name));
-            match generate_pdf_document_internal(&self.config, name, assignments, report_type) {
+            match generate_pdf_document_internal(&self.config, name, assignments, report_type, self.time_12h) {
                 Some(doc) => {
                     if let Err(e) = doc.render_to_file(&pdf_path) {
                         eprintln!("Failed to render PDF {}: {}", pdf_path.display(), e);
@@ -396,7 +398,7 @@ impl ExportWriter {
     }
 }
 
-fn generate_csv_content_internal(config: &crate::model::TournamentConfig, assignments: &[ScheduleAssignment]) -> String {
+fn generate_csv_content_internal(config: &crate::model::TournamentConfig, assignments: &[ScheduleAssignment], time_12h: bool) -> String {
     let mut csv = String::from("Field,Time,Division,Activity,Team A,Org A,Team B,Org B,Volunteers\n");
     
     let mut sorted_assigns = assignments.to_vec();
@@ -410,7 +412,7 @@ fn generate_csv_content_internal(config: &crate::model::TournamentConfig, assign
         let field = assign.field_id.as_ref().and_then(|fid| config.fields.iter().find(|f| f.id == *fid));
         let division = config.divisions.iter().find(|d| d.id == assign.activity.division_id());
         
-        let time_str = slot.map_or("".to_string(), |s| format!("{} {}", day_abbr(&s.day), s.start_time));
+        let time_str = slot.map_or("".to_string(), |s| format!("{} {}", day_abbr(&s.day), format_time_str(&s.start_time, time_12h)));
         let div_name = division.map_or("", |d| &d.name);
         let field_name = field.map_or("", |f| &f.name);
         
@@ -745,7 +747,7 @@ impl Element for RepeatingScheduleTable {
     }
 }
 
-fn render_schedule_section(doc: &mut genpdf::Document, config: &crate::model::TournamentConfig, section_title: &str, assignments: &[&ScheduleAssignment]) {
+fn render_schedule_section(doc: &mut genpdf::Document, config: &crate::model::TournamentConfig, section_title: &str, assignments: &[&ScheduleAssignment], time_12h: bool) {
     if assignments.is_empty() { return; }
 
     // One row per assignment, sorted by day / time / field. Rows are collected
@@ -779,7 +781,7 @@ fn render_schedule_section(doc: &mut genpdf::Document, config: &crate::model::To
 
         rows.push(ScheduleRow {
             cells: vec![
-                (format!("{} {}", day_abbr(&slot.day), slot.start_time), time_style),
+                (format!("{} {}", day_abbr(&slot.day), format_time_str(&slot.start_time, time_12h)), time_style),
                 (assign.activity.round_label(), round_style),
                 (field_name, field_style),
                 (clean_text(&assign.activity.export_label()), activity_style),
@@ -807,7 +809,7 @@ struct TeamCard {
 }
 
 /// Collects and sorts one team's assignments into a printable [`TeamCard`].
-fn prepare_team_card(config: &crate::model::TournamentConfig, team: &Team, assignments: &[ScheduleAssignment]) -> TeamCard {
+fn prepare_team_card(config: &crate::model::TournamentConfig, team: &Team, assignments: &[ScheduleAssignment], time_12h: bool) -> TeamCard {
     let mut team_assigns: Vec<_> = assignments.iter()
         .filter(|a| a.activity.teams().contains(&team.name.as_str()))
         .collect();
@@ -833,7 +835,7 @@ fn prepare_team_card(config: &crate::model::TournamentConfig, team: &Team, assig
             crate::model::Activity::Run { run_number, .. } => format!("Run #{}", run_number),
             crate::model::Activity::Interview { .. } => "Interview".to_string(),
         };
-        rows.push((format!("{} {}", day_abbr(&slot.day), slot.start_time), detail, field_name));
+        rows.push((format!("{} {}", day_abbr(&slot.day), format_time_str(&slot.start_time, time_12h)), detail, field_name));
     }
 
     TeamCard {
@@ -992,7 +994,7 @@ impl Element for TeamGrid {
     }
 }
 
-fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title: &str, assignments: &[ScheduleAssignment], report_type: ReportType) -> Option<genpdf::Document> {
+fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title: &str, assignments: &[ScheduleAssignment], report_type: ReportType, time_12h: bool) -> Option<genpdf::Document> {
     let font_family = load_embedded_font()?;
 
     let mut doc = genpdf::Document::new(font_family);
@@ -1041,8 +1043,8 @@ fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title
     let comp_assigns: Vec<_> = assignments.iter().filter(|a| !matches!(a.activity, crate::model::Activity::Interview { .. })).collect();
     let int_assigns: Vec<_> = assignments.iter().filter(|a| matches!(a.activity, crate::model::Activity::Interview { .. })).collect();
 
-    render_schedule_section(&mut doc, config, "Competition Schedule", &comp_assigns);
-    render_schedule_section(&mut doc, config, "Interview Schedule", &int_assigns);
+    render_schedule_section(&mut doc, config, "Competition Schedule", &comp_assigns, time_12h);
+    render_schedule_section(&mut doc, config, "Interview Schedule", &int_assigns, time_12h);
 
     // --- Per-team grid: only for the broad master / division reports. ---
     if matches!(report_type, ReportType::Master | ReportType::Division) {
@@ -1057,7 +1059,7 @@ fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title
         };
 
         let cards: Vec<TeamCard> = teams_to_show.iter()
-            .map(|team| prepare_team_card(config, team, assignments))
+            .map(|team| prepare_team_card(config, team, assignments, time_12h))
             .collect();
         if !cards.is_empty() {
             doc.push(elements::Break::new(1.0));
@@ -1229,6 +1231,27 @@ fn day_abbr(day: &str) -> &str {
     day.get(..3).unwrap_or(day)
 }
 
+/// Formats a stored `"HH:MM"` time for export. With `twelve_hour` it becomes a
+/// 12-hour clock with an AM/PM suffix (e.g. `"14:30"` -> `"2:30 PM"`), which is
+/// clearer for young participants; otherwise the original 24-hour string is
+/// returned. Unparseable input is passed through unchanged.
+fn format_time_str(time: &str, twelve_hour: bool) -> String {
+    if !twelve_hour {
+        return time.to_string();
+    }
+    let parts: Vec<&str> = time.split(':').collect();
+    let (h, m) = match parts.as_slice() {
+        [h, m] => match (h.parse::<u32>(), m.parse::<u32>()) {
+            (Ok(h), Ok(m)) if h < 24 && m < 60 => (h, m),
+            _ => return time.to_string(),
+        },
+        _ => return time.to_string(),
+    };
+    let suffix = if h < 12 { "AM" } else { "PM" };
+    let h12 = match h % 12 { 0 => 12, x => x };
+    format!("{}:{:02} {}", h12, m, suffix)
+}
+
 fn split_csv_line(line: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut current = String::new();
@@ -1251,4 +1274,20 @@ fn split_csv_line(line: &str) -> Vec<String> {
     }
     result.push(current);
     result
+}
+
+#[cfg(test)]
+mod time_fmt_test {
+    use super::*;
+    #[test]
+    fn twelve_hour_formatting() {
+        assert_eq!(format_time_str("09:00", false), "09:00");
+        assert_eq!(format_time_str("09:00", true), "9:00 AM");
+        assert_eq!(format_time_str("14:20", true), "2:20 PM");
+        assert_eq!(format_time_str("00:00", true), "12:00 AM");
+        assert_eq!(format_time_str("12:00", true), "12:00 PM");
+        assert_eq!(format_time_str("23:59", true), "11:59 PM");
+        assert_eq!(format_time_str("bogus", true), "bogus");
+        assert_eq!(format_time_str("25:00", true), "25:00");
+    }
 }

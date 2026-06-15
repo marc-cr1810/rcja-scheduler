@@ -331,6 +331,14 @@ impl AppState {
                 ui.checkbox(&mut opts.teams, "👥 Per-team schedules");
                 ui.checkbox(&mut opts.volunteers, "👤 Per-volunteer schedules");
 
+                ui.add_space(8.0);
+                ui.label(RichText::new("Time format").strong().color(theme::accent()));
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut opts.time_12h, false, "24-hour (14:30)");
+                    ui.selectable_value(&mut opts.time_12h, true, "12-hour (2:30 PM)");
+                });
+
                 ui.add_space(10.0);
                 ui.separator();
                 ui.add_space(6.0);

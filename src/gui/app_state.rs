@@ -24,11 +24,22 @@ pub struct ExportOptions {
     pub divisions: bool,
     pub teams: bool,
     pub volunteers: bool,
+    /// Render times as 12-hour with AM/PM (clearer for young participants)
+    /// instead of 24-hour.
+    pub time_12h: bool,
 }
 
 impl Default for ExportOptions {
     fn default() -> Self {
-        ExportOptions { pdf: true, csv: true, master: true, divisions: true, teams: true, volunteers: true }
+        ExportOptions {
+            pdf: true,
+            csv: true,
+            master: true,
+            divisions: true,
+            teams: true,
+            volunteers: true,
+            time_12h: false,
+        }
     }
 }
 
