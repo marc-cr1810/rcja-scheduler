@@ -63,8 +63,11 @@ fn main() -> eframe::Result<()> {
             );
 
             cc.egui_ctx.set_fonts(fonts);
+            // Build the app first: AppState::default() loads + activates the
+            // colour theme, so styling must happen after it to pick that up.
+            let app = gui::AppState::default();
             gui::setup_custom_style(&cc.egui_ctx);
-            Box::new(gui::AppState::default())
+            Box::new(app)
         }),
     )
 }

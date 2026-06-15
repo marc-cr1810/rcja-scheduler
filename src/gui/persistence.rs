@@ -5,11 +5,12 @@ use crate::model::{Team, ScheduleAssignment};
 use super::{AppState, ExportMessage};
 use genpdf::{elements, style, Element};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum ReportType {
     Master,
     Division,
     Team,
+    Volunteer,
 }
 
 impl AppState {
@@ -162,7 +163,7 @@ impl AppState {
 
     pub fn export_to_csv(&mut self) {
         if let Some(ref schedule) = self.schedule {
-            let csv = generate_csv_content_internal(&self.config, &schedule.assignments);
+            let csv = generate_csv_content_internal(&self.config, &schedule.assignments, self.export_options.time_12h);
             
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("CSV", &["csv"])
@@ -209,7 +210,7 @@ impl AppState {
 
                     csv.push_str(&format!(
                         "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
-                        csv_field(&vol.name), csv_field(&slot.start_time), csv_field(&slot.day),
+                        csv_field(&vol.name), csv_field(&format_time_str(&slot.start_time, self.export_options.time_12h)), csv_field(&slot.day),
                         csv_field(field.map_or("", |f| &f.name)), csv_field(&assign.activity.export_label()),
                         csv_field(div.map_or("", |d| &d.name))
                     ));
@@ -251,6 +252,7 @@ impl AppState {
             
             let config = self.config.clone();
             let schedule = self.schedule.clone().unwrap();
+            let opts = self.export_options;
             let tournament_name = clean_filename(&config.competition_name);
             let root = base_path.join(format!("Export_{}", tournament_name));
 
@@ -260,66 +262,106 @@ impl AppState {
                     return;
                 }
 
-                // Top-level format folders
+                // Top-level format folders (only those the user asked for).
                 let csv_root = root.join("csv");
                 let pdf_root = root.join("pdf");
-                let _ = fs::create_dir_all(&csv_root);
-                let _ = fs::create_dir_all(&pdf_root);
+                if opts.csv { let _ = fs::create_dir_all(&csv_root); }
+                if opts.pdf { let _ = fs::create_dir_all(&pdf_root); }
 
-                // Subdirectories within format folders
+                // Subdirectories within format folders, created on demand by the
+                // selected report categories.
                 let csv_div = csv_root.join("Divisions");
                 let csv_team = csv_root.join("Teams");
+                let csv_vol = csv_root.join("Volunteers");
                 let pdf_div = pdf_root.join("Divisions");
                 let pdf_team = pdf_root.join("Teams");
-                
-                let _ = fs::create_dir_all(&csv_div);
-                let _ = fs::create_dir_all(&csv_team);
-                let _ = fs::create_dir_all(&pdf_div);
-                let _ = fs::create_dir_all(&pdf_team);
+                let pdf_vol = pdf_root.join("Volunteers");
+                if opts.divisions {
+                    if opts.csv { let _ = fs::create_dir_all(&csv_div); }
+                    if opts.pdf { let _ = fs::create_dir_all(&pdf_div); }
+                }
+                if opts.teams {
+                    if opts.csv { let _ = fs::create_dir_all(&csv_team); }
+                    if opts.pdf { let _ = fs::create_dir_all(&pdf_team); }
+                }
+                if opts.volunteers {
+                    if opts.csv { let _ = fs::create_dir_all(&csv_vol); }
+                    if opts.pdf { let _ = fs::create_dir_all(&pdf_vol); }
+                }
 
                 let divisions = config.divisions.clone();
                 let teams = config.teams.clone();
-                let total_steps = 1 + divisions.len() + teams.len();
+                let volunteers = config.volunteers.clone();
+                let total_steps = (opts.master as usize)
+                    + if opts.divisions { divisions.len() } else { 0 }
+                    + if opts.teams { teams.len() } else { 0 }
+                    + if opts.volunteers { volunteers.len() } else { 0 };
+                let total_steps = total_steps.max(1);
                 let mut current_step = 0;
 
                 let writer = ExportWriter {
                     config: config.clone(),
+                    pdf: opts.pdf,
+                    csv: opts.csv,
+                    time_12h: opts.time_12h,
                 };
 
-                // 1. Master Schedules
-                writer.write_export_files(&csv_root, &pdf_root, "Master_Schedule", &schedule.assignments, ReportType::Master);
-                current_step += 1;
-                let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
-
-                // 2. Division Schedules
-                for div in &divisions {
-                    let div_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
-                        .filter(|a| a.activity.division_id() == div.id)
-                        .cloned()
-                        .collect();
-                    if !div_assigns.is_empty() {
-                        let div_safe_name = clean_filename(&div.name);
-                        writer.write_export_files(&csv_div, &pdf_div, &div_safe_name, &div_assigns, ReportType::Division);
-                    }
+                // 1. Master Schedule
+                if opts.master {
+                    writer.write_export_files(&csv_root, &pdf_root, "Master_Schedule", &schedule.assignments, ReportType::Master);
                     current_step += 1;
                     let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
+                }
+
+                // 2. Division Schedules
+                if opts.divisions {
+                    for div in &divisions {
+                        let div_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
+                            .filter(|a| a.activity.division_id() == div.id)
+                            .cloned()
+                            .collect();
+                        if !div_assigns.is_empty() {
+                            let div_safe_name = clean_filename(&div.name);
+                            writer.write_export_files(&csv_div, &pdf_div, &div_safe_name, &div_assigns, ReportType::Division);
+                        }
+                        current_step += 1;
+                        let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
+                    }
                 }
 
                 // 3. Team Schedules
-                for team in &teams {
-                    let team_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
-                        .filter(|a| a.activity.teams().contains(&team.name.as_str()))
-                        .cloned()
-                        .collect();
-                    if !team_assigns.is_empty() {
-                        let team_safe_name = clean_filename(&team.name);
-                        writer.write_export_files(&csv_team, &pdf_team, &team_safe_name, &team_assigns, ReportType::Team);
+                if opts.teams {
+                    for team in &teams {
+                        let team_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
+                            .filter(|a| a.activity.teams().contains(&team.name.as_str()))
+                            .cloned()
+                            .collect();
+                        if !team_assigns.is_empty() {
+                            let team_safe_name = clean_filename(&team.name);
+                            writer.write_export_files(&csv_team, &pdf_team, &team_safe_name, &team_assigns, ReportType::Team);
+                        }
+                        current_step += 1;
+                        let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
                     }
-                    current_step += 1;
-                    let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
                 }
 
-                let _ = tx.send(ExportMessage::Done(format!("Full export completed to '{}'", root.display())));
+                // 4. Volunteer Schedules
+                if opts.volunteers {
+                    for vol in &volunteers {
+                        let vol_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
+                            .filter(|a| a.volunteer_ids.contains(&vol.id))
+                            .cloned()
+                            .collect();
+                        if !vol_assigns.is_empty() {
+                            let vol_safe_name = clean_filename(&vol.name);
+                            writer.write_export_files(&csv_vol, &pdf_vol, &vol_safe_name, &vol_assigns, ReportType::Volunteer);
+                        }
+                        current_step += 1;
+                        let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
+                    }
+                }
+
+                let _ = tx.send(ExportMessage::Done(format!("Export completed to '{}'", root.display())));
             });
         }
     }
@@ -327,32 +369,36 @@ impl AppState {
 
 struct ExportWriter {
     config: crate::model::TournamentConfig,
+    pdf: bool,
+    csv: bool,
+    time_12h: bool,
 }
 
 impl ExportWriter {
     fn write_export_files(&self, csv_dir: &std::path::Path, pdf_dir: &std::path::Path, name: &str, assignments: &[ScheduleAssignment], report_type: ReportType) {
-        // CSV
-        let csv_content = generate_csv_content_internal(&self.config, assignments);
-        let csv_path = csv_dir.join(format!("{}.csv", name));
-        let _ = fs::write(csv_path, csv_content);
+        if self.csv {
+            let csv_content = generate_csv_content_internal(&self.config, assignments, self.time_12h);
+            let csv_path = csv_dir.join(format!("{}.csv", name));
+            let _ = fs::write(csv_path, csv_content);
+        }
 
-        // PDF
-        let pdf_path = pdf_dir.join(format!("{}.pdf", name));
-        
-        match generate_pdf_document_internal(&self.config, name, assignments, report_type) {
-            Some(doc) => {
-                if let Err(e) = doc.render_to_file(&pdf_path) {
-                    eprintln!("Failed to render PDF {}: {}", pdf_path.display(), e);
+        if self.pdf {
+            let pdf_path = pdf_dir.join(format!("{}.pdf", name));
+            match generate_pdf_document_internal(&self.config, name, assignments, report_type, self.time_12h) {
+                Some(doc) => {
+                    if let Err(e) = doc.render_to_file(&pdf_path) {
+                        eprintln!("Failed to render PDF {}: {}", pdf_path.display(), e);
+                    }
                 }
-            }
-            None => {
-                eprintln!("Failed to generate PDF document for {}", name);
+                None => {
+                    eprintln!("Failed to generate PDF document for {}", name);
+                }
             }
         }
     }
 }
 
-fn generate_csv_content_internal(config: &crate::model::TournamentConfig, assignments: &[ScheduleAssignment]) -> String {
+fn generate_csv_content_internal(config: &crate::model::TournamentConfig, assignments: &[ScheduleAssignment], time_12h: bool) -> String {
     let mut csv = String::from("Field,Time,Division,Activity,Team A,Org A,Team B,Org B,Volunteers\n");
     
     let mut sorted_assigns = assignments.to_vec();
@@ -366,7 +412,7 @@ fn generate_csv_content_internal(config: &crate::model::TournamentConfig, assign
         let field = assign.field_id.as_ref().and_then(|fid| config.fields.iter().find(|f| f.id == *fid));
         let division = config.divisions.iter().find(|d| d.id == assign.activity.division_id());
         
-        let time_str = slot.map_or("".to_string(), |s| format!("{} {}", day_abbr(&s.day), s.start_time));
+        let time_str = slot.map_or("".to_string(), |s| format!("{} {}", day_abbr(&s.day), format_time_str(&s.start_time, time_12h)));
         let div_name = division.map_or("", |d| &d.name);
         let field_name = field.map_or("", |f| &f.name);
         
@@ -428,151 +474,528 @@ fn get_activity_metadata(config: &crate::model::TournamentConfig, activity: &cra
     }
 }
 
-struct ScheduleDecorator {
-    color_header: style::Color,
-    start_index: usize,
+// ---------------------------------------------------------------------------
+// PDF design system
+//
+// genpdf 0.2 cannot paint a solid rectangle behind text — cell decorators run
+// *after* the cell content is drawn, and only hairline strokes are exposed — so
+// the previous "fill the header by drawing 40 stacked hairlines" hack produced
+// a stripey block with the text showing through. The report is now built
+// entirely from typography, colour and horizontal rules, which renders cleanly
+// and identically on every platform.
+// ---------------------------------------------------------------------------
+
+// Type scale (pt)
+const FS_TITLE: u8 = 20;
+const FS_SUBTITLE: u8 = 12;
+const FS_SECTION: u8 = 12;
+const FS_TH: u8 = 8;
+const FS_BODY: u8 = 9;
+const FS_META: u8 = 8;
+const FS_FOOTER: u8 = 7;
+
+// Palette
+const C_PRIMARY: style::Color = style::Color::Rgb(30, 58, 138);
+const C_ACCENT: style::Color = style::Color::Rgb(79, 70, 229);
+const C_MUTED: style::Color = style::Color::Rgb(100, 116, 139);
+const C_RULE: style::Color = style::Color::Rgb(203, 213, 225);
+const C_FOOTER: style::Color = style::Color::Rgb(148, 163, 184);
+
+/// Loads the Liberation Sans family that is embedded in the binary at compile
+/// time. Bundling the font means PDF export no longer depends on whatever fonts
+/// happen to be installed: the old code looked up system fonts by a naming
+/// convention (`Arial-Regular.ttf`) that does not exist on Windows, so
+/// `from_files` always returned `None` and export silently failed there.
+fn load_embedded_font() -> Option<genpdf::fonts::FontFamily<genpdf::fonts::FontData>> {
+    use genpdf::fonts::{FontData, FontFamily};
+    macro_rules! face {
+        ($file:literal) => {
+            FontData::new(
+                include_bytes!(concat!("../../assets/fonts/", $file)).to_vec(),
+                None,
+            )
+            .ok()?
+        };
+    }
+    Some(FontFamily {
+        regular: face!("LiberationSans-Regular.ttf"),
+        bold: face!("LiberationSans-Bold.ttf"),
+        italic: face!("LiberationSans-Italic.ttf"),
+        bold_italic: face!("LiberationSans-BoldItalic.ttf"),
+    })
 }
 
-impl genpdf::elements::CellDecorator for ScheduleDecorator {
-    fn decorate_cell(&mut self, _column: usize, row: usize, _is_last_row: bool, area: genpdf::render::Area<'_>, _style: style::Style) {
-        let size = area.size();
-        let actual_row = row + self.start_index;
+/// Draws a horizontal hairline spanning the full width of `area` at height `y`.
+fn draw_hline(area: &genpdf::render::Area<'_>, y: genpdf::Mm, color: style::Color) {
+    let width = area.size().width;
+    area.draw_line(
+        vec![
+            genpdf::Position { x: 0.into(), y },
+            genpdf::Position { x: width, y },
+        ],
+        style::Style::new().with_color(color),
+    );
+}
 
-        if actual_row == 0 {
-            // Fill header background by drawing lines (hack for genpdf 0.2.0)
-            let steps = 40; // Reduced density to improve rendering
-            for i in 0..steps {
-                let y = size.height * (i as f64 / steps as f64);
-                area.draw_line(
-                    vec![
-                        genpdf::Position { x: 0.into(), y },
-                        genpdf::Position { x: size.width, y },
-                    ],
-                    style::Style::new().with_color(self.color_header),
-                );
-            }
+/// A standalone full-width divider usable anywhere an `Element` is accepted (the
+/// document body, or nested inside a card). `strong` stacks a second hairline
+/// just above the first for a heavier rule.
+fn rule_element(color: style::Color, strong: bool) -> elements::TableLayout {
+    let mut table = elements::TableLayout::new(vec![1]);
+    table.set_cell_decorator(RuleDecorator { color, strong });
+    let mut row = table.row();
+    row.push_element(elements::Paragraph::new(" ").styled(style::Style::new().with_font_size(1)));
+    row.push().ok();
+    table
+}
+
+struct RuleDecorator {
+    color: style::Color,
+    strong: bool,
+}
+
+impl genpdf::elements::CellDecorator for RuleDecorator {
+    fn decorate_cell(&mut self, _column: usize, _row: usize, _has_more: bool, area: genpdf::render::Area<'_>, _style: style::Style) {
+        let h = area.size().height;
+        draw_hline(&area, h * 0.5, self.color);
+        if self.strong {
+            draw_hline(&area, h * 0.62, self.color);
+        }
+    }
+}
+
+/// Cell decorator that draws a rule along the bottom edge of every cell. Used
+/// for the schedule header (heavy primary rule, `strong`) and the body rows
+/// (light rule), giving clean ledger-style separation without filled blocks.
+struct BottomRuleDecorator {
+    color: style::Color,
+    strong: bool,
+}
+
+impl genpdf::elements::CellDecorator for BottomRuleDecorator {
+    fn decorate_cell(&mut self, _column: usize, _row: usize, _has_more: bool, area: genpdf::render::Area<'_>, _style: style::Style) {
+        let h = area.size().height;
+        draw_hline(&area, h, self.color);
+        if self.strong {
+            draw_hline(&area, h * 0.985, self.color);
+        }
+    }
+}
+
+// Column labels and widths for the schedule tables, kept together so the
+// repeated header always lines up with the body columns.
+const SCHEDULE_COLUMNS: [&str; 5] = ["TIME", "ROUND", "FIELD", "ACTIVITY", "DIVISION"];
+const SCHEDULE_WEIGHTS: [usize; 5] = [4, 3, 3, 8, 6];
+
+/// Cell padding (mm) applied to every schedule cell via `.padded(PAD)`. Shared
+/// so row-height measurement matches what is actually rendered.
+const PAD: u8 = 2;
+
+/// One schedule row: the styled text for each column.
+struct ScheduleRow {
+    cells: Vec<(String, style::Style)>,
+}
+
+/// A schedule table that keeps each row intact across page boundaries and
+/// re-prints its column header at the top of every page it spans.
+///
+/// genpdf 0.2's `TableLayout` draws the header only once and will happily split a
+/// tall (word-wrapped) row across a page break, leaving an orphaned fragment.
+/// This element instead owns the rows as data: on each `render` call it draws a
+/// fresh header, then places rows one at a time, measuring each against the
+/// remaining space and stopping before one would overflow. The document re-calls
+/// `render` with a new full-page area whenever `has_more` is set, so the header
+/// reappears and the remaining rows continue cleanly on the next page.
+struct RepeatingScheduleTable {
+    title: String,
+    rows: Vec<ScheduleRow>,
+    next: usize,
+    /// Set once the section has been deferred to a fresh page, so we never defer
+    /// twice in a row (which could loop forever on a section taller than a page).
+    deferred: bool,
+}
+
+fn section_title_style() -> style::Style {
+    style::Style::new().bold().with_font_size(FS_SECTION).with_color(C_PRIMARY)
+}
+
+impl RepeatingScheduleTable {
+    fn build_header() -> elements::TableLayout {
+        let mut header = elements::TableLayout::new(SCHEDULE_WEIGHTS.to_vec());
+        header.set_cell_decorator(BottomRuleDecorator { color: C_PRIMARY, strong: true });
+        let th = style::Style::new().bold().with_font_size(FS_TH).with_color(C_PRIMARY);
+        let mut row = header.row();
+        for label in SCHEDULE_COLUMNS {
+            row.push_element(elements::Paragraph::new(label).styled(th).padded(PAD));
+        }
+        row.push().ok();
+        header
+    }
+
+    fn build_row(row: &ScheduleRow) -> elements::TableLayout {
+        let mut table = elements::TableLayout::new(SCHEDULE_WEIGHTS.to_vec());
+        table.set_cell_decorator(BottomRuleDecorator { color: C_RULE, strong: false });
+        let mut r = table.row();
+        for (text, st) in &row.cells {
+            r.push_element(elements::Paragraph::new(text.clone()).styled(*st).padded(PAD));
+        }
+        r.push().ok();
+        table
+    }
+
+    /// Conservative height of `row` when laid out at `table_width`, mirroring
+    /// genpdf's greedy word wrapping. A one-line safety margin is added so a
+    /// slight estimate miss can never cause a mid-row page split.
+    fn row_height(context: &genpdf::Context, table_width: genpdf::Mm, row: &ScheduleRow) -> genpdf::Mm {
+        let weight_sum: usize = SCHEDULE_WEIGHTS.iter().sum();
+        let pad = genpdf::Mm::from(PAD);
+        let mut max_h = genpdf::Mm::from(0u8);
+        for (i, (text, st)) in row.cells.iter().enumerate() {
+            let col_w = table_width * (SCHEDULE_WEIGHTS[i] as f64 / weight_sum as f64);
+            let avail = col_w - pad - pad;
+            let lines = wrapped_line_count(context, st, text, avail) + 1; // +1 safety
+            let h = st.line_height(&context.font_cache) * lines as f64 + pad + pad;
+            max_h = max_h.max(h);
+        }
+        max_h
+    }
+}
+
+/// Greedy first-fit word-wrap line count for `text` at width `avail`, using the
+/// same glyph metrics genpdf uses when it renders the paragraph.
+fn wrapped_line_count(context: &genpdf::Context, st: &style::Style, text: &str, avail: genpdf::Mm) -> usize {
+    let zero = genpdf::Mm::from(0u8);
+    let space = st.str_width(&context.font_cache, " ");
+    let mut lines = 1usize;
+    let mut cur = zero;
+    for word in text.split_whitespace() {
+        let w = st.str_width(&context.font_cache, word);
+        if cur <= zero {
+            cur = w;
+        } else if cur + space + w <= avail {
+            cur = cur + space + w;
+        } else {
+            lines += 1;
+            cur = w;
+        }
+    }
+    lines
+}
+
+impl Element for RepeatingScheduleTable {
+    fn render(
+        &mut self,
+        context: &genpdf::Context,
+        mut area: genpdf::render::Area<'_>,
+        style: style::Style,
+    ) -> Result<genpdf::RenderResult, genpdf::error::Error> {
+        let mut result = genpdf::RenderResult::default();
+        if self.next >= self.rows.len() {
+            return Ok(result);
         }
 
-        // Draw horizontal line at the bottom
-        let line_color = if actual_row == 0 {
-            self.color_header
-        } else {
-            style::Color::Rgb(226, 232, 240)
-        };
+        // Keep the section title with the column header and first row: if they
+        // won't fit together, defer the whole section to a fresh page so the
+        // title is never stranded alone at the bottom of the previous page.
+        if self.next == 0 {
+            let title_h = section_title_style().line_height(&context.font_cache)
+                + style.line_height(&context.font_cache) * 0.4 // the 0.4 break below the title
+                + genpdf::Mm::from(PAD) * 2.0; // header padding
+            let header_h = style::Style::new().bold().with_font_size(FS_TH).line_height(&context.font_cache);
+            let first_row_h = Self::row_height(context, area.size().width, &self.rows[0]);
+            if !self.deferred && title_h + header_h + first_row_h > area.size().height {
+                self.deferred = true;
+                result.has_more = true;
+                return Ok(result);
+            }
+            let mut title = elements::Paragraph::new(self.title.clone()).styled(section_title_style());
+            let title_result = title.render(context, area.clone(), style)?;
+            area.add_offset(genpdf::Position::new(0, title_result.size.height));
+            result.size = result.size.stack_vertical(title_result.size);
+            let mut brk = elements::Break::new(0.4);
+            let brk_result = brk.render(context, area.clone(), style)?;
+            area.add_offset(genpdf::Position::new(0, brk_result.size.height));
+            result.size = result.size.stack_vertical(brk_result.size);
+        }
 
-        area.draw_line(
-            vec![
-                genpdf::Position { x: 0.into(), y: size.height },
-                genpdf::Position { x: size.width, y: size.height },
-            ],
-            style::Style::new().with_color(line_color),
-        );
+        let mut header = Self::build_header();
+        let header_result = header.render(context, area.clone(), style)?;
+        area.add_offset(genpdf::Position::new(0, header_result.size.height));
+        result.size = result.size.stack_vertical(header_result.size);
+
+        let table_width = area.size().width;
+        let mut placed_any = false;
+        while self.next < self.rows.len() {
+            let row = &self.rows[self.next];
+            let needed = Self::row_height(context, table_width, row);
+            // Break to a fresh page before a row would overflow — unless nothing
+            // has been placed yet on this page (a row taller than a whole page),
+            // in which case render it anyway to guarantee forward progress.
+            if needed > area.size().height && placed_any {
+                break;
+            }
+
+            let row_result = Self::build_row(row).render(context, area.clone(), style)?;
+            area.add_offset(genpdf::Position::new(0, row_result.size.height));
+            result.size = result.size.stack_vertical(row_result.size);
+            placed_any = true;
+            self.next += 1;
+        }
+
+        result.has_more = self.next < self.rows.len();
+        Ok(result)
     }
 }
 
-struct TeamCardDecorator {
-    color_border: style::Color,
-}
-
-impl genpdf::elements::CellDecorator for TeamCardDecorator {
-    fn decorate_cell(&mut self, _column: usize, _row: usize, _is_last_row: bool, area: genpdf::render::Area<'_>, _style: style::Style) {
-        let size = area.size();
-        // Just a subtle bottom border for the card
-        area.draw_line(
-            vec![
-                genpdf::Position { x: 0.into(), y: size.height },
-                genpdf::Position { x: size.width, y: size.height },
-            ],
-            style::Style::new().with_color(self.color_border),
-        );
-    }
-}
-
-fn render_schedule_section(doc: &mut genpdf::Document, config: &crate::model::TournamentConfig, section_title: &str, assignments: &[&ScheduleAssignment], color_header: style::Color, color_gray: style::Color) {
+fn render_schedule_section(doc: &mut genpdf::Document, config: &crate::model::TournamentConfig, section_title: &str, assignments: &[&ScheduleAssignment], time_12h: bool) {
     if assignments.is_empty() { return; }
 
-    doc.push(elements::Paragraph::new(section_title)
-        .styled(style::Style::new().bold().with_font_size(16).with_color(color_header)));
-    doc.push(elements::Break::new(0.5));
-
-    let mut table = elements::TableLayout::new(vec![3, 3, 14]);
-    table.set_cell_decorator(ScheduleDecorator { color_header, start_index: 0 });
-    
-    // Header Row
-    let mut h_row = table.row();
-    let h_style = style::Style::new().bold().with_font_size(10).with_color(style::Color::Rgb(255, 255, 255));
-    h_row.push_element(elements::Paragraph::new("TIME").styled(h_style).padded(2));
-    h_row.push_element(elements::Paragraph::new("ROUND").styled(h_style).padded(2));
-    h_row.push_element(elements::Paragraph::new("ACTIVITIES / MATCHES").styled(h_style).padded(2));
-    h_row.push().ok();
-
-    // Group by Time Slot
-    let mut slot_ids: Vec<_> = assignments.iter().map(|a| &a.time_slot_id).collect::<HashSet<_>>().into_iter().collect();
-    slot_ids.sort_by_key(|id| {
-        let slot = config.time_slots.iter().find(|s| s.id == **id);
-        slot.map(|s| (s.day.clone(), crate::gui::helpers::parse_time_to_minutes(&s.start_time)))
+    // One row per assignment, sorted by day / time / field. Rows are collected
+    // as data so RepeatingScheduleTable can keep each row whole across page
+    // breaks, repeat the column header on every page, and keep the section title
+    // attached to the first row.
+    let mut sorted: Vec<&ScheduleAssignment> = assignments.to_vec();
+    sorted.sort_by_key(|a| {
+        let slot = config.time_slots.iter().find(|s| s.id == a.time_slot_id);
+        (
+            slot.map(|s| (s.day.clone(), crate::gui::helpers::parse_time_to_minutes(&s.start_time))),
+            a.field_id.clone(),
+        )
     });
 
-    for slot_id in slot_ids {
-        let slot = match config.time_slots.iter().find(|s| s.id == *slot_id) {
+    let time_style = style::Style::new().bold().with_font_size(FS_BODY);
+    let round_style = style::Style::new().with_font_size(FS_BODY).with_color(C_MUTED);
+    let field_style = style::Style::new().with_font_size(FS_BODY);
+    let activity_style = style::Style::new().bold().with_font_size(FS_BODY);
+    let division_style = style::Style::new().with_font_size(FS_META).with_color(C_MUTED);
+
+    let mut rows = Vec::new();
+    for assign in sorted {
+        let slot = match config.time_slots.iter().find(|s| s.id == assign.time_slot_id) {
             Some(s) => s,
             None => continue,
         };
-        let mut slot_assigns: Vec<_> = assignments.iter().filter(|a| a.time_slot_id == *slot_id).collect();
-        slot_assigns.sort_by_key(|a| a.field_id.clone());
+        let field_name = assign.field_id.as_ref()
+            .and_then(|fid| config.fields.iter().find(|f| f.id == *fid))
+            .map_or_else(|| "-".to_string(), |f| clean_text(&f.name));
 
-        let time_str = format!("{} {}", day_abbr(&slot.day), slot.start_time);
-        let round_str = slot_assigns.first().map_or("".to_string(), |a| a.activity.round_label());
-
-        let mut row = table.row();
-        row.push_element(elements::Paragraph::new(time_str).styled(style::Style::new().bold().with_font_size(10)).padded(2));
-        row.push_element(elements::Paragraph::new(round_str).styled(style::Style::new().with_font_size(10)).padded(2));
-
-        let mut details = elements::LinearLayout::vertical();
-        for (i, assign) in slot_assigns.into_iter().enumerate() {
-            if i > 0 { details.push(elements::Break::new(0.2)); }
-
-            let field_name = assign.field_id.as_ref()
-                .and_then(|fid| config.fields.iter().find(|f| f.id == *fid))
-                .map_or("—", |f| &f.name);
-
-            let match_text = format!("● {} ({})", clean_text(&assign.activity.export_label()), clean_text(field_name));
-            details.push(elements::Paragraph::new(match_text)
-                .styled(style::Style::new().bold().with_font_size(10)));
-
-            let metadata = get_activity_metadata(config, &assign.activity);
-            details.push(elements::Paragraph::new(format!("  {}", clean_text(&metadata)))
-                .styled(style::Style::new().with_font_size(8).with_color(color_gray)));
-        }
-        row.push_element(details.padded(2));
-        row.push().ok();
+        rows.push(ScheduleRow {
+            cells: vec![
+                (format!("{} {}", day_abbr(&slot.day), format_time_str(&slot.start_time, time_12h)), time_style),
+                (assign.activity.round_label(), round_style),
+                (field_name, field_style),
+                (clean_text(&assign.activity.export_label()), activity_style),
+                (clean_text(&get_activity_metadata(config, &assign.activity)), division_style),
+            ],
+        });
     }
-    doc.push(table);
+
+    doc.push(RepeatingScheduleTable { title: section_title.to_string(), rows, next: 0, deferred: false });
     doc.push(elements::Break::new(1.0));
 }
 
-fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title: &str, assignments: &[ScheduleAssignment], report_type: ReportType) -> Option<genpdf::Document> {
-    // Colors
-    let color_header = style::Color::Rgb(30, 58, 138); // Deep blue
-    let color_accent = style::Color::Rgb(79, 70, 229); // Accent blue/purple
-    let color_gray = style::Color::Rgb(107, 114, 128); // Gray for secondary info
-    let color_border = style::Color::Rgb(226, 232, 240); // Light border color
+// Column widths for the per-activity rows inside a team card.
+const TEAM_WEIGHTS: [usize; 3] = [4, 8, 5];
 
-    // Load system font (Cross-platform)
-    let font_family = if cfg!(windows) {
-        let win_font_dir = "C:\\Windows\\Fonts";
-        genpdf::fonts::from_files(win_font_dir, "Arial", None).ok()
-            .or_else(|| genpdf::fonts::from_files(win_font_dir, "Segoe UI", None).ok())
-            .or_else(|| genpdf::fonts::from_files(win_font_dir, "Times New Roman", None).ok())
+fn team_name_style() -> style::Style { style::Style::new().bold().with_font_size(FS_BODY + 1).with_color(C_PRIMARY) }
+fn team_org_style() -> style::Style { style::Style::new().with_font_size(FS_META).with_color(C_MUTED) }
+
+/// A single team's personal schedule, pre-extracted as plain data so the grid
+/// can both measure and build each card during rendering.
+struct TeamCard {
+    name: String,
+    org: String,
+    rows: Vec<(String, String, String)>, // (time, detail, field)
+}
+
+/// Collects and sorts one team's assignments into a printable [`TeamCard`].
+fn prepare_team_card(config: &crate::model::TournamentConfig, team: &Team, assignments: &[ScheduleAssignment], time_12h: bool) -> TeamCard {
+    let mut team_assigns: Vec<_> = assignments.iter()
+        .filter(|a| a.activity.teams().contains(&team.name.as_str()))
+        .collect();
+    team_assigns.sort_by_key(|a| {
+        let slot = config.time_slots.iter().find(|s| s.id == a.time_slot_id);
+        slot.map(|s| (s.day.clone(), crate::gui::helpers::parse_time_to_minutes(&s.start_time)))
+    });
+
+    let mut rows = Vec::new();
+    for assign in team_assigns {
+        let slot = match config.time_slots.iter().find(|s| s.id == assign.time_slot_id) {
+            Some(s) => s,
+            None => continue,
+        };
+        let field_name = assign.field_id.as_ref()
+            .and_then(|fid| config.fields.iter().find(|f| f.id == *fid))
+            .map_or_else(|| "-".to_string(), |f| clean_text(&f.name));
+        let detail = match &assign.activity {
+            crate::model::Activity::Match { team_a, team_b, .. } => {
+                let opp = if team_a == &team.name { team_b } else { team_a };
+                format!("vs {}", clean_text(opp))
+            }
+            crate::model::Activity::Run { run_number, .. } => format!("Run #{}", run_number),
+            crate::model::Activity::Interview { .. } => "Interview".to_string(),
+        };
+        rows.push((format!("{} {}", day_abbr(&slot.day), format_time_str(&slot.start_time, time_12h)), detail, field_name));
+    }
+
+    TeamCard {
+        name: clean_text(&team.name),
+        org: if team.organization.trim().is_empty() { String::new() } else { clean_text(&team.organization) },
+        rows,
+    }
+}
+
+/// Builds the renderable card element: a name / organisation header, a divider,
+/// then one compact row per activity.
+fn build_team_card(card: &TeamCard) -> elements::LinearLayout {
+    let mut c = elements::LinearLayout::vertical();
+    c.push(elements::Paragraph::new(card.name.clone()).styled(team_name_style()));
+    if !card.org.is_empty() {
+        c.push(elements::Paragraph::new(card.org.clone()).styled(team_org_style()));
+    }
+    c.push(elements::Break::new(0.2));
+    c.push(rule_element(C_RULE, false));
+    c.push(elements::Break::new(0.2));
+
+    if card.rows.is_empty() {
+        c.push(elements::Paragraph::new("No scheduled activities")
+            .styled(style::Style::new().italic().with_font_size(FS_META).with_color(C_MUTED)));
+        return c;
+    }
+
+    let mut table = elements::TableLayout::new(TEAM_WEIGHTS.to_vec());
+    for (time, detail, field) in &card.rows {
+        let mut row = table.row();
+        row.push_element(elements::Paragraph::new(time.clone())
+            .styled(style::Style::new().bold().with_font_size(FS_META)));
+        row.push_element(elements::Paragraph::new(detail.clone())
+            .styled(style::Style::new().with_font_size(FS_META)));
+        row.push_element(elements::Paragraph::new(field.clone())
+            .aligned(genpdf::Alignment::Right)
+            .styled(style::Style::new().with_font_size(FS_META).with_color(C_MUTED)));
+        row.push().ok();
+    }
+    c.push(table);
+    c
+}
+
+/// Conservative rendered height of a card at the given content width, mirroring
+/// the components built in [`build_team_card`] so the grid can keep a card whole.
+fn card_height(context: &genpdf::Context, content_w: genpdf::Mm, card: &TeamCard, base_style: style::Style) -> genpdf::Mm {
+    let name_lh = team_name_style().line_height(&context.font_cache);
+    let meta_lh = team_org_style().line_height(&context.font_cache);
+    let base_lh = base_style.line_height(&context.font_cache);
+
+    let mut h = name_lh * wrapped_line_count(context, &team_name_style(), &card.name, content_w) as f64;
+    if !card.org.is_empty() {
+        h += meta_lh * wrapped_line_count(context, &team_org_style(), &card.org, content_w) as f64;
+    }
+    // The two 0.2-line breaks around the divider, plus the divider rule itself.
+    h += base_lh * 0.4 + style::Style::new().with_font_size(1).line_height(&context.font_cache);
+
+    if card.rows.is_empty() {
+        h += meta_lh;
     } else {
-        let font_dir = "/usr/share/fonts/truetype/ubuntu";
-        genpdf::fonts::from_files(font_dir, "Ubuntu", None).ok()
-            .or_else(|| genpdf::fonts::from_files("/usr/share/fonts/truetype/liberation", "LiberationSans", None).ok())
-            .or_else(|| genpdf::fonts::from_files("/usr/share/fonts/truetype/dejavu", "DejaVuSans", None).ok())
-            .or_else(|| genpdf::fonts::from_files("/usr/share/fonts/truetype/freefont", "FreeSans", None).ok())
-    };
+        let weight_sum: usize = TEAM_WEIGHTS.iter().sum();
+        let st = style::Style::new().with_font_size(FS_META);
+        for (time, detail, field) in &card.rows {
+            let lt = wrapped_line_count(context, &st, time, content_w * (TEAM_WEIGHTS[0] as f64 / weight_sum as f64));
+            let ld = wrapped_line_count(context, &st, detail, content_w * (TEAM_WEIGHTS[1] as f64 / weight_sum as f64));
+            let lf = wrapped_line_count(context, &st, field, content_w * (TEAM_WEIGHTS[2] as f64 / weight_sum as f64));
+            h += meta_lh * lt.max(ld).max(lf) as f64;
+        }
+    }
 
-    let font_family = font_family?;
+    h + base_lh * 2.0 // safety margin so an estimate miss never splits a card
+}
+
+/// A two-up grid of team cards that never splits a card across a page boundary.
+///
+/// Like [`RepeatingScheduleTable`], it owns its content as data and paginates
+/// during `render`: each pair of cards is measured against the remaining space
+/// and deferred whole to the next page if it would not fit.
+struct TeamGrid {
+    title: String,
+    cards: Vec<TeamCard>,
+    next: usize,
+    /// See [`RepeatingScheduleTable::deferred`].
+    deferred: bool,
+}
+
+impl Element for TeamGrid {
+    fn render(
+        &mut self,
+        context: &genpdf::Context,
+        mut area: genpdf::render::Area<'_>,
+        style: style::Style,
+    ) -> Result<genpdf::RenderResult, genpdf::error::Error> {
+        let mut result = genpdf::RenderResult::default();
+        if self.next >= self.cards.len() {
+            return Ok(result);
+        }
+        // Half the grid width, less the 4mm padding applied to each side of a card.
+        let content_w = area.size().width * 0.5 - genpdf::Mm::from(8u8);
+
+        // Keep the "Per-Team Schedule" title with the first row of cards.
+        if self.next == 0 {
+            let title_h = section_title_style().line_height(&context.font_cache)
+                + style.line_height(&context.font_cache) * 0.6;
+            let first_pair_h = card_height(context, content_w, &self.cards[0], style)
+                .max(self.cards.get(1).map_or(genpdf::Mm::from(0u8), |r| card_height(context, content_w, r, style)));
+            if !self.deferred && title_h + first_pair_h > area.size().height {
+                self.deferred = true;
+                result.has_more = true;
+                return Ok(result);
+            }
+            let mut title = elements::Paragraph::new(self.title.clone()).styled(section_title_style());
+            let title_result = title.render(context, area.clone(), style)?;
+            area.add_offset(genpdf::Position::new(0, title_result.size.height));
+            result.size = result.size.stack_vertical(title_result.size);
+            let mut brk = elements::Break::new(0.6);
+            let brk_result = brk.render(context, area.clone(), style)?;
+            area.add_offset(genpdf::Position::new(0, brk_result.size.height));
+            result.size = result.size.stack_vertical(brk_result.size);
+        }
+
+        let mut placed_any = false;
+        while self.next < self.cards.len() {
+            let left = &self.cards[self.next];
+            let right = self.cards.get(self.next + 1);
+            let pair_h = card_height(context, content_w, left, style)
+                .max(right.map_or(genpdf::Mm::from(0u8), |r| card_height(context, content_w, r, style)));
+            if pair_h > area.size().height && placed_any {
+                break;
+            }
+
+            let mut row_table = elements::TableLayout::new(vec![1, 1]);
+            let mut row = row_table.row();
+            row.push_element(build_team_card(left).padded(4));
+            match right {
+                Some(r) => row.push_element(build_team_card(r).padded(4)),
+                None => { row.push_element(elements::Paragraph::new("")); }
+            }
+            row.push().ok();
+
+            let row_result = row_table.render(context, area.clone(), style)?;
+            area.add_offset(genpdf::Position::new(0, row_result.size.height));
+            result.size = result.size.stack_vertical(row_result.size);
+            placed_any = true;
+            self.next += if right.is_some() { 2 } else { 1 };
+
+            // Gap between card rows.
+            let mut gap = elements::Break::new(0.6);
+            let gap_result = gap.render(context, area.clone(), style)?;
+            area.add_offset(genpdf::Position::new(0, gap_result.size.height));
+            result.size = result.size.stack_vertical(gap_result.size);
+        }
+
+        result.has_more = self.next < self.cards.len();
+        Ok(result)
+    }
+}
+
+fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title: &str, assignments: &[ScheduleAssignment], report_type: ReportType, time_12h: bool) -> Option<genpdf::Document> {
+    let font_family = load_embedded_font()?;
 
     let mut doc = genpdf::Document::new(font_family);
     doc.set_title(format!("Schedule: {}", title));
@@ -581,58 +1004,51 @@ fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title
     decorator.set_margins(15);
     doc.set_page_decorator(decorator);
 
-    // --- Header Section ---
-    let mut header_table = elements::TableLayout::new(vec![1, 1]);
+    // --- Masthead: competition + report title on the left, summary stats on
+    //     the right, closed by a heavy primary rule. ---
+    let mut header_table = elements::TableLayout::new(vec![2, 1]);
     let mut header_row = header_table.row();
 
     let mut left_header = elements::LinearLayout::vertical();
     left_header.push(elements::Paragraph::new(clean_text(&config.competition_name))
-        .styled(style::Style::new().bold().with_font_size(22).with_color(color_header)));
+        .styled(style::Style::new().bold().with_font_size(FS_TITLE).with_color(C_PRIMARY)));
     left_header.push(elements::Paragraph::new(clean_text(&title.replace('_', " ")))
-        .styled(style::Style::new().bold().with_font_size(16).with_color(color_accent)));
+        .styled(style::Style::new().bold().with_font_size(FS_SUBTITLE).with_color(C_ACCENT)));
     header_row.push_element(left_header);
 
-    let mut right_header = elements::LinearLayout::vertical();
     let total_matches = assignments.len();
-    let rounds: HashSet<_> = assignments.iter().map(|a| a.activity.round_index()).collect();
-    let total_rounds = rounds.len();
-    let fields: HashSet<_> = assignments.iter().filter_map(|a| a.field_id.as_ref()).collect();
-    let total_fields = fields.len();
+    let total_rounds = assignments.iter().map(|a| a.activity.round_index()).collect::<HashSet<_>>().len();
+    let total_fields = assignments.iter().filter_map(|a| a.field_id.as_ref()).collect::<HashSet<_>>().len();
 
-    right_header.push(elements::Paragraph::new(format!("{} rounds  {} fields  {} matches", total_rounds, total_fields, total_matches))
-        .aligned(genpdf::Alignment::Right)
-        .styled(style::Style::new().with_font_size(10).with_color(color_gray)));
+    let stat_style = style::Style::new().with_font_size(FS_META).with_color(C_MUTED);
+    let mut right_header = elements::LinearLayout::vertical();
+    for stat in [
+        format!("{} rounds", total_rounds),
+        format!("{} fields", total_fields),
+        format!("{} activities", total_matches),
+    ] {
+        right_header.push(elements::Paragraph::new(stat).aligned(genpdf::Alignment::Right).styled(stat_style));
+    }
     header_row.push_element(right_header);
     header_row.push().ok();
 
     doc.push(header_table);
-    doc.push(elements::Break::new(0.5));
-    doc.push(elements::Paragraph::new("________________________________________________________________________________")
-        .styled(style::Color::Rgb(226, 232, 240)));
+    doc.push(elements::Break::new(0.4));
+    doc.push(rule_element(C_PRIMARY, true));
     doc.push(elements::Break::new(1.0));
 
-    // --- Main Schedule Table ---
-    if !matches!(report_type, ReportType::Team) {
-        let comp_assigns: Vec<_> = assignments.iter().filter(|a| !matches!(a.activity, crate::model::Activity::Interview { .. })).collect();
-        let int_assigns: Vec<_> = assignments.iter().filter(|a| matches!(a.activity, crate::model::Activity::Interview { .. })).collect();
+    // --- Schedule tables: the chronological list of activities. For master and
+    //     division reports this is the full schedule; for a single team or
+    //     volunteer it is just their own games, which is the whole report. ---
+    let comp_assigns: Vec<_> = assignments.iter().filter(|a| !matches!(a.activity, crate::model::Activity::Interview { .. })).collect();
+    let int_assigns: Vec<_> = assignments.iter().filter(|a| matches!(a.activity, crate::model::Activity::Interview { .. })).collect();
 
-        render_schedule_section(&mut doc, config, "Competition Schedule", &comp_assigns, color_header, color_gray);
-        render_schedule_section(&mut doc, config, "Interview Schedule", &int_assigns, color_header, color_gray);
-    }
+    render_schedule_section(&mut doc, config, "Competition Schedule", &comp_assigns, time_12h);
+    render_schedule_section(&mut doc, config, "Interview Schedule", &int_assigns, time_12h);
 
-    // --- Per-Team Schedule Section ---
-    if matches!(report_type, ReportType::Master) || matches!(report_type, ReportType::Division) || matches!(report_type, ReportType::Team) {
-        if !matches!(report_type, ReportType::Team) {
-            doc.push(elements::Break::new(2.0));
-            doc.push(elements::Paragraph::new("Per-Team Schedule")
-                .styled(style::Style::new().bold().with_font_size(16).with_color(color_header)));
-            doc.push(elements::Break::new(1.0));
-        }
-
-        let teams_to_show: Vec<&Team> = if matches!(report_type, ReportType::Team) {
-            let team_names: HashSet<_> = assignments.iter().flat_map(|a| a.activity.teams()).collect();
-            config.teams.iter().filter(|t| team_names.contains(t.name.as_str())).collect()
-        } else if matches!(report_type, ReportType::Division) {
+    // --- Per-team grid: only for the broad master / division reports. ---
+    if matches!(report_type, ReportType::Master | ReportType::Division) {
+        let teams_to_show: Vec<&Team> = if matches!(report_type, ReportType::Division) {
             let div_id = assignments.first().map(|a| a.activity.division_id());
             config.teams.iter().filter(|t| Some(t.division_id.as_str()) == div_id).collect()
         } else {
@@ -642,76 +1058,22 @@ fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title
             teams
         };
 
-        let mut teams_iter = teams_to_show.into_iter().peekable();
-        while let Some(team1) = teams_iter.next() {
-            let team2 = teams_iter.next();
-
-            let mut row_table = elements::TableLayout::new(vec![1, 1]);
-            row_table.set_cell_decorator(TeamCardDecorator { color_border });
-            let mut row = row_table.row();
-
-            for team in [Some(team1), team2] {
-                if let Some(team) = team {
-                    let mut card = elements::LinearLayout::vertical();
-                    card.push(elements::Paragraph::new(clean_text(&team.name))
-                        .styled(style::Style::new().bold().with_font_size(11).with_color(color_header)));
-                    card.push(elements::Paragraph::new(clean_text(&team.organization))
-                        .styled(style::Style::new().with_font_size(9).with_color(color_gray)));
-                    card.push(elements::Break::new(0.5));
-
-                    let mut team_assigns: Vec<_> = assignments.iter()
-                        .filter(|a| a.activity.teams().contains(&team.name.as_str()))
-                        .collect();
-
-                    team_assigns.sort_by_key(|a| {
-                        let slot = config.time_slots.iter().find(|s| s.id == a.time_slot_id);
-                        slot.map(|s| (s.day.clone(), crate::gui::helpers::parse_time_to_minutes(&s.start_time)))
-                    });
-
-                    for assign in team_assigns {
-                        let slot = match config.time_slots.iter().find(|s| s.id == assign.time_slot_id) {
-                            Some(s) => s,
-                            None => continue,
-                        };
-                        let field_name = assign.field_id.as_ref()
-                            .and_then(|fid| config.fields.iter().find(|f| f.id == *fid))
-                            .map_or("—", |f| &f.name);
-
-                        let mut match_line = elements::TableLayout::new(vec![4, 10, 5]);
-                        let mut m_row = match_line.row();
-                        let time_str = format!("{} {}", day_abbr(&slot.day), slot.start_time);
-                        m_row.push_element(elements::Paragraph::new(time_str).styled(style::Style::new().bold().with_font_size(9)));
-
-                        let opponent = match &assign.activity {
-                            crate::model::Activity::Match { team_a, team_b, .. } => {
-                                let opp = if team_a == &team.name { team_b } else { team_a };
-                                format!("vs {}", clean_text(opp))
-                            }
-                            crate::model::Activity::Run { run_number, .. } => format!("Run #{}", run_number),
-                            crate::model::Activity::Interview { .. } => "Interview".to_string(),
-                        };
-                        m_row.push_element(elements::Paragraph::new(opponent).styled(style::Style::new().with_font_size(9)));
-                        m_row.push_element(elements::Paragraph::new(clean_text(field_name))
-                            .aligned(genpdf::Alignment::Right)
-                            .styled(style::Style::new().with_font_size(8).with_color(color_gray)));
-                        m_row.push().ok();
-                        card.push(match_line);
-                    }
-
-                    row.push_element(card.padded(5));
-                } else {
-                    row.push_element(elements::Paragraph::new(""));
-                }
-            }
-            row.push().ok();
-            doc.push(row_table);
-            doc.push(elements::Break::new(0.5));
+        let cards: Vec<TeamCard> = teams_to_show.iter()
+            .map(|team| prepare_team_card(config, team, assignments, time_12h))
+            .collect();
+        if !cards.is_empty() {
+            doc.push(elements::Break::new(1.0));
+            doc.push(TeamGrid { title: "Per-Team Schedule".to_string(), cards, next: 0, deferred: false });
         }
     }
 
-    doc.push(elements::Break::new(1.5));
-    doc.push(elements::Paragraph::new(format!("Generated on {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S")))
-        .styled(style::Style::new().with_font_size(8).with_color(style::Color::Rgb(148, 163, 184))));
+    // --- Footer ---
+    doc.push(elements::Break::new(1.0));
+    doc.push(rule_element(C_RULE, false));
+    doc.push(elements::Break::new(0.3));
+    doc.push(elements::Paragraph::new(format!("Generated {}", chrono::Local::now().format("%Y-%m-%d %H:%M")))
+        .aligned(genpdf::Alignment::Right)
+        .styled(style::Style::new().with_font_size(FS_FOOTER).with_color(C_FOOTER)));
 
     Some(doc)
 }
@@ -869,6 +1231,27 @@ fn day_abbr(day: &str) -> &str {
     day.get(..3).unwrap_or(day)
 }
 
+/// Formats a stored `"HH:MM"` time for export. With `twelve_hour` it becomes a
+/// 12-hour clock with an AM/PM suffix (e.g. `"14:30"` -> `"2:30 PM"`), which is
+/// clearer for young participants; otherwise the original 24-hour string is
+/// returned. Unparseable input is passed through unchanged.
+fn format_time_str(time: &str, twelve_hour: bool) -> String {
+    if !twelve_hour {
+        return time.to_string();
+    }
+    let parts: Vec<&str> = time.split(':').collect();
+    let (h, m) = match parts.as_slice() {
+        [h, m] => match (h.parse::<u32>(), m.parse::<u32>()) {
+            (Ok(h), Ok(m)) if h < 24 && m < 60 => (h, m),
+            _ => return time.to_string(),
+        },
+        _ => return time.to_string(),
+    };
+    let suffix = if h < 12 { "AM" } else { "PM" };
+    let h12 = match h % 12 { 0 => 12, x => x };
+    format!("{}:{:02} {}", h12, m, suffix)
+}
+
 fn split_csv_line(line: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut current = String::new();
@@ -891,4 +1274,20 @@ fn split_csv_line(line: &str) -> Vec<String> {
     }
     result.push(current);
     result
+}
+
+#[cfg(test)]
+mod time_fmt_test {
+    use super::*;
+    #[test]
+    fn twelve_hour_formatting() {
+        assert_eq!(format_time_str("09:00", false), "09:00");
+        assert_eq!(format_time_str("09:00", true), "9:00 AM");
+        assert_eq!(format_time_str("14:20", true), "2:20 PM");
+        assert_eq!(format_time_str("00:00", true), "12:00 AM");
+        assert_eq!(format_time_str("12:00", true), "12:00 PM");
+        assert_eq!(format_time_str("23:59", true), "11:59 PM");
+        assert_eq!(format_time_str("bogus", true), "bogus");
+        assert_eq!(format_time_str("25:00", true), "25:00");
+    }
 }

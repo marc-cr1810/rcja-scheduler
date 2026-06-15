@@ -1,0 +1,21 @@
+{
+  "name": "High Contrast",
+  "bg_base": "#000000",
+  "card_bg": "#0d0d0d",
+  "card_bg_alt": "#141414",
+  "surface": "#1a1a1a",
+  "row_stripe": "#1f1f1f",
+  "border": "#7a7a7a",
+  "text": "#ffffff",
+  "text_dim": "#f0f0f0",
+  "text_muted": "#c8c8c8",
+  "text_faint": "#a0a0a0",
+  "accent": "#ffd400",
+  "accent_mid": "#ffea00",
+  "accent_strong": "#caa800",
+  "accent_alt": "#00e5ff",
+  "on_accent": "#000000",
+  "success": "#00e676",
+  "warning": "#ffab00",
+  "danger": "#ff1744"
+}

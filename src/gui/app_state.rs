@@ -15,6 +15,56 @@ pub struct CsvImportData {
     pub selected_divisions: HashSet<String>,
 }
 
+/// Transient state for the volunteer availability range editor popup.
+///
+/// Availability is stored on the volunteer as a flat list of slot IDs; this
+/// editor lets the user think in terms of time ranges ("10:00–13:00") or
+/// "all day" instead, and the ranges are converted back to the slot IDs that
+/// fall fully within them when applied.
+pub struct AvailEditor {
+    pub vol_idx: usize,
+    pub day: String,
+    /// (start, end) as "HH:MM"; ignored while `all_day` is set.
+    pub ranges: Vec<(String, String)>,
+    pub all_day: bool,
+}
+
+/// What the user chose to produce in the export configuration modal.
+#[derive(Clone, Copy)]
+pub struct ExportOptions {
+    pub pdf: bool,
+    pub csv: bool,
+    pub master: bool,
+    pub divisions: bool,
+    pub teams: bool,
+    pub volunteers: bool,
+    /// Render times as 12-hour with AM/PM (clearer for young participants)
+    /// instead of 24-hour.
+    pub time_12h: bool,
+}
+
+impl Default for ExportOptions {
+    fn default() -> Self {
+        ExportOptions {
+            pdf: true,
+            csv: true,
+            master: true,
+            divisions: true,
+            teams: true,
+            volunteers: true,
+            time_12h: false,
+        }
+    }
+}
+
+impl ExportOptions {
+    /// At least one format and one report category must be selected for the
+    /// export to produce anything.
+    pub fn is_valid(&self) -> bool {
+        (self.pdf || self.csv) && (self.master || self.divisions || self.teams || self.volunteers)
+    }
+}
+
 pub struct AppState {
     pub current_file_path: Option<std::path::PathBuf>,
     pub config: TournamentConfig,
@@ -103,6 +153,8 @@ pub struct AppState {
     
     pub status_message: String,
     pub active_vol_day: String,
+    /// Open availability range editor, if any (volunteer + working range list).
+    pub vol_avail_editor: Option<AvailEditor>,
     pub schedule_view_tab: ScheduleViewTab,
     pub active_division_sub_tab: super::DivisionSubTab,
     pub active_volunteer_sub_tab: super::VolunteerSubTab,
@@ -117,6 +169,9 @@ pub struct AppState {
     pub is_exporting: bool,
     pub export_progress: f32,
     pub export_rx: Option<std::sync::mpsc::Receiver<super::ExportMessage>>,
+    // Export configuration modal
+    pub show_export_modal: bool,
+    pub export_options: ExportOptions,
 
     // Timeline View Settings
     pub timeline_zoom: f32,
@@ -129,6 +184,9 @@ pub struct AppState {
     pub vol_roster_show_only_conflicts: bool,
 
     pub active_substitution: Option<usize>, // Index of assignment in schedule
+
+    /// Display name of the currently selected colour theme.
+    pub active_theme_name: String,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -222,6 +280,7 @@ impl Default for AppState {
             solver_cancel_flag: None,
             status_message: String::new(),
             active_vol_day: String::new(),
+            vol_avail_editor: None,
             schedule_view_tab: ScheduleViewTab::AllGames,
             active_division_sub_tab: super::DivisionSubTab::Rounds,
             active_volunteer_sub_tab: super::VolunteerSubTab::Availability,
@@ -232,6 +291,8 @@ impl Default for AppState {
             is_exporting: false,
             export_progress: 0.0,
             export_rx: None,
+            show_export_modal: false,
+            export_options: ExportOptions::default(),
             timeline_zoom: 3.5,
             timeline_filter_divisions: HashSet::new(),
             timeline_filter_field_kinds: [crate::model::FieldKind::Competition, crate::model::FieldKind::Interview].into_iter().collect(),
@@ -241,6 +302,8 @@ impl Default for AppState {
             vol_roster_show_only_conflicts: false,
 
             active_substitution: None,
+            // Load any themes/*.json files and activate the first theme.
+            active_theme_name: super::theme::init(),
         };
 
         state.update_diagnostics();

@@ -1,0 +1,17 @@
+{
+  "name": "Midnight Blue",
+  "bg_base": "#0b1220",
+  "card_bg": "#131c2e",
+  "card_bg_alt": "#0f1828",
+  "surface": "#1b2740",
+  "row_stripe": "#16213a",
+  "border": "#2a3a5a",
+  "accent": "#38bdf8",
+  "accent_mid": "#0ea5e9",
+  "accent_strong": "#0284c7",
+  "accent_alt": "#22d3ee",
+  "division_palette": [
+    "#38bdf8", "#34d399", "#fbbf24", "#fb7185",
+    "#a78bfa", "#f97316", "#2dd4bf", "#f472b6"
+  ]
+}

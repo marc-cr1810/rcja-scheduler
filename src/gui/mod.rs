@@ -15,7 +15,7 @@ use crate::scheduler::SolverParams;
 use eframe::egui::{self, Color32, RichText};
 
 pub(crate) use helpers::setup_custom_style;
-pub use app_state::{AppState, VolRosterSort};
+pub use app_state::{AppState, AvailEditor, VolRosterSort};
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Tab {
@@ -74,18 +74,18 @@ pub enum ExportMessage {
 /// Pick a status colour for the solver readout in the bottom bar.
 fn solver_status_color(status: &str, solving: bool) -> Color32 {
     if solving {
-        return theme::ACCENT;
+        return theme::accent();
     }
     let s = status.to_ascii_lowercase();
     let unresolved_conflicts = s.contains("conflict") && !s.contains("no conflict");
     if s.contains("fail") || s.contains("error") {
-        theme::DANGER
+        theme::danger()
     } else if s.contains("cancel") || unresolved_conflicts {
-        theme::WARNING
+        theme::warning()
     } else if s.contains("solved") || s.contains("no conflict") {
-        theme::SUCCESS
+        theme::success()
     } else {
-        theme::TEXT_FAINT
+        theme::text_faint()
     }
 }
 
@@ -100,17 +100,21 @@ impl eframe::App for AppState {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.heading(RichText::new("RoboCup Jr Australia Coordinator Workspace").strong().color(theme::ACCENT));
+                        ui.heading(RichText::new("RoboCup Jr Australia Coordinator Workspace").strong().color(theme::accent()));
                         let subtitle = if let Some(path) = &self.current_file_path {
                             format!("Per-Competition Workspace & Schedule Solver - {}", path.display())
                         } else {
                             "Per-Competition Workspace & Schedule Solver - Unsaved".to_string()
                         };
-                        ui.label(RichText::new(subtitle).size(11.0).color(theme::TEXT_MUTED));
+                        ui.label(RichText::new(subtitle).size(11.0).color(theme::text_muted()));
                     });
                     
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("⚡ Load Demo Data").clicked() {
+                        let demo_resp = ui.button("⚡ Load Demo Data");
+                        // The buttons' vertical band, used to align the theme combo
+                        // (which egui won't vertically centre on its own).
+                        let btn_band = demo_resp.rect.y_range();
+                        if demo_resp.clicked() {
                             self.load_demo_data();
                         }
                         if ui.button("📥 Load Config").clicked() {
@@ -124,13 +128,60 @@ impl eframe::App for AppState {
                         }
                         if self.schedule.is_some() {
                             ui.separator();
-                            let export_btn = egui::Button::new("📤 Full Export (CSV & PDF)");
+                            let export_btn = egui::Button::new("📤 Export...");
                             if ui.add_enabled(!self.is_exporting, export_btn).clicked() {
-                                self.export_full_tournament();
+                                self.show_export_modal = true;
                             }
                             if ui.button("📊 Export Master CSV").clicked() {
                                 self.export_to_csv();
                             }
+                        }
+
+                        // ── Live theme switcher ──
+                        ui.separator();
+                        let mut chosen: Option<String> = None;
+                        let mut reload = false;
+                        // egui's ComboBox anchors its content to the *top* of the
+                        // available vertical space instead of honouring the row's
+                        // centring, so in this tall header row it drifts below the
+                        // buttons. Place it explicitly in the buttons' vertical band
+                        // (right edge at the current cursor, like a normal item).
+                        let right_x = ui.cursor().max.x;
+                        // ComboBox renders with an intrinsic downward bias of
+                        // (button_height - interact_size.y)/2 within a given rect, so
+                        // shift the target band up by that to land on the buttons.
+                        let nudge = (btn_band.span() - ui.spacing().interact_size.y) / 2.0;
+                        let combo_rect = egui::Rect::from_min_max(
+                            egui::pos2(right_x - 180.0, btn_band.min - nudge),
+                            egui::pos2(right_x, btn_band.max - nudge),
+                        );
+                        ui.allocate_ui_at_rect(combo_rect, |ui| {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                egui::ComboBox::from_id_source("theme_picker")
+                                    .selected_text(format!("🎨 {}", self.active_theme_name))
+                                    .show_ui(ui, |ui| {
+                                        for name in theme::names() {
+                                            if ui.selectable_label(self.active_theme_name == name, &name).clicked() {
+                                                chosen = Some(name);
+                                            }
+                                        }
+                                        ui.separator();
+                                        if ui.button("🔄 Reload from disk")
+                                            .on_hover_text("Re-scan the themes/ folder for *.json files")
+                                            .clicked()
+                                        {
+                                            reload = true;
+                                        }
+                                    });
+                            });
+                        });
+                        if reload {
+                            self.active_theme_name = theme::reload(&self.active_theme_name);
+                            setup_custom_style(ui.ctx());
+                        } else if let Some(name) = chosen {
+                            theme::activate_by_name(&name);
+                            self.active_theme_name = name;
+                            setup_custom_style(ui.ctx());
                         }
                     });
                 });
@@ -138,12 +189,12 @@ impl eframe::App for AppState {
                 if self.is_exporting {
                     ui.add_space(6.0);
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(30, 41, 59))
+                        .fill(theme::card_bg())
                         .rounding(4.0)
                         .inner_margin(6.0)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("📄 Generating tournament documents...").strong().color(theme::ACCENT));
+                                ui.label(RichText::new("📄 Generating tournament documents...").strong().color(theme::accent()));
                                 ui.add(egui::ProgressBar::new(self.export_progress)
                                     .show_percentage()
                                     .animate(true)
@@ -158,8 +209,8 @@ impl eframe::App for AppState {
         // BOTTOM PANEL
         egui::TopBottomPanel::bottom("status_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Status: ").color(theme::TEXT_FAINT));
-                ui.label(RichText::new(&self.status_message).strong().color(theme::TEXT));
+                ui.label(RichText::new("Status: ").color(theme::text_faint()));
+                ui.label(RichText::new(&self.status_message).strong().color(theme::text()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Colour the solver readout (and a leading dot) by state so it
                     // is glanceable: running → accent, clean solve → green,
@@ -176,7 +227,7 @@ impl eframe::App for AppState {
         // SIDE PANEL
         egui::SidePanel::left("navigation_panel").width_range(210.0..=240.0).show(ctx, |ui| {
             ui.add_space(10.0);
-            ui.label(RichText::new("WORKSPACE PANELS").size(10.0).color(theme::TEXT_FAINT).strong());
+            ui.label(RichText::new("WORKSPACE PANELS").size(10.0).color(theme::text_faint()).strong());
             ui.add_space(5.0);
 
             let tab_buttons = vec![
@@ -191,10 +242,10 @@ impl eframe::App for AppState {
 
             for (tab, label) in tab_buttons {
                 let is_active = self.active_tab == tab;
-                let text_color = if is_active { Color32::WHITE } else { theme::TEXT_MUTED };
+                let text_color = if is_active { theme::on_accent() } else { theme::text_muted() };
 
                 let button = egui::Button::new(RichText::new(label).color(text_color).strong())
-                    .fill(if is_active { theme::ACCENT_STRONG } else { Color32::TRANSPARENT })
+                    .fill(if is_active { theme::accent_strong() } else { Color32::TRANSPARENT })
                     .rounding(egui::Rounding::same(6.0))
                     .min_size(egui::vec2(180.0, 32.0));
 
@@ -204,10 +255,13 @@ impl eframe::App for AppState {
                     // inactive (transparent) tab gets no hover feedback on its
                     // own — paint a faint highlight over it on hover.
                     if resp.hovered() && !is_active {
+                        // Faint tint in the theme's text colour: lightens dark
+                        // themes, darkens light ones.
+                        let t = theme::text();
                         ui.painter().rect_filled(
                             resp.rect,
                             egui::Rounding::same(6.0),
-                            Color32::from_rgba_unmultiplied(255, 255, 255, 14),
+                            Color32::from_rgba_unmultiplied(t.r(), t.g(), t.b(), 14),
                         );
                     }
                     if resp.clicked() {
@@ -222,9 +276,9 @@ impl eframe::App for AppState {
                         
                         if error_count > 0 || warn_count > 0 {
                             let (color, text_color, count) = if error_count > 0 {
-                                (theme::DANGER_BORDER, Color32::WHITE, error_count)
+                                (theme::danger_border(), theme::on_accent(), error_count)
                             } else {
-                                (theme::WARNING, Color32::BLACK, warn_count)
+                                (theme::warning(), theme::contrast_text(theme::warning()), warn_count)
                             };
 
                             let badge_size = 18.0;
@@ -265,10 +319,84 @@ impl eframe::App for AppState {
                 }
             });
         });
+
+        self.draw_export_modal(ctx);
     }
 }
 
 impl AppState {
+    fn draw_export_modal(&mut self, ctx: &egui::Context) {
+        if !self.show_export_modal {
+            return;
+        }
+
+        let mut open = true;
+        let mut start_export = false;
+        let mut cancel = false;
+
+        egui::Window::new("📤 Configure Export")
+            .collapsible(false)
+            .resizable(false)
+            .default_width(360.0)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .open(&mut open)
+            .show(ctx, |ui| {
+                let opts = &mut self.export_options;
+
+                ui.label(RichText::new("Formats").strong().color(theme::accent()));
+                ui.add_space(2.0);
+                ui.checkbox(&mut opts.pdf, "📄 PDF documents");
+                ui.checkbox(&mut opts.csv, "📊 CSV spreadsheets");
+
+                ui.add_space(8.0);
+                ui.label(RichText::new("Reports").strong().color(theme::accent()));
+                ui.add_space(2.0);
+                ui.checkbox(&mut opts.master, "🗂 Master schedule");
+                ui.checkbox(&mut opts.divisions, "🏆 Per-division schedules");
+                ui.checkbox(&mut opts.teams, "👥 Per-team schedules");
+                ui.checkbox(&mut opts.volunteers, "👤 Per-volunteer schedules");
+
+                ui.add_space(8.0);
+                ui.label(RichText::new("Time format").strong().color(theme::accent()));
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut opts.time_12h, false, "24-hour (14:30)");
+                    ui.selectable_value(&mut opts.time_12h, true, "12-hour (2:30 PM)");
+                });
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                let valid = opts.is_valid();
+                if !valid {
+                    ui.label(RichText::new("Select at least one format and one report.")
+                        .size(11.0).color(theme::warning()));
+                    ui.add_space(4.0);
+                }
+
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(valid, egui::Button::new(RichText::new("📤 Export").strong()))
+                        .clicked()
+                    {
+                        start_export = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+
+        // The window's [X] (`open`) or the Cancel button both just close it.
+        if !open || cancel {
+            self.show_export_modal = false;
+        }
+        if start_export {
+            self.show_export_modal = false;
+            self.export_full_tournament();
+        }
+    }
+
     fn handle_export_messages(&mut self, ctx: &egui::Context) {
         if let Some(ref rx) = self.export_rx {
             while let Ok(msg) = rx.try_recv() {
