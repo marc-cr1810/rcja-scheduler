@@ -15,6 +15,20 @@ pub struct CsvImportData {
     pub selected_divisions: HashSet<String>,
 }
 
+/// Transient state for the volunteer availability range editor popup.
+///
+/// Availability is stored on the volunteer as a flat list of slot IDs; this
+/// editor lets the user think in terms of time ranges ("10:00–13:00") or
+/// "all day" instead, and the ranges are converted back to the slot IDs that
+/// fall fully within them when applied.
+pub struct AvailEditor {
+    pub vol_idx: usize,
+    pub day: String,
+    /// (start, end) as "HH:MM"; ignored while `all_day` is set.
+    pub ranges: Vec<(String, String)>,
+    pub all_day: bool,
+}
+
 /// What the user chose to produce in the export configuration modal.
 #[derive(Clone, Copy)]
 pub struct ExportOptions {
@@ -139,6 +153,8 @@ pub struct AppState {
     
     pub status_message: String,
     pub active_vol_day: String,
+    /// Open availability range editor, if any (volunteer + working range list).
+    pub vol_avail_editor: Option<AvailEditor>,
     pub schedule_view_tab: ScheduleViewTab,
     pub active_division_sub_tab: super::DivisionSubTab,
     pub active_volunteer_sub_tab: super::VolunteerSubTab,
@@ -264,6 +280,7 @@ impl Default for AppState {
             solver_cancel_flag: None,
             status_message: String::new(),
             active_vol_day: String::new(),
+            vol_avail_editor: None,
             schedule_view_tab: ScheduleViewTab::AllGames,
             active_division_sub_tab: super::DivisionSubTab::Rounds,
             active_volunteer_sub_tab: super::VolunteerSubTab::Availability,
