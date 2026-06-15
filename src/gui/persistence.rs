@@ -5,11 +5,12 @@ use crate::model::{Team, ScheduleAssignment};
 use super::{AppState, ExportMessage};
 use genpdf::{elements, style, Element};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum ReportType {
     Master,
     Division,
     Team,
+    Volunteer,
 }
 
 impl AppState {
@@ -269,17 +270,22 @@ impl AppState {
                 // Subdirectories within format folders
                 let csv_div = csv_root.join("Divisions");
                 let csv_team = csv_root.join("Teams");
+                let csv_vol = csv_root.join("Volunteers");
                 let pdf_div = pdf_root.join("Divisions");
                 let pdf_team = pdf_root.join("Teams");
-                
+                let pdf_vol = pdf_root.join("Volunteers");
+
                 let _ = fs::create_dir_all(&csv_div);
                 let _ = fs::create_dir_all(&csv_team);
+                let _ = fs::create_dir_all(&csv_vol);
                 let _ = fs::create_dir_all(&pdf_div);
                 let _ = fs::create_dir_all(&pdf_team);
+                let _ = fs::create_dir_all(&pdf_vol);
 
                 let divisions = config.divisions.clone();
                 let teams = config.teams.clone();
-                let total_steps = 1 + divisions.len() + teams.len();
+                let volunteers = config.volunteers.clone();
+                let total_steps = 1 + divisions.len() + teams.len() + volunteers.len();
                 let mut current_step = 0;
 
                 let writer = ExportWriter {
@@ -314,6 +320,20 @@ impl AppState {
                     if !team_assigns.is_empty() {
                         let team_safe_name = clean_filename(&team.name);
                         writer.write_export_files(&csv_team, &pdf_team, &team_safe_name, &team_assigns, ReportType::Team);
+                    }
+                    current_step += 1;
+                    let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
+                }
+
+                // 4. Volunteer Schedules
+                for vol in &volunteers {
+                    let vol_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
+                        .filter(|a| a.volunteer_ids.contains(&vol.id))
+                        .cloned()
+                        .collect();
+                    if !vol_assigns.is_empty() {
+                        let vol_safe_name = clean_filename(&vol.name);
+                        writer.write_export_files(&csv_vol, &pdf_vol, &vol_safe_name, &vol_assigns, ReportType::Volunteer);
                     }
                     current_step += 1;
                     let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
@@ -561,8 +581,16 @@ struct ScheduleRow {
 /// `render` with a new full-page area whenever `has_more` is set, so the header
 /// reappears and the remaining rows continue cleanly on the next page.
 struct RepeatingScheduleTable {
+    title: String,
     rows: Vec<ScheduleRow>,
     next: usize,
+    /// Set once the section has been deferred to a fresh page, so we never defer
+    /// twice in a row (which could loop forever on a section taller than a page).
+    deferred: bool,
+}
+
+fn section_title_style() -> style::Style {
+    style::Style::new().bold().with_font_size(FS_SECTION).with_color(C_PRIMARY)
 }
 
 impl RepeatingScheduleTable {
@@ -640,6 +668,30 @@ impl Element for RepeatingScheduleTable {
             return Ok(result);
         }
 
+        // Keep the section title with the column header and first row: if they
+        // won't fit together, defer the whole section to a fresh page so the
+        // title is never stranded alone at the bottom of the previous page.
+        if self.next == 0 {
+            let title_h = section_title_style().line_height(&context.font_cache)
+                + style.line_height(&context.font_cache) * 0.4 // the 0.4 break below the title
+                + genpdf::Mm::from(PAD) * 2.0; // header padding
+            let header_h = style::Style::new().bold().with_font_size(FS_TH).line_height(&context.font_cache);
+            let first_row_h = Self::row_height(context, area.size().width, &self.rows[0]);
+            if !self.deferred && title_h + header_h + first_row_h > area.size().height {
+                self.deferred = true;
+                result.has_more = true;
+                return Ok(result);
+            }
+            let mut title = elements::Paragraph::new(self.title.clone()).styled(section_title_style());
+            let title_result = title.render(context, area.clone(), style)?;
+            area.add_offset(genpdf::Position::new(0, title_result.size.height));
+            result.size = result.size.stack_vertical(title_result.size);
+            let mut brk = elements::Break::new(0.4);
+            let brk_result = brk.render(context, area.clone(), style)?;
+            area.add_offset(genpdf::Position::new(0, brk_result.size.height));
+            result.size = result.size.stack_vertical(brk_result.size);
+        }
+
         let mut header = Self::build_header();
         let header_result = header.render(context, area.clone(), style)?;
         area.add_offset(genpdf::Position::new(0, header_result.size.height));
@@ -672,13 +724,10 @@ impl Element for RepeatingScheduleTable {
 fn render_schedule_section(doc: &mut genpdf::Document, config: &crate::model::TournamentConfig, section_title: &str, assignments: &[&ScheduleAssignment]) {
     if assignments.is_empty() { return; }
 
-    doc.push(elements::Paragraph::new(section_title)
-        .styled(style::Style::new().bold().with_font_size(FS_SECTION).with_color(C_PRIMARY)));
-    doc.push(elements::Break::new(0.4));
-
     // One row per assignment, sorted by day / time / field. Rows are collected
     // as data so RepeatingScheduleTable can keep each row whole across page
-    // breaks and repeat the column header on every page.
+    // breaks, repeat the column header on every page, and keep the section title
+    // attached to the first row.
     let mut sorted: Vec<&ScheduleAssignment> = assignments.to_vec();
     sorted.sort_by_key(|a| {
         let slot = config.time_slots.iter().find(|s| s.id == a.time_slot_id);
@@ -715,7 +764,7 @@ fn render_schedule_section(doc: &mut genpdf::Document, config: &crate::model::To
         });
     }
 
-    doc.push(RepeatingScheduleTable { rows, next: 0 });
+    doc.push(RepeatingScheduleTable { title: section_title.to_string(), rows, next: 0, deferred: false });
     doc.push(elements::Break::new(1.0));
 }
 
@@ -840,8 +889,11 @@ fn card_height(context: &genpdf::Context, content_w: genpdf::Mm, card: &TeamCard
 /// during `render`: each pair of cards is measured against the remaining space
 /// and deferred whole to the next page if it would not fit.
 struct TeamGrid {
+    title: String,
     cards: Vec<TeamCard>,
     next: usize,
+    /// See [`RepeatingScheduleTable::deferred`].
+    deferred: bool,
 }
 
 impl Element for TeamGrid {
@@ -852,8 +904,32 @@ impl Element for TeamGrid {
         style: style::Style,
     ) -> Result<genpdf::RenderResult, genpdf::error::Error> {
         let mut result = genpdf::RenderResult::default();
+        if self.next >= self.cards.len() {
+            return Ok(result);
+        }
         // Half the grid width, less the 4mm padding applied to each side of a card.
         let content_w = area.size().width * 0.5 - genpdf::Mm::from(8u8);
+
+        // Keep the "Per-Team Schedule" title with the first row of cards.
+        if self.next == 0 {
+            let title_h = section_title_style().line_height(&context.font_cache)
+                + style.line_height(&context.font_cache) * 0.6;
+            let first_pair_h = card_height(context, content_w, &self.cards[0], style)
+                .max(self.cards.get(1).map_or(genpdf::Mm::from(0u8), |r| card_height(context, content_w, r, style)));
+            if !self.deferred && title_h + first_pair_h > area.size().height {
+                self.deferred = true;
+                result.has_more = true;
+                return Ok(result);
+            }
+            let mut title = elements::Paragraph::new(self.title.clone()).styled(section_title_style());
+            let title_result = title.render(context, area.clone(), style)?;
+            area.add_offset(genpdf::Position::new(0, title_result.size.height));
+            result.size = result.size.stack_vertical(title_result.size);
+            let mut brk = elements::Break::new(0.6);
+            let brk_result = brk.render(context, area.clone(), style)?;
+            area.add_offset(genpdf::Position::new(0, brk_result.size.height));
+            result.size = result.size.stack_vertical(brk_result.size);
+        }
 
         let mut placed_any = false;
         while self.next < self.cards.len() {
@@ -935,40 +1011,35 @@ fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title
     doc.push(rule_element(C_PRIMARY, true));
     doc.push(elements::Break::new(1.0));
 
-    // --- Schedule tables (master / division reports) ---
-    if !matches!(report_type, ReportType::Team) {
-        let comp_assigns: Vec<_> = assignments.iter().filter(|a| !matches!(a.activity, crate::model::Activity::Interview { .. })).collect();
-        let int_assigns: Vec<_> = assignments.iter().filter(|a| matches!(a.activity, crate::model::Activity::Interview { .. })).collect();
+    // --- Schedule tables: the chronological list of activities. For master and
+    //     division reports this is the full schedule; for a single team or
+    //     volunteer it is just their own games, which is the whole report. ---
+    let comp_assigns: Vec<_> = assignments.iter().filter(|a| !matches!(a.activity, crate::model::Activity::Interview { .. })).collect();
+    let int_assigns: Vec<_> = assignments.iter().filter(|a| matches!(a.activity, crate::model::Activity::Interview { .. })).collect();
 
-        render_schedule_section(&mut doc, config, "Competition Schedule", &comp_assigns);
-        render_schedule_section(&mut doc, config, "Interview Schedule", &int_assigns);
+    render_schedule_section(&mut doc, config, "Competition Schedule", &comp_assigns);
+    render_schedule_section(&mut doc, config, "Interview Schedule", &int_assigns);
+
+    // --- Per-team grid: only for the broad master / division reports. ---
+    if matches!(report_type, ReportType::Master | ReportType::Division) {
+        let teams_to_show: Vec<&Team> = if matches!(report_type, ReportType::Division) {
+            let div_id = assignments.first().map(|a| a.activity.division_id());
+            config.teams.iter().filter(|t| Some(t.division_id.as_str()) == div_id).collect()
+        } else {
+            let team_names: HashSet<_> = assignments.iter().flat_map(|a| a.activity.teams()).collect();
+            let mut teams: Vec<_> = config.teams.iter().filter(|t| team_names.contains(t.name.as_str())).collect();
+            teams.sort_by_key(|t| &t.name);
+            teams
+        };
+
+        let cards: Vec<TeamCard> = teams_to_show.iter()
+            .map(|team| prepare_team_card(config, team, assignments))
+            .collect();
+        if !cards.is_empty() {
+            doc.push(elements::Break::new(1.0));
+            doc.push(TeamGrid { title: "Per-Team Schedule".to_string(), cards, next: 0, deferred: false });
+        }
     }
-
-    // --- Per-team schedules: a two-up grid of self-contained cards. ---
-    if !matches!(report_type, ReportType::Team) {
-        doc.push(elements::Break::new(1.0));
-        doc.push(elements::Paragraph::new("Per-Team Schedule")
-            .styled(style::Style::new().bold().with_font_size(FS_SECTION).with_color(C_PRIMARY)));
-        doc.push(elements::Break::new(0.6));
-    }
-
-    let teams_to_show: Vec<&Team> = if matches!(report_type, ReportType::Team) {
-        let team_names: HashSet<_> = assignments.iter().flat_map(|a| a.activity.teams()).collect();
-        config.teams.iter().filter(|t| team_names.contains(t.name.as_str())).collect()
-    } else if matches!(report_type, ReportType::Division) {
-        let div_id = assignments.first().map(|a| a.activity.division_id());
-        config.teams.iter().filter(|t| Some(t.division_id.as_str()) == div_id).collect()
-    } else {
-        let team_names: HashSet<_> = assignments.iter().flat_map(|a| a.activity.teams()).collect();
-        let mut teams: Vec<_> = config.teams.iter().filter(|t| team_names.contains(t.name.as_str())).collect();
-        teams.sort_by_key(|t| &t.name);
-        teams
-    };
-
-    let cards: Vec<TeamCard> = teams_to_show.iter()
-        .map(|team| prepare_team_card(config, team, assignments))
-        .collect();
-    doc.push(TeamGrid { cards, next: 0 });
 
     // --- Footer ---
     doc.push(elements::Break::new(1.0));
