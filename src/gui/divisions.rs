@@ -3,7 +3,7 @@ use crate::gui::theme;
 use crate::model::{Division, SchedulingMode, FinalsRounds};
 use crate::scheduler::sanitize_name;
 use crate::gui::helpers::draw_card;
-use eframe::egui::{self, Color32, RichText, Stroke};
+use eframe::egui::{self, RichText, Stroke};
 
 impl AppState {
     pub(super) fn draw_divisions(&mut self, ui: &mut egui::Ui) {
@@ -154,7 +154,7 @@ impl AppState {
                     }
 
                     ui.add_space(8.0);
-                    if ui.button(RichText::new("+ Create Division").strong().color(Color32::WHITE)).clicked()
+                    if ui.button(RichText::new("+ Create Division").strong().color(theme::text())).clicked()
                         && !self.new_div_name.trim().is_empty() {
                             let existing_ids: Vec<String> = self.config.divisions.iter().map(|d| d.id.clone()).collect();
                             let id = crate::scheduler::unique_id(&sanitize_name(&self.new_div_name), &existing_ids);
@@ -235,9 +235,9 @@ impl AppState {
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(icon).strong().size(15.0).color(Color32::WHITE));
+                            ui.label(RichText::new(icon).strong().size(15.0).color(theme::text()));
                             ui.vertical(|ui| {
-                                ui.label(RichText::new(&div.name).strong().size(14.0).color(Color32::WHITE));
+                                ui.label(RichText::new(&div.name).strong().size(14.0).color(theme::text()));
                                 ui.label(RichText::new(format!("ID: {}", div.id)).size(10.0).color(theme::text_faint()));
                             });
                             

@@ -23,7 +23,7 @@ impl AppState {
                 .inner_margin(12.0)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("❌ CONFIGURATION ERRORS:").strong().color(Color32::WHITE));
+                        ui.label(RichText::new("❌ CONFIGURATION ERRORS:").strong().color(theme::on_accent()));
                         ui.label(RichText::new(format!("There are {} critical configuration errors that must be fixed before a schedule can be generated.", config_error_count)).color(Color32::from_rgb(254, 202, 202)));
                         if ui.button("View Errors").clicked() {
                             self.active_tab = Tab::Dashboard;
@@ -65,7 +65,7 @@ impl AppState {
 
                     let can_solve = !is_solving && config_error_count == 0;
                     let solve_button_text = if is_solving { "⏳ Solving..." } else { "⚙ Generate Schedule" };
-                    let solve_button = egui::Button::new(RichText::new(solve_button_text).strong().color(Color32::WHITE))
+                    let solve_button = egui::Button::new(RichText::new(solve_button_text).strong().color(theme::on_accent()))
                         .fill(if can_solve { theme::accent_strong() } else { theme::border() })
                         .rounding(6.0)
                         .min_size(egui::vec2(150.0, 35.0));
@@ -76,7 +76,7 @@ impl AppState {
 
                     if is_solving {
                         ui.add_space(8.0);
-                        let stop_button = egui::Button::new(RichText::new("⏹ Stop Solving").strong().color(Color32::WHITE))
+                        let stop_button = egui::Button::new(RichText::new("⏹ Stop Solving").strong().color(theme::on_accent()))
                             .fill(Color32::from_rgb(185, 28, 28)) // Red-700
                             .rounding(6.0)
                             .min_size(egui::vec2(120.0, 35.0));
@@ -95,7 +95,7 @@ impl AppState {
                         ui.add(egui::ProgressBar::new(self.solve_progress)
                             .show_percentage()
                             .animate(true)
-                            .text(RichText::new(&self.solve_message).strong().color(Color32::WHITE))
+                            .text(RichText::new(&self.solve_message).strong().color(theme::on_accent()))
                             .desired_width(ui.available_width() - 20.0));
                     });
                 }
@@ -137,9 +137,9 @@ impl AppState {
                         let is_active = self.solver_fairness_mode == *mode;
                         let (bg, text_col) = if is_active {
                             match mode {
-                                FairnessMode::Off => (theme::border(), Color32::WHITE),
-                                FairnessMode::Balanced => (theme::success_border(), Color32::WHITE),
-                                FairnessMode::Strict => (Color32::from_rgb(234, 88, 12), Color32::WHITE),
+                                FairnessMode::Off => (theme::border(), theme::on_accent()),
+                                FairnessMode::Balanced => (theme::success_border(), theme::on_accent()),
+                                FairnessMode::Strict => (Color32::from_rgb(234, 88, 12), theme::on_accent()),
                             }
                         } else {
                             (*bg_inactive, *text_inactive)
@@ -235,9 +235,9 @@ impl AppState {
                         let is_active = self.solver_vol_specialist_mode == *mode;
                         let (bg, text_col) = if is_active {
                             match mode {
-                                SpecialistMode::Off => (theme::border(), Color32::WHITE),
-                                SpecialistMode::Balanced => (Color32::from_rgb(37, 99, 235), Color32::WHITE),
-                                SpecialistMode::Strict => (Color32::from_rgb(126, 34, 206), Color32::WHITE),
+                                SpecialistMode::Off => (theme::border(), theme::on_accent()),
+                                SpecialistMode::Balanced => (Color32::from_rgb(37, 99, 235), theme::on_accent()),
+                                SpecialistMode::Strict => (Color32::from_rgb(126, 34, 206), theme::on_accent()),
                             }
                         } else {
                             (*bg_inactive, *text_inactive)
@@ -539,7 +539,7 @@ impl AppState {
                 
                 let lock_label = if self.schedule_locked { "🔒 Schedule Locked" } else { "🔓 Schedule Unlocked (Edit Mode)" };
                 let lock_color = if self.schedule_locked { theme::text_faint() } else { Color32::from_rgb(251, 146, 60) };
-                let lock_btn = egui::Button::new(RichText::new(lock_label).strong().color(Color32::WHITE))
+                let lock_btn = egui::Button::new(RichText::new(lock_label).strong().color(theme::on_accent()))
                     .fill(lock_color)
                     .rounding(6.0)
                     .min_size(egui::vec2(200.0, 28.0));
@@ -583,7 +583,7 @@ impl AppState {
                         let all_btn = egui::Button::new(
                             RichText::new("📅 All Games")
                                 .strong()
-                                .color(if is_all { Color32::WHITE } else { theme::text_muted() })
+                                .color(if is_all { theme::on_accent() } else { theme::text_muted() })
                         )
                         .fill(if is_all { theme::accent_strong() } else { Color32::TRANSPARENT })
                         .rounding(6.0)
@@ -607,7 +607,7 @@ impl AppState {
                             let tab_btn = egui::Button::new(
                                 RichText::new(format!("🏟 {}", div_name))
                                     .strong()
-                                    .color(if is_active { Color32::WHITE } else { theme::text_muted() })
+                                    .color(if is_active { theme::on_accent() } else { theme::text_muted() })
                             )
                             .fill(if is_active {
                                 Color32::from_rgba_unmultiplied(border_col.r(), border_col.g(), border_col.b(), 60)
@@ -733,7 +733,7 @@ impl AppState {
 
             // ── Bulk Roster Tools ──
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Bulk Tools:").strong().color(Color32::WHITE));
+                ui.label(RichText::new("Bulk Tools:").strong().color(theme::text()));
                 if ui.button("📋 Copy Names").on_hover_text("Copy all volunteer names to clipboard (one per line)").clicked() {
                     let mut names: Vec<_> = self.config.volunteers.iter().map(|v| v.name.as_str()).collect();
                     names.sort();
@@ -771,7 +771,7 @@ impl AppState {
 
             for (vol, vol_assign_indices, has_conflict) in vol_data {
                 let header_text = format!("👤 {} ({} shifts)", vol.name, vol_assign_indices.len());
-                let mut header_color = if has_conflict { theme::danger() } else { Color32::WHITE };
+                let mut header_color = if has_conflict { theme::danger() } else { theme::text() };
                 
                 if vol.attendance_status.values().any(|s| matches!(s, AttendanceStatus::NoShow)) {
                     header_color = Color32::from_rgb(185, 28, 28);
@@ -857,7 +857,7 @@ impl AppState {
                         let (btn_text, btn_color, btn_text_color) = match status {
                             AttendanceStatus::Pending => ("⏳", theme::warning(), Color32::BLACK),
                             AttendanceStatus::CheckedIn => ("✅", theme::success(), Color32::BLACK),
-                            AttendanceStatus::NoShow => ("❌", theme::danger(), Color32::WHITE),
+                            AttendanceStatus::NoShow => ("❌", theme::danger(), theme::on_accent()),
                         };
 
                         let day_abbr = day.get(..3).unwrap_or(day.as_str());
@@ -1421,7 +1421,7 @@ impl AppState {
                     let is_released = ui.input(|i| i.pointer.any_released());
 
                     ui.horizontal(|ui| {
-                        let _label_resp = ui.label(RichText::new(format!("{} ({} - {}):", slot.day, slot.start_time, slot.end_time)).strong().color(Color32::WHITE));
+                        let _label_resp = ui.label(RichText::new(format!("{} ({} - {}):", slot.day, slot.start_time, slot.end_time)).strong().color(theme::text()));
                         
                         // Drop target for unallocated section
                         if let Some(dragged_idx) = self.dragged_assignment {
@@ -1579,12 +1579,12 @@ impl AppState {
                                             if is_h2h {
                                                 let icon = if m.is_final { "🏆" } else { "⚽" };
                                                 ui.label(RichText::new(icon).size(12.0));
-                                                ui.label(RichText::new(&m.team_a).strong().size(12.0).color(Color32::WHITE));
+                                                ui.label(RichText::new(&m.team_a).strong().size(12.0).color(theme::text()));
                                                 ui.label(RichText::new(" vs ").size(11.5).color(theme::text_faint()));
-                                                ui.label(RichText::new(&m.team_b).strong().size(12.0).color(Color32::WHITE));
+                                                ui.label(RichText::new(&m.team_b).strong().size(12.0).color(theme::text()));
                                             } else {
                                                 ui.label(RichText::new("🤖").size(12.0));
-                                                ui.label(RichText::new(&m.team_a).strong().size(12.0).color(Color32::WHITE));
+                                                ui.label(RichText::new(&m.team_a).strong().size(12.0).color(theme::text()));
                                             }
                                         });
                                     });
@@ -1610,7 +1610,7 @@ impl AppState {
         // Header
         ui.horizontal(|ui| {
             ui.label(RichText::new("●").size(16.0).color(accent));
-            ui.label(RichText::new(div_name).strong().size(15.0).color(Color32::WHITE));
+            ui.label(RichText::new(div_name).strong().size(15.0).color(theme::text()));
             ui.label(RichText::new(if is_h2h { " · Head-to-Head" } else { " · Individual Run" })
                 .size(11.0).color(theme::text_faint()));
         });
@@ -1639,7 +1639,7 @@ impl AppState {
             ];
             for (tab, label) in tabs {
                 let is_active = self.active_division_sub_tab == tab;
-                let text_color = if is_active { Color32::WHITE } else { theme::text_muted() };
+                let text_color = if is_active { theme::on_accent() } else { theme::text_muted() };
                 let bg_color = if is_active { theme::accent_strong() } else { theme::surface() };
                 
                 let btn = egui::Button::new(RichText::new(label).strong().color(text_color))
@@ -1706,7 +1706,7 @@ impl AppState {
                             ui.set_min_width(panel_width - 4.0);
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("👥").size(13.0).color(accent));
-                                ui.label(RichText::new(&team.name).strong().size(13.0).color(Color32::WHITE));
+                                ui.label(RichText::new(&team.name).strong().size(13.0).color(theme::text()));
                                 ui.add_space(8.0);
                                 ui.label(RichText::new(format!("({})", team.organization)).size(11.0).color(theme::text_muted()));
                             });
@@ -1818,7 +1818,7 @@ impl AppState {
                             ui.set_min_width(panel_width - 4.0);
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("💬").size(13.0).color(accent));
-                                ui.label(RichText::new("Interviews").strong().size(13.0).color(Color32::WHITE));
+                                ui.label(RichText::new("Interviews").strong().size(13.0).color(theme::text()));
                             });
                         });
 

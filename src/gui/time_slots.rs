@@ -123,7 +123,7 @@ impl AppState {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let gen_btn = egui::Button::new(RichText::new("⚡ Auto-Calculate & Generate").strong().color(Color32::WHITE))
+                        let gen_btn = egui::Button::new(RichText::new("⚡ Auto-Calculate & Generate").strong().color(theme::on_accent()))
                             .fill(theme::accent_strong())
                             .rounding(6.0)
                             .min_size(egui::vec2(180.0, 30.0));
@@ -216,8 +216,8 @@ impl AppState {
 
             for (idx, slot) in self.config.time_slots.iter().enumerate() {
                 ui.label(&slot.day);
-                ui.label(RichText::new(&slot.start_time).strong().color(Color32::WHITE));
-                ui.label(RichText::new(&slot.end_time).strong().color(Color32::WHITE));
+                ui.label(RichText::new(&slot.start_time).strong().color(theme::text()));
+                ui.label(RichText::new(&slot.end_time).strong().color(theme::text()));
                 ui.label(format!("{} mins", slot.duration_minutes()));
                 
                 let (kind_icon, kind_color) = match slot.kind {

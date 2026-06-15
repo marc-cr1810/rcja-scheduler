@@ -1,7 +1,7 @@
 use crate::gui::AppState;
 use crate::gui::theme;
 use crate::model::Team;
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 
 impl AppState {
     pub(super) fn draw_teams(&mut self, ui: &mut egui::Ui) {
@@ -28,7 +28,7 @@ impl AppState {
             .inner_margin(12.0)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Bulk Import Teams from CSV").strong().color(Color32::WHITE));
+                    ui.label(RichText::new("Bulk Import Teams from CSV").strong().color(theme::text()));
                     ui.label(RichText::new("Import teams from a RoboCup Junior registration CSV file. This will automatically create divisions if they don't exist.").size(11.0).color(theme::text_muted()));
                     ui.add_space(5.0);
                     
@@ -105,7 +105,7 @@ impl AppState {
             .inner_margin(12.0)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Add Individual Team").strong().color(Color32::WHITE));
+                    ui.label(RichText::new("Add Individual Team").strong().color(theme::text()));
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
                             ui.label("Team Name:");
@@ -308,8 +308,8 @@ impl AppState {
                                 ui.label("-");
                                 ui.label("-");
                             } else {
-                                ui.label(RichText::new(format!("{}m", min_gap)).color(if min_gap < 15 { theme::danger() } else { Color32::WHITE }));
-                                ui.label(RichText::new(format!("{}m", max_gap)).color(if max_gap > 180 { theme::warning() } else { Color32::WHITE }));
+                                ui.label(RichText::new(format!("{}m", min_gap)).color(if min_gap < 15 { theme::danger() } else { theme::text() }));
+                                ui.label(RichText::new(format!("{}m", max_gap)).color(if max_gap > 180 { theme::warning() } else { theme::text() }));
                             }
                         } else {
                             ui.label("No activities");

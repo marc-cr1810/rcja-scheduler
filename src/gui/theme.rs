@@ -79,6 +79,9 @@ pub struct Theme {
     pub accent_mid: ThemeColor,
     pub accent_strong: ThemeColor,
     pub accent_alt: ThemeColor,
+    /// Text/icon colour drawn on top of accent or other strongly-coloured fills
+    /// (buttons, pills, active tabs). Defaults to white.
+    pub on_accent: ThemeColor,
     // Status
     pub success: ThemeColor,
     pub success_border: ThemeColor,
@@ -101,20 +104,25 @@ impl Default for Theme {
         let c = |r, g, b| ThemeColor(Color32::from_rgb(r, g, b));
         Theme {
             name: Some("Default (Dark)".to_string()),
-            bg_base: c(17, 24, 39),
-            card_bg: c(30, 37, 50),
-            card_bg_alt: c(26, 32, 44),
-            surface: c(31, 41, 55),
-            row_stripe: c(33, 40, 54),
-            border: c(55, 65, 81),
-            text: c(229, 231, 235),
-            text_dim: c(209, 213, 219),
-            text_muted: c(156, 163, 175),
-            text_faint: c(107, 114, 128),
+            // Neutral (near-greyscale) dark surfaces — a faint warm tint keeps it
+            // from reading as the cold blue-slate it used to be. Input surfaces
+            // are pushed clearly lighter than the cards so fields/drop-downs read
+            // as distinct, interactive elements.
+            bg_base: c(22, 22, 26),
+            card_bg: c(33, 33, 38),
+            card_bg_alt: c(28, 28, 32),
+            surface: c(45, 45, 52),
+            row_stripe: c(31, 31, 36),
+            border: c(64, 64, 72),
+            text: c(231, 231, 234),
+            text_dim: c(209, 209, 214),
+            text_muted: c(161, 161, 170),
+            text_faint: c(113, 113, 122),
             accent: c(129, 140, 248),
             accent_mid: c(99, 102, 241),
             accent_strong: c(79, 70, 229),
             accent_alt: c(167, 139, 250),
+            on_accent: c(255, 255, 255),
             success: c(52, 211, 153),
             success_border: c(16, 185, 129),
             success_bg: c(6, 78, 59),
@@ -214,7 +222,7 @@ accessors!(
     bg_base, card_bg, card_bg_alt, surface, row_stripe,
     border,
     text, text_dim, text_muted, text_faint,
-    accent, accent_mid, accent_strong, accent_alt,
+    accent, accent_mid, accent_strong, accent_alt, on_accent,
     success, success_border, success_bg,
     warning, warning_border, warning_bg,
     danger, danger_border, danger_bg,
@@ -240,7 +248,7 @@ pub fn cell_colors_from_rgb(rgb: [u8; 3]) -> (Color32, Color32) {
 pub fn contrast_text(bg: Color32) -> Color32 {
     let [r, g, b, _] = bg.to_array();
     let lum = (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0;
-    if lum > 0.55 { Color32::from_rgb(17, 24, 39) } else { Color32::WHITE }
+    if lum > 0.55 { Color32::from_rgb(24, 24, 27) } else { Color32::WHITE }
 }
 
 /// (background, border) for the Nth uncoloured division, cycling the active

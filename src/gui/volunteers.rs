@@ -2,7 +2,7 @@ use crate::gui::AppState;
 use crate::gui::theme;
 use crate::model::Volunteer;
 use crate::scheduler::sanitize_name;
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use std::collections::HashMap;
 
 impl AppState {
@@ -53,7 +53,7 @@ impl AppState {
             .inner_margin(12.0)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Register Volunteer").strong().color(Color32::WHITE));
+                    ui.label(RichText::new("Register Volunteer").strong().color(theme::text()));
                     ui.add_space(5.0);
 
                     ui.horizontal(|ui| {
@@ -64,7 +64,7 @@ impl AppState {
                     });
 
                     ui.add_space(5.0);
-                    ui.label(RichText::new("Conflict Organizations:").strong().color(Color32::WHITE));
+                    ui.label(RichText::new("Conflict Organizations:").strong().color(theme::text()));
                     ui.label(RichText::new("Select any organizations this volunteer belongs to (e.g. their school or club)").size(11.0).color(theme::text_muted()));
                     
                     ui.horizontal_wrapped(|ui| {
@@ -122,7 +122,7 @@ impl AppState {
                     }
 
                     ui.add_space(8.0);
-                    if ui.button(RichText::new("+ Register Volunteer").strong().color(Color32::WHITE)).clicked()
+                    if ui.button(RichText::new("+ Register Volunteer").strong().color(theme::text())).clicked()
                         && !self.new_vol_name.trim().is_empty() {
                             let id = sanitize_name(&self.new_vol_name);
 
@@ -485,7 +485,7 @@ impl AppState {
                                     
                                     let (bg, text) = if is_assigned {
                                         day_total += 1;
-                                        (theme::accent_strong(), Color32::WHITE)
+                                        (theme::accent_strong(), theme::on_accent())
                                     } else if is_available {
                                         (theme::surface(), theme::text_faint())
                                     } else {
@@ -499,7 +499,7 @@ impl AppState {
                                     }
                                 }
                                 
-                                ui.label(RichText::new(day_total.to_string()).strong().color(if day_total > 5 { theme::danger() } else { Color32::WHITE }));
+                                ui.label(RichText::new(day_total.to_string()).strong().color(if day_total > 5 { theme::danger() } else { theme::text() }));
                                 ui.end_row();
                             }
                         });

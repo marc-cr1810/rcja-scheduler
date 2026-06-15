@@ -45,10 +45,21 @@ pub(crate) fn setup_custom_style(ctx: &egui::Context) {
 
     visuals.widgets.noninteractive.bg_fill = theme::bg_base();
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, theme::border());
+    // Interactive widgets (text fields, drop-downs, buttons) get a filled surface
+    // *and* a visible outline so they read as distinct, clickable controls rather
+    // than blending into the row/card behind them. The outline brightens on hover
+    // and turns accent-coloured when active/open.
     visuals.widgets.inactive.bg_fill = theme::surface();
+    visuals.widgets.inactive.weak_bg_fill = theme::surface();
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, theme::border());
     visuals.widgets.hovered.bg_fill = theme::border();
+    visuals.widgets.hovered.weak_bg_fill = theme::border();
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, theme::accent());
     visuals.widgets.active.bg_fill = theme::accent_mid();
+    visuals.widgets.active.weak_bg_fill = theme::accent_mid();
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, theme::accent());
     visuals.widgets.open.bg_fill = theme::surface();
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0, theme::accent());
     visuals.selection.bg_fill = theme::accent_mid();
     visuals.selection.stroke = Stroke::new(1.0, theme::accent());
 
@@ -197,7 +208,7 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
             let label_text = if is_continuation {
                 RichText::new(format!("{} (cont.)", assign.activity.label())).size(11.5).color(theme::text_muted())
             } else {
-                RichText::new(assign.activity.label()).strong().size(11.5).color(Color32::WHITE)
+                RichText::new(assign.activity.label()).strong().size(11.5).color(theme::on_accent())
             };
             
             // Use a vertical layout for the label to allow it to wrap within the available horizontal space
@@ -382,7 +393,7 @@ pub(crate) fn draw_card<R>(ui: &mut egui::Ui, title: &str, add_space: bool, add_
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 if !title.is_empty() {
-                    ui.label(RichText::new(title).strong().color(Color32::WHITE));
+                    ui.label(RichText::new(title).strong().color(theme::text()));
                     if add_space {
                         ui.add_space(8.0);
                     }
@@ -418,7 +429,7 @@ pub(crate) fn draw_empty_state(
         ui.label(RichText::new(body).color(theme::text_faint()));
         if let Some(label) = cta {
             ui.add_space(14.0);
-            let btn = egui::Button::new(RichText::new(label).strong().color(Color32::WHITE))
+            let btn = egui::Button::new(RichText::new(label).strong().color(theme::on_accent()))
                 .fill(theme::accent_strong())
                 .rounding(egui::Rounding::same(6.0))
                 .min_size(egui::vec2(0.0, 30.0));

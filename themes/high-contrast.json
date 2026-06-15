@@ -14,6 +14,7 @@
   "accent_mid": "#ffea00",
   "accent_strong": "#caa800",
   "accent_alt": "#00e5ff",
+  "on_accent": "#000000",
   "success": "#00e676",
   "warning": "#ffab00",
   "danger": "#ff1744"

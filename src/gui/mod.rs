@@ -110,7 +110,11 @@ impl eframe::App for AppState {
                     });
                     
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("⚡ Load Demo Data").clicked() {
+                        let demo_resp = ui.button("⚡ Load Demo Data");
+                        // The buttons' vertical band, used to align the theme combo
+                        // (which egui won't vertically centre on its own).
+                        let btn_band = demo_resp.rect.y_range();
+                        if demo_resp.clicked() {
                             self.load_demo_data();
                         }
                         if ui.button("📥 Load Config").clicked() {
@@ -137,22 +141,40 @@ impl eframe::App for AppState {
                         ui.separator();
                         let mut chosen: Option<String> = None;
                         let mut reload = false;
-                        egui::ComboBox::from_id_source("theme_picker")
-                            .selected_text(format!("🎨 {}", self.active_theme_name))
-                            .show_ui(ui, |ui| {
-                                for name in theme::names() {
-                                    if ui.selectable_label(self.active_theme_name == name, &name).clicked() {
-                                        chosen = Some(name);
-                                    }
-                                }
-                                ui.separator();
-                                if ui.button("🔄 Reload from disk")
-                                    .on_hover_text("Re-scan the themes/ folder for *.json files")
-                                    .clicked()
-                                {
-                                    reload = true;
-                                }
+                        // egui's ComboBox anchors its content to the *top* of the
+                        // available vertical space instead of honouring the row's
+                        // centring, so in this tall header row it drifts below the
+                        // buttons. Place it explicitly in the buttons' vertical band
+                        // (right edge at the current cursor, like a normal item).
+                        let right_x = ui.cursor().max.x;
+                        // ComboBox renders with an intrinsic downward bias of
+                        // (button_height - interact_size.y)/2 within a given rect, so
+                        // shift the target band up by that to land on the buttons.
+                        let nudge = (btn_band.span() - ui.spacing().interact_size.y) / 2.0;
+                        let combo_rect = egui::Rect::from_min_max(
+                            egui::pos2(right_x - 180.0, btn_band.min - nudge),
+                            egui::pos2(right_x, btn_band.max - nudge),
+                        );
+                        ui.allocate_ui_at_rect(combo_rect, |ui| {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                egui::ComboBox::from_id_source("theme_picker")
+                                    .selected_text(format!("🎨 {}", self.active_theme_name))
+                                    .show_ui(ui, |ui| {
+                                        for name in theme::names() {
+                                            if ui.selectable_label(self.active_theme_name == name, &name).clicked() {
+                                                chosen = Some(name);
+                                            }
+                                        }
+                                        ui.separator();
+                                        if ui.button("🔄 Reload from disk")
+                                            .on_hover_text("Re-scan the themes/ folder for *.json files")
+                                            .clicked()
+                                        {
+                                            reload = true;
+                                        }
+                                    });
                             });
+                        });
                         if reload {
                             self.active_theme_name = theme::reload(&self.active_theme_name);
                             setup_custom_style(ui.ctx());
@@ -220,7 +242,7 @@ impl eframe::App for AppState {
 
             for (tab, label) in tab_buttons {
                 let is_active = self.active_tab == tab;
-                let text_color = if is_active { Color32::WHITE } else { theme::text_muted() };
+                let text_color = if is_active { theme::on_accent() } else { theme::text_muted() };
 
                 let button = egui::Button::new(RichText::new(label).color(text_color).strong())
                     .fill(if is_active { theme::accent_strong() } else { Color32::TRANSPARENT })
@@ -251,7 +273,7 @@ impl eframe::App for AppState {
                         
                         if error_count > 0 || warn_count > 0 {
                             let (color, text_color, count) = if error_count > 0 {
-                                (theme::danger_border(), Color32::WHITE, error_count)
+                                (theme::danger_border(), theme::on_accent(), error_count)
                             } else {
                                 (theme::warning(), Color32::BLACK, warn_count)
                             };
