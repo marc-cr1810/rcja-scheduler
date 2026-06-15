@@ -187,10 +187,11 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
         let t = ui.input(|i| i.time);
         let pulse = 0.5 + 0.5 * (t * 4.0).sin() as f32;
         let alpha = (70.0 + pulse * 150.0) as u8;
+        let d = theme::danger();
         ui.painter().rect_stroke(
             rect,
             6.0,
-            Stroke::new(2.0, Color32::from_rgba_unmultiplied(248, 113, 113, alpha)),
+            Stroke::new(2.0, Color32::from_rgba_unmultiplied(d.r(), d.g(), d.b(), alpha)),
         );
         ui.ctx().request_repaint();
     }
@@ -203,12 +204,18 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
     clip_rect.max.y = clip_rect.max.y.min(inner_rect.max.y);
     child_ui.set_clip_rect(clip_rect);
 
+    // Division cells are always a dark fill (see `cell_colors_from_rgb`), so text
+    // must read as light in every theme — pick by the fill's luminance rather than
+    // a fixed token (which could be dark, e.g. high-contrast's black `on_accent`).
+    let cell_text = theme::contrast_text(base_bg);
+    let cell_text_dim = Color32::from_rgba_unmultiplied(cell_text.r(), cell_text.g(), cell_text.b(), 170);
+
     child_ui.vertical(|ui| {
         ui.horizontal(|ui| {
             let label_text = if is_continuation {
-                RichText::new(format!("{} (cont.)", assign.activity.label())).size(11.5).color(theme::text_muted())
+                RichText::new(format!("{} (cont.)", assign.activity.label())).size(11.5).color(cell_text_dim)
             } else {
-                RichText::new(assign.activity.label()).strong().size(11.5).color(theme::on_accent())
+                RichText::new(assign.activity.label()).strong().size(11.5).color(cell_text)
             };
             
             // Use a vertical layout for the label to allow it to wrap within the available horizontal space
@@ -243,7 +250,7 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
         });
 
         if h >= 30.0 {
-            ui.label(RichText::new(format!("⏰ {} - {}", start_time_str, end_time_str)).size(9.5).color(theme::text_dim()));
+            ui.label(RichText::new(format!("⏰ {} - {}", start_time_str, end_time_str)).size(9.5).color(cell_text_dim));
         }
         
         let volunteer_names: Vec<String> = assign
@@ -267,9 +274,9 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
 
             let names_str = if volunteer_names.is_empty() { "None".to_string() } else { volunteer_names.join(", ") };
             let vol_text = if is_continuation {
-                RichText::new(format!("{}: {}", vol_label, names_str)).size(9.5).color(Color32::from_rgb(120, 130, 140))
+                RichText::new(format!("{}: {}", vol_label, names_str)).size(9.5).color(cell_text_dim)
             } else {
-                let color = if volunteer_names.is_empty() { theme::danger() } else { theme::text_dim() };
+                let color = if volunteer_names.is_empty() { theme::danger() } else { cell_text_dim };
                 RichText::new(format!("{}: {}", vol_label, names_str)).size(9.5).color(color)
             };
             

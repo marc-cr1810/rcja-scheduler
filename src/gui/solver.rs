@@ -24,7 +24,7 @@ impl AppState {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("❌ CONFIGURATION ERRORS:").strong().color(theme::on_accent()));
-                        ui.label(RichText::new(format!("There are {} critical configuration errors that must be fixed before a schedule can be generated.", config_error_count)).color(Color32::from_rgb(254, 202, 202)));
+                        ui.label(RichText::new(format!("There are {} critical configuration errors that must be fixed before a schedule can be generated.", config_error_count)).color(theme::text()));
                         if ui.button("View Errors").clicked() {
                             self.active_tab = Tab::Dashboard;
                         }
@@ -77,7 +77,7 @@ impl AppState {
                     if is_solving {
                         ui.add_space(8.0);
                         let stop_button = egui::Button::new(RichText::new("⏹ Stop Solving").strong().color(theme::on_accent()))
-                            .fill(Color32::from_rgb(185, 28, 28)) // Red-700
+                            .fill(theme::danger_border())
                             .rounding(6.0)
                             .min_size(egui::vec2(120.0, 35.0));
 
@@ -128,8 +128,8 @@ impl AppState {
                             FairnessMode::Strict,
                             "⚡ Strict",
                             "Always assigns the least-utilised qualified volunteers first.\nStrongest fairness guarantee — best when volunteeer workloads must be as equal as possible.",
-                            Color32::from_rgb(67, 20, 7),
-                            Color32::from_rgb(251, 146, 60),
+                            theme::warning_bg(),
+                            theme::warning(),
                         ),
                     ];
 
@@ -139,7 +139,7 @@ impl AppState {
                             match mode {
                                 FairnessMode::Off => (theme::border(), theme::on_accent()),
                                 FairnessMode::Balanced => (theme::success_border(), theme::on_accent()),
-                                FairnessMode::Strict => (Color32::from_rgb(234, 88, 12), theme::on_accent()),
+                                FairnessMode::Strict => (theme::warning_border(), theme::on_accent()),
                             }
                         } else {
                             (*bg_inactive, *text_inactive)
@@ -207,6 +207,13 @@ impl AppState {
                     ui.label(RichText::new("🎯 Volunteer Specialist Mode:").strong().color(theme::text()));
                     ui.add_space(8.0);
 
+                    // Specialist mode reads as the theme's violet accent; derive a
+                    // dark fill + mid border from it for the pill backgrounds.
+                    let (violet_bg, violet_border) = {
+                        let p = theme::accent_alt();
+                        theme::cell_colors_from_rgb([p.r(), p.g(), p.b()])
+                    };
+
                     let modes: &[(SpecialistMode, &str, &str, Color32, Color32)] = &[
                         (
                             SpecialistMode::Off,
@@ -219,15 +226,15 @@ impl AppState {
                             SpecialistMode::Balanced,
                             "🎯 Focused",
                             "Try to keep volunteers within a single division (e.g. don't swap someone between different Soccer divisions).",
-                            theme::info_bg(), // Dark blue
-                            Color32::from_rgb(96, 165, 250), // Light blue
+                            theme::info_bg(),
+                            theme::info(),
                         ),
                         (
                             SpecialistMode::Strict,
                             "🏅 Specialist",
                             "Strongest preference to keep volunteers in the same division for the whole tournament.",
-                            Color32::from_rgb(88, 28, 135), // Dark purple
-                            Color32::from_rgb(192, 132, 252), // Light purple
+                            violet_bg,
+                            theme::accent_alt(),
                         ),
                     ];
 
@@ -236,8 +243,8 @@ impl AppState {
                         let (bg, text_col) = if is_active {
                             match mode {
                                 SpecialistMode::Off => (theme::border(), theme::on_accent()),
-                                SpecialistMode::Balanced => (Color32::from_rgb(37, 99, 235), theme::on_accent()),
-                                SpecialistMode::Strict => (Color32::from_rgb(126, 34, 206), theme::on_accent()),
+                                SpecialistMode::Balanced => (theme::info_border(), theme::on_accent()),
+                                SpecialistMode::Strict => (violet_border, theme::on_accent()),
                             }
                         } else {
                             (*bg_inactive, *text_inactive)
@@ -538,7 +545,7 @@ impl AppState {
                 ui.add_space(8.0);
                 
                 let lock_label = if self.schedule_locked { "🔒 Schedule Locked" } else { "🔓 Schedule Unlocked (Edit Mode)" };
-                let lock_color = if self.schedule_locked { theme::text_faint() } else { Color32::from_rgb(251, 146, 60) };
+                let lock_color = if self.schedule_locked { theme::text_faint() } else { theme::warning() };
                 let lock_btn = egui::Button::new(RichText::new(lock_label).strong().color(theme::on_accent()))
                     .fill(lock_color)
                     .rounding(6.0)
@@ -553,7 +560,7 @@ impl AppState {
                 
                 if !self.schedule_locked {
                     ui.add_space(12.0);
-                    ui.label(RichText::new("🖱 Click and drag any activity cell below to move it.").italics().color(Color32::from_rgb(251, 146, 60)));
+                    ui.label(RichText::new("🖱 Click and drag any activity cell below to move it.").italics().color(theme::warning()));
                 }
             });
             ui.add_space(10.0);
@@ -774,7 +781,7 @@ impl AppState {
                 let mut header_color = if has_conflict { theme::danger() } else { theme::text() };
                 
                 if vol.attendance_status.values().any(|s| matches!(s, AttendanceStatus::NoShow)) {
-                    header_color = Color32::from_rgb(185, 28, 28);
+                    header_color = theme::danger_border();
                 }
 
                 // Days this volunteer is active, in schedule order. Drives the
@@ -855,9 +862,9 @@ impl AppState {
                     for day in &active_days {
                         let status = vol.status_for_day(day);
                         let (btn_text, btn_color, btn_text_color) = match status {
-                            AttendanceStatus::Pending => ("⏳", theme::warning(), Color32::BLACK),
-                            AttendanceStatus::CheckedIn => ("✅", theme::success(), Color32::BLACK),
-                            AttendanceStatus::NoShow => ("❌", theme::danger(), theme::on_accent()),
+                            AttendanceStatus::Pending => ("⏳", theme::warning(), theme::contrast_text(theme::warning())),
+                            AttendanceStatus::CheckedIn => ("✅", theme::success(), theme::contrast_text(theme::success())),
+                            AttendanceStatus::NoShow => ("❌", theme::danger(), theme::contrast_text(theme::danger())),
                         };
 
                         let day_abbr = day.get(..3).unwrap_or(day.as_str());
@@ -1290,7 +1297,7 @@ impl AppState {
                                     );
 
                                     if cell_rect.contains(pointer_pos) {
-                                        painter.rect_stroke(cell_rect, 4.0, Stroke::new(2.5, Color32::from_rgb(251, 146, 60)));
+                                        painter.rect_stroke(cell_rect, 4.0, Stroke::new(2.5, theme::warning()));
 
                                         if ui.input(|i| i.pointer.any_released()) {
                                             move_request = Some((dragged_idx, slot.id.clone(), Some(field.id.clone())));
@@ -1333,12 +1340,13 @@ impl AppState {
                                             egui::pos2(rect.min.x + break_x_min, rect.min.y + timeline_padding_top + y1),
                                             egui::pos2(rect.min.x + break_x_max, rect.min.y + timeline_padding_top + y2)
                                         );
-                                        painter.rect(break_rect, 4.0,
-                                            Color32::from_rgb(67, 20, 30),
-                                            Stroke::new(0.5, Color32::from_rgb(190, 24, 74))
-                                        );
+                                        let (break_bg, break_border) = {
+                                            let r = theme::rose();
+                                            theme::cell_colors_from_rgb([r.r(), r.g(), r.b()])
+                                        };
+                                        painter.rect(break_rect, 4.0, break_bg, Stroke::new(0.5, break_border));
                                         let break_label = format!("🍔 Lunch Break ({}m)", gap);
-                                        let label_color = Color32::from_rgb(251, 113, 133);
+                                        let label_color = theme::rose();
                                         painter.text(break_rect.center(), egui::Align2::CENTER_CENTER, break_label, egui::FontId::proportional(11.0), label_color);
                                     }
                                 }
@@ -1430,7 +1438,7 @@ impl AppState {
                                 // We'll check if the pointer is near this row
                                 let row_rect = ui.max_rect();
                                 if pointer_pos.y >= row_rect.min.y && pointer_pos.y <= row_rect.max.y {
-                                    ui.painter().rect_stroke(row_rect.expand(2.0), 4.0, Stroke::new(1.5, Color32::from_rgb(251, 146, 60)));
+                                    ui.painter().rect_stroke(row_rect.expand(2.0), 4.0, Stroke::new(1.5, theme::warning()));
                                     if is_released {
                                         move_request = Some((dragged_idx, slot.id.clone(), None));
                                     }
@@ -1499,7 +1507,7 @@ impl AppState {
                 for row in rows {
                     let is_finals = row.matches.iter().any(|m| m.is_final);
 
-                    let header_bg = if is_finals { Color32::from_rgb(67, 52, 10) } else { theme::card_bg() };
+                    let header_bg = if is_finals { theme::warning_bg() } else { theme::card_bg() };
                     let header_accent = if is_finals { theme::warning() } else { accent };
 
                     // Round header
@@ -1516,22 +1524,22 @@ impl AppState {
                                 if !row.bye_teams.is_empty() {
                                     ui.add_space(12.0);
                                     ui.label(RichText::new(format!("🟡 Bye: {}", row.bye_teams.join(", ")))
-                                        .size(11.5).color(Color32::from_rgb(253, 224, 71)));
+                                        .size(11.5).color(theme::warning()));
                                 }
                             });
                         });
 
                     // Match rows body
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(17, 22, 32))
+                        .fill(theme::card_bg_alt())
                         .rounding(egui::Rounding { nw: 0.0, ne: 0.0, sw: 6.0, se: 6.0 })
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(38, 46, 60)))
+                        .stroke(Stroke::new(1.0, theme::border()))
                         .show(ui, |ui| {
                             ui.set_min_width(panel_width - 4.0);
 
                             // Column headers
                             egui::Frame::none()
-                            .fill(Color32::from_rgb(22, 28, 40))
+                            .fill(theme::card_bg())
                             .inner_margin(egui::Margin::symmetric(12.0, 5.0))
                             .show(ui, |ui| {
                                 ui.set_min_width(panel_width - 8.0);
@@ -1548,13 +1556,13 @@ impl AppState {
                             });
 
                             for (m_idx, m) in row.matches.iter().enumerate() {
-                                let row_bg = if m_idx % 2 == 0 { Color32::from_rgb(17, 22, 32) } else { Color32::from_rgb(20, 26, 38) };
+                                let row_bg = if m_idx % 2 == 0 { theme::card_bg_alt() } else { theme::row_stripe() };
 
                                 // Draw thin separator above every row after the first using painter
                                 if m_idx > 0 {
                                     let sep_size = egui::vec2(panel_width - 32.0, 1.0);
                                     let (sep_rect, _) = ui.allocate_exact_size(sep_size, egui::Sense::hover());
-                                    ui.painter().rect_filled(sep_rect, 0.0, Color32::from_rgb(38, 46, 60));
+                                    ui.painter().rect_filled(sep_rect, 0.0, theme::border());
                                 }
 
                                 egui::Frame::none()
@@ -1714,15 +1722,15 @@ impl AppState {
 
                     // Activities body
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(17, 22, 32))
+                        .fill(theme::card_bg_alt())
                         .rounding(egui::Rounding { nw: 0.0, ne: 0.0, sw: 6.0, se: 6.0 })
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(38, 46, 60)))
+                        .stroke(Stroke::new(1.0, theme::border()))
                         .show(ui, |ui| {
                             ui.set_min_width(panel_width - 4.0);
 
                             // Column headers
                             egui::Frame::none()
-                                .fill(Color32::from_rgb(22, 28, 40))
+                                .fill(theme::card_bg())
                                 .inner_margin(egui::Margin::symmetric(12.0, 5.0))
                                 .show(ui, |ui| {
                                     ui.set_min_width(panel_width - 8.0);
@@ -1745,12 +1753,12 @@ impl AppState {
                                     });
                             } else {
                                 for (a_idx, assign) in team_activities.iter().enumerate() {
-                                    let row_bg = if a_idx % 2 == 0 { Color32::from_rgb(17, 22, 32) } else { Color32::from_rgb(20, 26, 38) };
+                                    let row_bg = if a_idx % 2 == 0 { theme::card_bg_alt() } else { theme::row_stripe() };
 
                                     if a_idx > 0 {
                                         let sep_size = egui::vec2(panel_width - 32.0, 1.0);
                                         let (sep_rect, _) = ui.allocate_exact_size(sep_size, egui::Sense::hover());
-                                        ui.painter().rect_filled(sep_rect, 0.0, Color32::from_rgb(38, 46, 60));
+                                        ui.painter().rect_filled(sep_rect, 0.0, theme::border());
                                     }
 
                                     egui::Frame::none()
@@ -1824,15 +1832,15 @@ impl AppState {
 
                     // Interviews body
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(17, 22, 32))
+                        .fill(theme::card_bg_alt())
                         .rounding(egui::Rounding { nw: 0.0, ne: 0.0, sw: 6.0, se: 6.0 })
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(38, 46, 60)))
+                        .stroke(Stroke::new(1.0, theme::border()))
                         .show(ui, |ui| {
                             ui.set_min_width(panel_width - 4.0);
 
                             // Column headers
                             egui::Frame::none()
-                                .fill(Color32::from_rgb(22, 28, 40))
+                                .fill(theme::card_bg())
                                 .inner_margin(egui::Margin::symmetric(12.0, 5.0))
                                 .show(ui, |ui| {
                                     ui.set_min_width(panel_width - 8.0);
@@ -1848,12 +1856,12 @@ impl AppState {
                                 });
 
                             for (a_idx, assign) in interviews.iter().enumerate() {
-                                let row_bg = if a_idx % 2 == 0 { Color32::from_rgb(17, 22, 32) } else { Color32::from_rgb(20, 26, 38) };
+                                let row_bg = if a_idx % 2 == 0 { theme::card_bg_alt() } else { theme::row_stripe() };
 
                                 if a_idx > 0 {
                                     let sep_size = egui::vec2(panel_width - 32.0, 1.0);
                                     let (sep_rect, _) = ui.allocate_exact_size(sep_size, egui::Sense::hover());
-                                    ui.painter().rect_filled(sep_rect, 0.0, Color32::from_rgb(38, 46, 60));
+                                    ui.painter().rect_filled(sep_rect, 0.0, theme::border());
                                 }
 
                                 egui::Frame::none()

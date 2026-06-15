@@ -92,6 +92,7 @@ pub struct Theme {
     pub danger: ThemeColor,
     pub danger_border: ThemeColor,
     pub danger_bg: ThemeColor,
+    pub info: ThemeColor,
     pub info_border: ThemeColor,
     pub info_bg: ThemeColor,
     pub rose: ThemeColor,
@@ -132,6 +133,7 @@ impl Default for Theme {
             danger: c(248, 113, 113),
             danger_border: c(239, 68, 68),
             danger_bg: c(127, 29, 29),
+            info: c(96, 165, 250),
             info_border: c(59, 130, 246),
             info_bg: c(30, 58, 138),
             rose: c(244, 63, 94),
@@ -226,7 +228,7 @@ accessors!(
     success, success_border, success_bg,
     warning, warning_border, warning_bg,
     danger, danger_border, danger_bg,
-    info_border, info_bg,
+    info, info_border, info_bg,
     rose,
 );
 

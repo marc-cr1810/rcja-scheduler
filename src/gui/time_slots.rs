@@ -221,8 +221,8 @@ impl AppState {
                 ui.label(format!("{} mins", slot.duration_minutes()));
                 
                 let (kind_icon, kind_color) = match slot.kind {
-                    crate::model::FieldKind::Competition => ("⚔", Color32::from_rgb(147, 197, 253)), // Blue
-                    crate::model::FieldKind::Interview => ("💬", Color32::from_rgb(253, 186, 116)), // Yellow/Orange
+                    crate::model::FieldKind::Competition => ("⚔", theme::info()),
+                    crate::model::FieldKind::Interview => ("💬", theme::warning()),
                 };
                 ui.label(RichText::new(format!("{} {:?}", kind_icon, slot.kind)).color(kind_color));
                 

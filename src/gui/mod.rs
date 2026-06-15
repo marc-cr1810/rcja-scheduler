@@ -189,7 +189,7 @@ impl eframe::App for AppState {
                 if self.is_exporting {
                     ui.add_space(6.0);
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(30, 41, 59))
+                        .fill(theme::card_bg())
                         .rounding(4.0)
                         .inner_margin(6.0)
                         .show(ui, |ui| {
@@ -255,10 +255,13 @@ impl eframe::App for AppState {
                     // inactive (transparent) tab gets no hover feedback on its
                     // own — paint a faint highlight over it on hover.
                     if resp.hovered() && !is_active {
+                        // Faint tint in the theme's text colour: lightens dark
+                        // themes, darkens light ones.
+                        let t = theme::text();
                         ui.painter().rect_filled(
                             resp.rect,
                             egui::Rounding::same(6.0),
-                            Color32::from_rgba_unmultiplied(255, 255, 255, 14),
+                            Color32::from_rgba_unmultiplied(t.r(), t.g(), t.b(), 14),
                         );
                     }
                     if resp.clicked() {
@@ -275,7 +278,7 @@ impl eframe::App for AppState {
                             let (color, text_color, count) = if error_count > 0 {
                                 (theme::danger_border(), theme::on_accent(), error_count)
                             } else {
-                                (theme::warning(), Color32::BLACK, warn_count)
+                                (theme::warning(), theme::contrast_text(theme::warning()), warn_count)
                             };
 
                             let badge_size = 18.0;
