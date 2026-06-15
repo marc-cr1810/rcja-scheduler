@@ -573,7 +573,7 @@ impl AppState {
             };
 
             egui::Frame::none()
-                .fill(Color32::from_rgb(22, 28, 40))
+                .fill(theme::card_bg())
                 .rounding(egui::Rounding { nw: 8.0, ne: 8.0, sw: 0.0, se: 0.0 })
                 .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                 .show(ui, |ui| {
@@ -1237,7 +1237,7 @@ impl AppState {
                                 egui::pos2(rect.min.x + x, rect.min.y),
                                 egui::pos2(rect.min.x + x + col_width, rect.max.y)
                             );
-                            painter.rect_filled(col_rect, 0.0, Color32::from_rgb(22, 28, 38));
+                            painter.rect_filled(col_rect, 0.0, theme::card_bg());
                         }
 
                         let start_hour = (day_start_min / 10) * 10;
@@ -1247,7 +1247,7 @@ impl AppState {
                                 let y = (min - day_start_min) as f32 * pixels_per_minute;
                                 let line_y = rect.min.y + timeline_padding_top + y;
                                 let is_major = min % 30 == 0;
-                                let stroke_color = if is_major { Color32::from_rgb(75, 85, 99) } else { theme::border() };
+                                let stroke_color = if is_major { theme::text_faint() } else { theme::border() };
                                 let stroke_width = if is_major { 0.6 } else { 0.3 };
                                 painter.line_segment(
                                     [egui::pos2(rect.min.x + time_col_width, line_y), egui::pos2(rect.max.x - col_spacing, line_y)],
