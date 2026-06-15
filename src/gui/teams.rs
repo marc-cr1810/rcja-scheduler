@@ -1,4 +1,5 @@
 use crate::gui::AppState;
+use crate::gui::theme;
 use crate::model::Team;
 use eframe::egui::{self, Color32, RichText};
 
@@ -22,13 +23,13 @@ impl AppState {
     fn draw_team_list(&mut self, ui: &mut egui::Ui) {
         // CSV Import Frame (Always accessible)
         egui::Frame::none()
-            .fill(Color32::from_rgb(30, 37, 50))
+            .fill(theme::CARD_BG)
             .rounding(8.0)
             .inner_margin(12.0)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.label(RichText::new("Bulk Import Teams from CSV").strong().color(Color32::WHITE));
-                    ui.label(RichText::new("Import teams from a RoboCup Junior registration CSV file. This will automatically create divisions if they don't exist.").size(11.0).color(Color32::from_rgb(156, 163, 175)));
+                    ui.label(RichText::new("Import teams from a RoboCup Junior registration CSV file. This will automatically create divisions if they don't exist.").size(11.0).color(theme::TEXT_MUTED));
                     ui.add_space(5.0);
                     
                     if self.csv_import.is_none() {
@@ -85,13 +86,21 @@ impl AppState {
         ui.add_space(15.0);
 
         if self.config.divisions.is_empty() {
-            ui.label(RichText::new("⚠ To add individual teams manually, please define divisions first.").strong().color(Color32::from_rgb(245, 158, 11)));
+            if crate::gui::helpers::draw_empty_state(
+                ui,
+                "👥",
+                "No divisions defined",
+                "Teams belong to a division. Create one first, then add teams here (or import a CSV above).",
+                Some("Go to Divisions"),
+            ) {
+                self.active_tab = super::Tab::Divisions;
+            }
             return;
         }
 
         // Add Individual Team Frame
         egui::Frame::none()
-            .fill(Color32::from_rgb(30, 37, 50))
+            .fill(theme::CARD_BG)
             .rounding(8.0)
             .inner_margin(12.0)
             .show(ui, |ui| {
@@ -148,13 +157,13 @@ impl AppState {
 
         // Teams list
         if self.config.teams.is_empty() {
-            ui.label(RichText::new("No teams registered yet.").italics().color(Color32::from_rgb(156, 163, 175)));
+            ui.label(RichText::new("No teams registered yet.").italics().color(theme::TEXT_MUTED));
         } else {
             let mut to_remove = None;
             let mut teams_changed = false;
             let divisions_list = &self.config.divisions;
             let teams_list = &mut self.config.teams;
-            egui::Grid::new("teams_grid").num_columns(4).spacing(egui::vec2(20.0, 10.0)).show(ui, |ui| {
+            egui::Grid::new("teams_grid").num_columns(4).spacing(egui::vec2(20.0, 10.0)).striped(true).show(ui, |ui| {
                 ui.label(RichText::new("Team Name").strong());
                 ui.label(RichText::new("Organization").strong());
                 ui.label(RichText::new("Division").strong());
@@ -213,13 +222,13 @@ impl AppState {
         if self.schedule.is_none() {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
-                ui.label(RichText::new("No Schedule Generated").size(16.0).color(Color32::from_rgb(107, 114, 128)).strong());
+                ui.label(RichText::new("No Schedule Generated").size(16.0).color(theme::TEXT_FAINT).strong());
                 ui.label("Gap analysis requires a generated schedule to calculate time between activities.");
             });
             return;
         }
 
-        ui.label(RichText::new("TEAM ACTIVITY GAP ANALYSIS").strong().color(Color32::from_rgb(156, 163, 175)));
+        ui.label(RichText::new("TEAM ACTIVITY GAP ANALYSIS").strong().color(theme::TEXT_MUTED));
         ui.label("Review wait times and busy periods for each team.");
         ui.add_space(10.0);
 
@@ -299,8 +308,8 @@ impl AppState {
                                 ui.label("-");
                                 ui.label("-");
                             } else {
-                                ui.label(RichText::new(format!("{}m", min_gap)).color(if min_gap < 15 { Color32::from_rgb(248, 113, 113) } else { Color32::WHITE }));
-                                ui.label(RichText::new(format!("{}m", max_gap)).color(if max_gap > 180 { Color32::from_rgb(251, 191, 36) } else { Color32::WHITE }));
+                                ui.label(RichText::new(format!("{}m", min_gap)).color(if min_gap < 15 { theme::DANGER } else { Color32::WHITE }));
+                                ui.label(RichText::new(format!("{}m", max_gap)).color(if max_gap > 180 { theme::WARNING } else { Color32::WHITE }));
                             }
                         } else {
                             ui.label("No activities");

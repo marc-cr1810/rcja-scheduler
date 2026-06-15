@@ -1,4 +1,5 @@
 use crate::gui::AppState;
+use crate::gui::theme;
 use crate::model::Volunteer;
 use crate::scheduler::sanitize_name;
 use eframe::egui::{self, Color32, RichText};
@@ -47,7 +48,7 @@ impl AppState {
 
         // Add Volunteer
         egui::Frame::none()
-            .fill(Color32::from_rgb(30, 37, 50))
+            .fill(theme::CARD_BG)
             .rounding(8.0)
             .inner_margin(12.0)
             .show(ui, |ui| {
@@ -64,7 +65,7 @@ impl AppState {
 
                     ui.add_space(5.0);
                     ui.label(RichText::new("Conflict Organizations:").strong().color(Color32::WHITE));
-                    ui.label(RichText::new("Select any organizations this volunteer belongs to (e.g. their school or club)").size(11.0).color(Color32::from_rgb(156, 163, 175)));
+                    ui.label(RichText::new("Select any organizations this volunteer belongs to (e.g. their school or club)").size(11.0).color(theme::TEXT_MUTED));
                     
                     ui.horizontal_wrapped(|ui| {
                         for org in &all_orgs {
@@ -105,7 +106,7 @@ impl AppState {
                     if !fields_list.is_empty() {
                         ui.add_space(5.0);
                         ui.label("Lock to Fields / Interview Tables (optional):");
-                        ui.label(RichText::new("If any are selected, this volunteer will only be rostered on those fields.").size(11.0).color(Color32::from_rgb(156, 163, 175)));
+                        ui.label(RichText::new("If any are selected, this volunteer will only be rostered on those fields.").size(11.0).color(theme::TEXT_MUTED));
                         ui.horizontal_wrapped(|ui| {
                             for (fid, fname) in &fields_list {
                                 let mut locked = self.new_vol_locked_fields.contains(fid);
@@ -155,12 +156,20 @@ impl AppState {
         });
         ui.add_space(8.0);
 
-        ui.label(RichText::new("INTERACTIVE AVAILABILITY GRID").strong().color(Color32::from_rgb(156, 163, 175)));
+        ui.label(RichText::new("INTERACTIVE AVAILABILITY GRID").strong().color(theme::TEXT_MUTED));
         ui.label("Click cells to toggle volunteer availability for each time slot.");
         ui.add_space(5.0);
 
         if self.config.time_slots.is_empty() {
-            ui.label(RichText::new("Please add time slots first!").italics().color(Color32::from_rgb(244, 63, 94)));
+            if crate::gui::helpers::draw_empty_state(
+                ui,
+                "📅",
+                "No time slots yet",
+                "The availability grid needs time slots to fill in. Generate them first.",
+                Some("Go to Time Slots"),
+            ) {
+                self.active_tab = super::Tab::TimeSlots;
+            }
             return;
         }
 
@@ -206,7 +215,7 @@ impl AppState {
         egui::ScrollArea::horizontal()
             .id_source("volunteers_avail_scroll")
             .show(ui, |ui| {
-                egui::Grid::new("vol_avail_grid").num_columns(num_cols).spacing(egui::vec2(10.0, 10.0)).show(ui, |ui| {
+                egui::Grid::new("vol_avail_grid").num_columns(num_cols).spacing(egui::vec2(10.0, 10.0)).striped(true).show(ui, |ui| {
                 ui.label(RichText::new("Volunteer").strong());
                 ui.label(RichText::new("Qualified for").strong());
                 ui.label(RichText::new("Conflicts").strong());
@@ -224,7 +233,7 @@ impl AppState {
                     // 1. Volunteer Name edit
                     ui.horizontal(|ui| {
                         if vol.availabilities.is_empty() {
-                            ui.label(RichText::new("⚠").color(Color32::from_rgb(251, 191, 36)))
+                            ui.label(RichText::new("⚠").color(theme::WARNING))
                                 .on_hover_text("Volunteer has no available time slots.");
                         }
                         if ui.add_sized([180.0, 20.0], egui::TextEdit::singleline(&mut vol.name)).changed() {
@@ -421,13 +430,13 @@ impl AppState {
         if self.schedule.is_none() {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
-                ui.label(RichText::new("No Schedule Generated").size(16.0).color(Color32::from_rgb(107, 114, 128)).strong());
+                ui.label(RichText::new("No Schedule Generated").size(16.0).color(theme::TEXT_FAINT).strong());
                 ui.label("The workload heatmap requires a generated schedule to visualize assignments.");
             });
             return;
         }
 
-        ui.label(RichText::new("VOLUNTEER WORKLOAD HEATMAP").strong().color(Color32::from_rgb(156, 163, 175)));
+        ui.label(RichText::new("VOLUNTEER WORKLOAD HEATMAP").strong().color(theme::TEXT_MUTED));
         ui.label("Visualization of shift density across the tournament.");
         ui.add_space(10.0);
 
@@ -446,7 +455,7 @@ impl AppState {
 
         for day in unique_days {
             ui.add_space(15.0);
-            ui.label(RichText::new(&day).strong().size(14.0).color(Color32::from_rgb(129, 140, 248)));
+            ui.label(RichText::new(&day).strong().size(14.0).color(theme::ACCENT));
             ui.add_space(5.0);
 
             let day_slots: Vec<_> = slots.iter().filter(|s| s.day == day).collect();
@@ -476,11 +485,11 @@ impl AppState {
                                     
                                     let (bg, text) = if is_assigned {
                                         day_total += 1;
-                                        (Color32::from_rgb(79, 70, 229), Color32::WHITE)
+                                        (theme::ACCENT_STRONG, Color32::WHITE)
                                     } else if is_available {
-                                        (Color32::from_rgb(31, 41, 55), Color32::from_rgb(107, 114, 128))
+                                        (theme::SURFACE, theme::TEXT_FAINT)
                                     } else {
-                                        (Color32::from_rgb(17, 24, 39), Color32::from_rgb(55, 65, 81))
+                                        (theme::BG_BASE, theme::BORDER)
                                     };
 
                                     let (rect, _resp) = ui.allocate_at_least(egui::vec2(35.0, 18.0), egui::Sense::hover());
@@ -490,7 +499,7 @@ impl AppState {
                                     }
                                 }
                                 
-                                ui.label(RichText::new(day_total.to_string()).strong().color(if day_total > 5 { Color32::from_rgb(248, 113, 113) } else { Color32::WHITE }));
+                                ui.label(RichText::new(day_total.to_string()).strong().color(if day_total > 5 { theme::DANGER } else { Color32::WHITE }));
                                 ui.end_row();
                             }
                         });

@@ -1,7 +1,8 @@
 use crate::gui::AppState;
+use crate::gui::theme;
 use crate::model::{Field, FieldKind};
 use crate::scheduler::sanitize_name;
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 
 impl AppState {
     pub(super) fn draw_fields(&mut self, ui: &mut egui::Ui) {
@@ -41,7 +42,7 @@ impl AppState {
         let mut fields_changed = false;
 
         // Competition Fields Table
-        egui::Grid::new("comp_fields_grid").num_columns(3).spacing(egui::vec2(20.0, 10.0)).show(ui, |ui| {
+        egui::Grid::new("comp_fields_grid").num_columns(3).spacing(egui::vec2(20.0, 10.0)).striped(true).show(ui, |ui| {
             ui.label(RichText::new("Field/Arena Name").strong());
             ui.label(RichText::new("Allowed Divisions (Restrictive)").strong());
             ui.label(RichText::new("Actions").strong());
@@ -80,7 +81,7 @@ impl AppState {
                             }
                         }
                     } else {
-                        ui.label(RichText::new("Allows All Divisions").color(Color32::from_rgb(156, 163, 175)));
+                        ui.label(RichText::new("Allows All Divisions").color(theme::TEXT_MUTED));
                     }
                 });
 
@@ -124,7 +125,7 @@ impl AppState {
         ui.add_space(15.0);
 
         // Interview Tables Table
-        egui::Grid::new("interview_tables_grid").num_columns(2).spacing(egui::vec2(20.0, 10.0)).show(ui, |ui| {
+        egui::Grid::new("interview_tables_grid").num_columns(2).spacing(egui::vec2(20.0, 10.0)).striped(true).show(ui, |ui| {
             ui.label(RichText::new("Table Name").strong());
             ui.label(RichText::new("Actions").strong());
             ui.end_row();

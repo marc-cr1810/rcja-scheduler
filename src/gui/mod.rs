@@ -1,3 +1,4 @@
+mod theme;
 mod helpers;
 mod dashboard;
 mod divisions;
@@ -70,6 +71,24 @@ pub enum ExportMessage {
     Error(String),
 }
 
+/// Pick a status colour for the solver readout in the bottom bar.
+fn solver_status_color(status: &str, solving: bool) -> Color32 {
+    if solving {
+        return theme::ACCENT;
+    }
+    let s = status.to_ascii_lowercase();
+    let unresolved_conflicts = s.contains("conflict") && !s.contains("no conflict");
+    if s.contains("fail") || s.contains("error") {
+        theme::DANGER
+    } else if s.contains("cancel") || unresolved_conflicts {
+        theme::WARNING
+    } else if s.contains("solved") || s.contains("no conflict") {
+        theme::SUCCESS
+    } else {
+        theme::TEXT_FAINT
+    }
+}
+
 impl eframe::App for AppState {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_solver_messages(ctx);
@@ -81,13 +100,13 @@ impl eframe::App for AppState {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.heading(RichText::new("RoboCup Jr Australia Coordinator Workspace").strong().color(Color32::from_rgb(129, 140, 248)));
+                        ui.heading(RichText::new("RoboCup Jr Australia Coordinator Workspace").strong().color(theme::ACCENT));
                         let subtitle = if let Some(path) = &self.current_file_path {
                             format!("Per-Competition Workspace & Schedule Solver - {}", path.display())
                         } else {
                             "Per-Competition Workspace & Schedule Solver - Unsaved".to_string()
                         };
-                        ui.label(RichText::new(subtitle).size(11.0).color(Color32::from_rgb(156, 163, 175)));
+                        ui.label(RichText::new(subtitle).size(11.0).color(theme::TEXT_MUTED));
                     });
                     
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -124,7 +143,7 @@ impl eframe::App for AppState {
                         .inner_margin(6.0)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("📄 Generating tournament documents...").strong().color(Color32::from_rgb(129, 140, 248)));
+                                ui.label(RichText::new("📄 Generating tournament documents...").strong().color(theme::ACCENT));
                                 ui.add(egui::ProgressBar::new(self.export_progress)
                                     .show_percentage()
                                     .animate(true)
@@ -139,10 +158,17 @@ impl eframe::App for AppState {
         // BOTTOM PANEL
         egui::TopBottomPanel::bottom("status_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Status: ").color(Color32::from_rgb(107, 114, 128)));
-                ui.label(RichText::new(&self.status_message).strong().color(Color32::from_rgb(229, 231, 235)));
+                ui.label(RichText::new("Status: ").color(theme::TEXT_FAINT));
+                ui.label(RichText::new(&self.status_message).strong().color(theme::TEXT));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(format!("Solver Status: {}", self.solve_status)).strong().color(Color32::from_rgb(129, 140, 248)));
+                    // Colour the solver readout (and a leading dot) by state so it
+                    // is glanceable: running → accent, clean solve → green,
+                    // remaining conflicts → amber, failure → red.
+                    let solving = self.solver_rx.is_some();
+                    let status_color = solver_status_color(&self.solve_status, solving);
+                    ui.label(RichText::new(format!("Solver Status: {}", self.solve_status)).strong().color(status_color));
+                    let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                    ui.painter().circle_filled(dot.center(), 4.0, status_color);
                 });
             });
         });
@@ -150,7 +176,7 @@ impl eframe::App for AppState {
         // SIDE PANEL
         egui::SidePanel::left("navigation_panel").width_range(210.0..=240.0).show(ctx, |ui| {
             ui.add_space(10.0);
-            ui.label(RichText::new("WORKSPACE PANELS").size(10.0).color(Color32::from_rgb(107, 114, 128)).strong());
+            ui.label(RichText::new("WORKSPACE PANELS").size(10.0).color(theme::TEXT_FAINT).strong());
             ui.add_space(5.0);
 
             let tab_buttons = vec![
@@ -165,15 +191,26 @@ impl eframe::App for AppState {
 
             for (tab, label) in tab_buttons {
                 let is_active = self.active_tab == tab;
-                let text_color = if is_active { Color32::WHITE } else { Color32::from_rgb(156, 163, 175) };
+                let text_color = if is_active { Color32::WHITE } else { theme::TEXT_MUTED };
 
                 let button = egui::Button::new(RichText::new(label).color(text_color).strong())
-                    .fill(if is_active { Color32::from_rgb(79, 70, 229) } else { Color32::TRANSPARENT })
+                    .fill(if is_active { theme::ACCENT_STRONG } else { Color32::TRANSPARENT })
                     .rounding(egui::Rounding::same(6.0))
                     .min_size(egui::vec2(180.0, 32.0));
 
                 ui.horizontal(|ui| {
-                    if ui.add(button).clicked() {
+                    let resp = ui.add(button);
+                    // egui freezes a button's fill once `.fill()` is set, so an
+                    // inactive (transparent) tab gets no hover feedback on its
+                    // own — paint a faint highlight over it on hover.
+                    if resp.hovered() && !is_active {
+                        ui.painter().rect_filled(
+                            resp.rect,
+                            egui::Rounding::same(6.0),
+                            Color32::from_rgba_unmultiplied(255, 255, 255, 14),
+                        );
+                    }
+                    if resp.clicked() {
                         self.active_tab = tab;
                         self.status_message = format!("Opened {} tab", label.split(' ').nth(1).unwrap_or(""));
                         self.update_diagnostics();
@@ -185,9 +222,9 @@ impl eframe::App for AppState {
                         
                         if error_count > 0 || warn_count > 0 {
                             let (color, text_color, count) = if error_count > 0 {
-                                (Color32::from_rgb(239, 68, 68), Color32::WHITE, error_count)
+                                (theme::DANGER_BORDER, Color32::WHITE, error_count)
                             } else {
-                                (Color32::from_rgb(251, 191, 36), Color32::BLACK, warn_count)
+                                (theme::WARNING, Color32::BLACK, warn_count)
                             };
 
                             let badge_size = 18.0;

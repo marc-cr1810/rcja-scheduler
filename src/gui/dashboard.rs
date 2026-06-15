@@ -1,4 +1,5 @@
 use crate::gui::AppState;
+use crate::gui::theme;
 use crate::validator::DiagnosticSeverity;
 use crate::gui::helpers::draw_stat_card;
 use eframe::egui::{self, Color32, RichText, Stroke};
@@ -17,16 +18,16 @@ impl AppState {
         ui.add_space(15.0);
 
         ui.horizontal_wrapped(|ui| {
-            draw_stat_card(ui, "Divisions", &self.config.divisions.len().to_string(), Color32::from_rgb(129, 140, 248));
-            draw_stat_card(ui, "Teams", &self.config.teams.len().to_string(), Color32::from_rgb(167, 139, 250));
-            draw_stat_card(ui, "Fields / Arenas", &self.config.fields.len().to_string(), Color32::from_rgb(52, 211, 153));
-            draw_stat_card(ui, "Time Slots", &self.config.time_slots.len().to_string(), Color32::from_rgb(244, 63, 94));
-            draw_stat_card(ui, "Volunteers", &self.config.volunteers.len().to_string(), Color32::from_rgb(251, 191, 36));
+            draw_stat_card(ui, "🏆", "Divisions", &self.config.divisions.len().to_string(), theme::ACCENT);
+            draw_stat_card(ui, "👥", "Teams", &self.config.teams.len().to_string(), theme::ACCENT_ALT);
+            draw_stat_card(ui, "🏟", "Fields / Arenas", &self.config.fields.len().to_string(), theme::SUCCESS);
+            draw_stat_card(ui, "📅", "Time Slots", &self.config.time_slots.len().to_string(), theme::ROSE);
+            draw_stat_card(ui, "👤", "Volunteers", &self.config.volunteers.len().to_string(), theme::WARNING);
         });
 
         ui.add_space(20.0);
 
-        ui.label(RichText::new("REAL-TIME DIAGNOSTICS").strong().size(12.0).color(Color32::from_rgb(156, 163, 175)));
+        ui.label(RichText::new("REAL-TIME DIAGNOSTICS").strong().size(12.0).color(theme::TEXT_MUTED));
         ui.add_space(5.0);
 
         let error_count = self.diagnostics.iter().filter(|d| d.severity == DiagnosticSeverity::Error).count();
@@ -34,8 +35,8 @@ impl AppState {
 
         if error_count == 0 && warn_count == 0 {
             egui::Frame::none()
-                .fill(Color32::from_rgb(6, 78, 59))
-                .stroke(Stroke::new(1.0, Color32::from_rgb(16, 185, 129)))
+                .fill(theme::SUCCESS_BG)
+                .stroke(Stroke::new(1.0, theme::SUCCESS_BORDER))
                 .rounding(8.0)
                 .inner_margin(12.0)
                 .show(ui, |ui| {
@@ -47,14 +48,14 @@ impl AppState {
         } else {
             for diag in &self.diagnostics {
                 let bg_color = match diag.severity {
-                    DiagnosticSeverity::Error => Color32::from_rgb(127, 29, 29),
-                    DiagnosticSeverity::Warning => Color32::from_rgb(120, 53, 4),
-                    DiagnosticSeverity::Info => Color32::from_rgb(30, 58, 138),
+                    DiagnosticSeverity::Error => theme::DANGER_BG,
+                    DiagnosticSeverity::Warning => theme::WARNING_BG,
+                    DiagnosticSeverity::Info => theme::INFO_BG,
                 };
                 let border_color = match diag.severity {
-                    DiagnosticSeverity::Error => Color32::from_rgb(239, 68, 68),
-                    DiagnosticSeverity::Warning => Color32::from_rgb(245, 158, 11),
-                    DiagnosticSeverity::Info => Color32::from_rgb(59, 130, 246),
+                    DiagnosticSeverity::Error => theme::DANGER_BORDER,
+                    DiagnosticSeverity::Warning => theme::WARNING_BORDER,
+                    DiagnosticSeverity::Info => theme::INFO_BORDER,
                 };
                 let header_text = match diag.severity {
                     DiagnosticSeverity::Error => "❌ ERROR",
@@ -75,7 +76,7 @@ impl AppState {
                             });
                             if let Some(ref rec) = diag.recommendation {
                                 ui.add_space(4.0);
-                                ui.label(RichText::new(format!("💡 Recommended: {}", rec)).color(Color32::from_rgb(229, 231, 235)).size(11.5));
+                                ui.label(RichText::new(format!("💡 Recommended: {}", rec)).color(theme::TEXT).size(11.5));
                             }
                         });
                     });

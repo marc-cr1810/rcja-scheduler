@@ -1,4 +1,5 @@
 use crate::gui::AppState;
+use crate::gui::theme;
 use crate::model::{Division, SchedulingMode, FinalsRounds};
 use crate::scheduler::sanitize_name;
 use crate::gui::helpers::draw_card;
@@ -50,7 +51,7 @@ impl AppState {
                                         let full_rr = n - 1;
                                         let is_partial = !self.new_div_games.is_multiple_of(full_rr);
                                         if is_partial {
-                                            ui.label(RichText::new("⚠").color(Color32::from_rgb(251, 191, 36)))
+                                            ui.label(RichText::new("⚠").color(theme::WARNING))
                                                 .on_hover_text(format!(
                                                     "Partial Round Robin: Each team plays {} games.\n\
                                                      A full round robin requires {} games per team (or multiples: {}, {}, {}, etc.).\n\
@@ -111,7 +112,7 @@ impl AppState {
                                         FinalsRounds::Eighths => 16,
                                     };
                                     if n < required {
-                                        ui.label(RichText::new("⚠").color(Color32::from_rgb(248, 113, 113)))
+                                        ui.label(RichText::new("⚠").color(theme::DANGER))
                                             .on_hover_text(format!(
                                                 "Insufficient teams: {} teams in division, but '{}' requires at least {}.",
                                                 n, match self.new_div_finals_rounds {
@@ -202,7 +203,18 @@ impl AppState {
 
         ui.add_space(15.0);
 
-        ui.label(RichText::new("EXISTING DIVISIONS").strong().color(Color32::from_rgb(156, 163, 175)));
+        if self.config.divisions.is_empty() {
+            crate::gui::helpers::draw_empty_state(
+                ui,
+                "🏆",
+                "No divisions yet",
+                "Create your first division above to start building the competition.",
+                None,
+            );
+            return;
+        }
+
+        ui.label(RichText::new("EXISTING DIVISIONS").strong().color(theme::TEXT_MUTED));
         ui.add_space(5.0);
 
         let mut division_to_delete = None;
@@ -216,9 +228,9 @@ impl AppState {
             };
             
             egui::Frame::none()
-                .fill(Color32::from_rgb(26, 32, 44))
+                .fill(theme::CARD_BG_ALT)
                 .rounding(8.0)
-                .stroke(Stroke::new(1.0, Color32::from_rgb(55, 65, 81)))
+                .stroke(Stroke::new(1.0, theme::BORDER))
                 .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
@@ -226,11 +238,11 @@ impl AppState {
                             ui.label(RichText::new(icon).strong().size(15.0).color(Color32::WHITE));
                             ui.vertical(|ui| {
                                 ui.label(RichText::new(&div.name).strong().size(14.0).color(Color32::WHITE));
-                                ui.label(RichText::new(format!("ID: {}", div.id)).size(10.0).color(Color32::from_rgb(107, 114, 128)));
+                                ui.label(RichText::new(format!("ID: {}", div.id)).size(10.0).color(theme::TEXT_FAINT));
                             });
                             
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.button(RichText::new("🗑 Delete").color(Color32::from_rgb(248, 113, 113))).clicked() {
+                                if ui.button(RichText::new("🗑 Delete").color(theme::DANGER)).clicked() {
                                     division_to_delete = Some(idx);
                                 }
                             });
@@ -275,7 +287,7 @@ impl AppState {
                                     let full_rr = n - 1;
                                     let is_partial = div.games_per_team % full_rr != 0;
                                     if is_partial {
-                                        ui.label(RichText::new("⚠").color(Color32::from_rgb(251, 191, 36)))
+                                        ui.label(RichText::new("⚠").color(theme::WARNING))
                                             .on_hover_text(format!(
                                                 "Partial Round Robin: Each team plays {} games.\n\
                                                  A full round robin requires {} games per team (or multiples: {}, {}, {}, etc.).\n\
@@ -284,7 +296,7 @@ impl AppState {
                                             ));
                                     }
                                 } else {
-                                    ui.label(RichText::new("⚠").color(Color32::from_rgb(248, 113, 113)))
+                                    ui.label(RichText::new("⚠").color(theme::DANGER))
                                         .on_hover_text("Need at least 2 teams in this division to play matches.");
                                 }
                             }
@@ -350,7 +362,7 @@ impl AppState {
                                         FinalsRounds::Eighths => 16,
                                     };
                                     if n < required {
-                                        ui.label(RichText::new("⚠").color(Color32::from_rgb(248, 113, 113)))
+                                        ui.label(RichText::new("⚠").color(theme::DANGER))
                                             .on_hover_text(format!(
                                                 "Insufficient teams: {} teams in division, but '{}' requires at least {}.",
                                                 n, match rounds {
@@ -421,10 +433,10 @@ impl AppState {
                                 if ui.add(egui::DragValue::new(mins).clamp_range(0..=120).suffix(" min")).changed() {
                                     divisions_changed = true;
                                 }
-                                ui.label(RichText::new("(0 = no recharge break for this division)").size(10.0).color(Color32::from_rgb(107, 114, 128)));
+                                ui.label(RichText::new("(0 = no recharge break for this division)").size(10.0).color(theme::TEXT_FAINT));
                             } else {
                                 ui.label(RichText::new(format!("Inheriting global default ({} min)", self.solver_team_match_min_break_minutes))
-                                    .size(10.0).color(Color32::from_rgb(107, 114, 128)));
+                                    .size(10.0).color(theme::TEXT_FAINT));
                             }
                         });
 

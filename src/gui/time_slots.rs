@@ -1,4 +1,5 @@
 use crate::gui::AppState;
+use crate::gui::theme;
 use crate::model::{SchedulingMode, TimeSlot};
 use eframe::egui::{self, Color32, RichText};
 
@@ -14,7 +15,7 @@ impl AppState {
 
         // 1. Group Auto-Calculate & Generate in a nice frame
         egui::Frame::none()
-            .fill(Color32::from_rgb(30, 37, 50))
+            .fill(theme::CARD_BG)
             .rounding(8.0)
             .inner_margin(12.0)
             .show(ui, |ui| {
@@ -34,13 +35,13 @@ impl AppState {
                 });
 
                 ui.add_space(8.0);
-                ui.label(RichText::new("💡 Tip: Click the button below to regenerate slots after changing durations or breaks.").italics().color(Color32::from_rgb(156, 163, 175)));
+                ui.label(RichText::new("💡 Tip: Click the button below to regenerate slots after changing durations or breaks.").italics().color(theme::TEXT_MUTED));
 
                 ui.add_space(10.0);
                 ui.separator();
                 ui.add_space(8.0);
 
-                ui.label(RichText::new("Day Configurations:").strong().color(Color32::from_rgb(229, 231, 235)));
+                ui.label(RichText::new("Day Configurations:").strong().color(theme::TEXT));
                 ui.add_space(4.0);
 
                 // Grid of day configurations
@@ -82,7 +83,7 @@ impl AppState {
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             // Only allow deletion if there's more than one config, or always allow but we auto-add default if empty
-                            let delete_btn = egui::Button::new(RichText::new("🗑").color(Color32::from_rgb(248, 113, 113)))
+                            let delete_btn = egui::Button::new(RichText::new("🗑").color(theme::DANGER))
                                 .fill(Color32::TRANSPARENT);
                             if ui.add(delete_btn).on_hover_text("Delete this day configuration").clicked() {
                                 to_remove_day = Some(idx);
@@ -98,7 +99,7 @@ impl AppState {
 
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new("➕ Add Day Configuration").strong().color(Color32::from_rgb(129, 140, 248))).clicked() {
+                    if ui.button(RichText::new("➕ Add Day Configuration").strong().color(theme::ACCENT)).clicked() {
                         let week = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
                         let used: std::collections::HashSet<String> = self.config.day_configs.iter().map(|c| c.day.clone()).collect();
                         let last_day = self.config.day_configs.last().map(|c| c.day.clone()).unwrap_or_else(|| "Friday".to_string());
@@ -123,7 +124,7 @@ impl AppState {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let gen_btn = egui::Button::new(RichText::new("⚡ Auto-Calculate & Generate").strong().color(Color32::WHITE))
-                            .fill(Color32::from_rgb(79, 70, 229))
+                            .fill(theme::ACCENT_STRONG)
                             .rounding(6.0)
                             .min_size(egui::vec2(180.0, 30.0));
                         if ui.add(gen_btn).clicked() {
@@ -175,17 +176,17 @@ impl AppState {
                 let total_generated = self.config.time_slots.len();
 
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Summary Info:").strong().color(Color32::from_rgb(156, 163, 175)));
+                    ui.label(RichText::new("Summary Info:").strong().color(theme::TEXT_MUTED));
                     ui.label(format!("Total matches & runs to schedule: {}", total_games));
                     ui.label("|");
                     ui.label(format!("Fields: {}", total_fields));
                     ui.label("|");
-                    ui.label(RichText::new(format!("Required slots: {}", required_slots)).strong().color(Color32::from_rgb(129, 140, 248)));
+                    ui.label(RichText::new(format!("Required slots: {}", required_slots)).strong().color(theme::ACCENT));
                     ui.label("|");
                     let status_color = if total_generated >= required_slots {
-                        Color32::from_rgb(52, 211, 153) // Green
+                        theme::SUCCESS // Green
                     } else {
-                        Color32::from_rgb(248, 113, 113) // Red
+                        theme::DANGER // Red
                     };
                     ui.label(RichText::new(format!("Generated slots: {}", total_generated)).strong().color(status_color));
                 });
