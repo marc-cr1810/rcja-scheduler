@@ -3,3 +3,9 @@
 # numbers). Equivalent to:
 #   cargo test --release solver_benchmark -- --ignored --nocapture
 bench-solver = "test --release solver_benchmark -- --ignored --nocapture"
+
+# Phase 0 safety-net baseline for the solver re-architecture. Solves the real
+# config (rcja_config.json) with a fixed seed and prints the hard-conflict
+# breakdown, soft cost, and dispersion metric. Release is essential.
+#   cargo test --release golden_baseline -- --ignored --nocapture
+golden = "test --release golden_baseline -- --ignored --nocapture"

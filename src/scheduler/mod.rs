@@ -2,11 +2,14 @@ pub mod activity;
 mod evaluator;
 mod solver;
 pub mod utils;
-mod internal;
+pub mod internal;
 mod fast_evaluator;
 mod conflicts;
+mod cells;
 #[cfg(test)]
 mod bench;
+#[cfg(test)]
+mod golden;
 
 use crate::model::{FairnessMode, SpecialistMode, TournamentConfig};
 use std::collections::{HashMap, HashSet};
@@ -97,7 +100,9 @@ impl Default for SolverParams {
             vol_travel_weight: 0.3,
             round_order_weight: 5.0,
             vol_daily_shift_cap: 0,
-            peak_period_weight: 2.0,
+            // Kept in step with `SolverSettings::default` (the live app's source of
+            // truth); 1.0 is the measured-best even-spread weight.
+            peak_period_weight: 1.0,
             finals_priority_multiplier: 2.0,
             cancel_flag: None,
             seed: None,

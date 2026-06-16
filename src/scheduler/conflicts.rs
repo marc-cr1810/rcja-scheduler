@@ -57,7 +57,12 @@ pub enum ConflictKind {
     DailyShiftCapExceeded { vol_idx: usize },
     /// Two activities share a team in overlapping time.
     TeamDoubleBooked { team_idx: usize },
-    /// Two activities share a field in overlapping time.
+    /// Two activities share a field in overlapping time. Solver output can never
+    /// trigger this — the cell-model move set makes it structurally impossible
+    /// (see `cells::FieldOccupancy` and the `solver` move operators). It is
+    /// retained because the evaluator also validates schedules the solver didn't
+    /// produce: the GUI's drag-and-drop editor and configs loaded from disk, where
+    /// a user can place two activities on one field.
     FieldDoubleBooked { field_idx: usize },
     /// Two activities share a volunteer in overlapping time.
     VolDoubleBooked { vol_idx: usize },

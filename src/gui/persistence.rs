@@ -1307,6 +1307,41 @@ mod time_fmt_test {
         
         let sched = crate::scheduler::solve_schedule(&app_state.config, &params, |_, _, _, _, _, _| {}).expect("solved schedule");
         
+        let conflicts = crate::scheduler::get_schedule_conflicts(&app_state.config, &sched, &params);
+        println!("TOTAL HARD CONFLICTS FOUND: {}", conflicts.len());
+        for conflict in &conflicts {
+            println!("HARD CONFLICT: {}", conflict);
+            if conflict.contains("Round Order: Team") {
+                // Extract team name between single quotes
+                let parts: Vec<&str> = conflict.split('\'').collect();
+                if parts.len() >= 2 {
+                    let team_name = parts[1];
+                    println!("ASSIGNMENTS FOR TEAM '{}':", team_name);
+                    let mut team_assignments: Vec<(usize, String, String)> = Vec::new();
+                    for (i, ass) in sched.assignments.iter().enumerate() {
+                        let act = &sched.assignments[i].activity;
+                        let teams = match act {
+                            crate::model::Activity::Match { team_a, team_b, .. } => vec![team_a.clone(), team_b.clone()],
+                            _ => vec![],
+                        };
+                        if teams.contains(&team_name.to_string()) {
+                            let s_idx = app_state.config.time_slots.iter().position(|s| s.id == ass.time_slot_id).unwrap_or(0);
+                            let slot_time = &app_state.config.time_slots[s_idx];
+                            team_assignments.push((
+                                s_idx,
+                                format!("{} {}", slot_time.day, slot_time.start_time),
+                                format!("{:?}", act)
+                            ));
+                        }
+                    }
+                    team_assignments.sort_by_key(|(s_idx, _, _)| *s_idx);
+                    for (s_idx, slot_str, act_str) in team_assignments {
+                        println!("  Slot {} ({}): {}", s_idx, slot_str, act_str);
+                    }
+                }
+            }
+        }
+        
         let csv = generate_csv_content_internal(&app_state.config, &sched.assignments, false);
         
         let mut out_file = File::create("/home/marc/programming/rust/rcja-scheduler/schedule.csv").unwrap();

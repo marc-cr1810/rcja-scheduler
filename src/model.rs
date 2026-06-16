@@ -478,7 +478,11 @@ impl Default for SolverSettings {
             vol_travel_weight: 0.3,
             round_order_weight: 5.0,
             vol_daily_shift_cap: 0,
-            peak_period_weight: 0.1,
+            // Even spread is a primary objective. 1.0 measured best on the real
+            // config (dispersion CoV and overall soft cost both lowest) now that
+            // the round-window banding no longer pre-clusters rounds; the old 0.1
+            // barely registered against the other soft terms.
+            peak_period_weight: 1.0,
             finals_priority_multiplier: 2.0,
             use_seed: false,
             seed: 0,
