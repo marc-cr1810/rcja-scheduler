@@ -1290,4 +1290,28 @@ mod time_fmt_test {
         assert_eq!(format_time_str("bogus", true), "bogus");
         assert_eq!(format_time_str("25:00", true), "25:00");
     }
+
+    #[test]
+    fn generate_schedule_csv_test() {
+        use std::fs::File;
+        use std::io::Write;
+        
+        let file = File::open("/home/marc/programming/rust/rcja-scheduler/rcja_config.json").unwrap();
+        let config: crate::model::TournamentConfig = serde_json::from_reader(file).unwrap();
+        
+        let mut app_state = AppState::default();
+        app_state.config = config;
+        app_state.sync_solver_settings_from_config();
+        
+        let params = app_state.get_solver_params();
+        
+        let sched = crate::scheduler::solve_schedule(&app_state.config, &params, |_, _, _, _, _, _| {}).expect("solved schedule");
+        
+        let csv = generate_csv_content_internal(&app_state.config, &sched.assignments, false);
+        
+        let mut out_file = File::create("/home/marc/programming/rust/rcja-scheduler/schedule.csv").unwrap();
+        out_file.write_all(csv.as_bytes()).unwrap();
+        
+        println!("SUCCESSFULLY GENERATED schedule.csv");
+    }
 }

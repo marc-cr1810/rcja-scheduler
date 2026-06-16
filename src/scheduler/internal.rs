@@ -391,14 +391,6 @@ impl InternalTournamentConfig {
                         band_ends[bi] = c_end;
                         curr = c_end;
                     }
-                    
-                    let finals_start_slot = if !finals_rounds.is_empty() && n_bands > 0 {
-                        let finals_c_start = band_starts[n_bands - 1];
-                        comp_indices[finals_c_start.min(n_comp - 1)]
-                    } else {
-                        n_slots
-                    };
-                    
                     for (bi, (round_idxs, _, _)) in bands.iter().enumerate() {
                         let is_finals = !finals_rounds.is_empty() && bi == n_bands - 1;
                         let range = if is_finals {
@@ -407,7 +399,7 @@ impl InternalTournamentConfig {
                         } else {
                             let start_bi = bi.saturating_sub(1);
                             let range_start = comp_indices[band_starts[start_bi].min(n_comp - 1)];
-                            range_start..finals_start_slot
+                            range_start..n_slots
                         };
                         for &r_idx in round_idxs {
                             round_ranges[r_idx] = range.clone();

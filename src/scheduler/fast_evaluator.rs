@@ -1,4 +1,4 @@
-use super::internal::{InternalTournamentConfig, InternalAssignment, InternalSchedule};
+use super::internal::{InternalTournamentConfig, InternalAssignment, InternalSchedule, InternalActivity};
 use super::SolverParams;
 use super::conflicts::{Conflict, ConflictKind, ConflictSink, ConflictedSink, CostClass, RecordSink, ScalarSink};
 use crate::model::{Activity, FairnessMode, SpecialistMode, FieldKind, Schedule, ScheduleAssignment, SchedulingMode, TournamentConfig};
@@ -1005,8 +1005,80 @@ impl<'a> FastEvaluator<'a> {
         }
     }
 
+    fn get_stage_and_index(act: &InternalActivity) -> Option<(usize, usize)> {
+        if !act.is_final {
+            return None;
+        }
+        let idx = match act.stage {
+            1 | 2 | 3 => {
+                // Extract the last number from the ID
+                act.id.split('_').last()?.parse::<usize>().ok()?
+            }
+            4 | 5 => 1,
+            _ => return None,
+        };
+        Some((act.stage, idx))
+    }
+
+    fn match_depends_on(stage2: usize, idx2: usize, stage1: usize, idx1: usize) -> bool {
+        if stage1 >= stage2 {
+            return false;
+        }
+        match stage2 {
+            5 | 4 => {
+                // GF (5) and 3PL (4) depend on SF1 and SF2 (stage 3)
+                stage1 == 3 
+                    || Self::match_depends_on(3, 1, stage1, idx1) 
+                    || Self::match_depends_on(3, 2, stage1, idx1)
+            }
+            3 => {
+                // SF (3)
+                if idx2 == 1 {
+                    (stage1 == 2 && (idx1 == 1 || idx1 == 4))
+                        || Self::match_depends_on(2, 1, stage1, idx1)
+                        || Self::match_depends_on(2, 4, stage1, idx1)
+                } else {
+                    (stage1 == 2 && (idx1 == 2 || idx1 == 3))
+                        || Self::match_depends_on(2, 2, stage1, idx1)
+                        || Self::match_depends_on(2, 3, stage1, idx1)
+                }
+            }
+            2 => {
+                // QF (2)
+                let partner = 9 - idx2;
+                stage1 == 1 && (idx1 == idx2 || idx1 == partner)
+            }
+            _ => false,
+        }
+    }
+
     fn report_division_penalties<S: ConflictSink>(params: &SolverParams, config: &InternalTournamentConfig, schedule: &InternalSchedule, list: &[usize], sink: &mut S) {
         if list.is_empty() { return; }
+
+        // Penalise the span of the finals to encourage compacting them.
+        let mut first_final_slot_idx = None;
+        let mut last_final_slot_idx = None;
+        for &idx in list {
+            let act = &config.activities[idx];
+            if act.is_final && !act.is_interview {
+                let assign = &schedule.assignments[idx];
+                if first_final_slot_idx.is_none() {
+                    first_final_slot_idx = Some(assign.slot_idx);
+                }
+                last_final_slot_idx = Some(assign.slot_idx);
+            }
+        }
+        if let (Some(first_slot), Some(last_slot)) = (first_final_slot_idx, last_final_slot_idx) {
+            if last_slot > first_slot {
+                let span = last_slot - first_slot;
+                sink.report(
+                    CostClass::Soft,
+                    span as f64 * params.round_order_weight * 2.0,
+                    ConflictKind::RoundOrder,
+                    &[],
+                );
+            }
+        }
 
         for i in 0..list.len() {
             let idx1 = list[i];
@@ -1032,11 +1104,21 @@ impl<'a> FastEvaluator<'a> {
                     let is_3pl_gf = (stage1 == 4 && stage2 == 5) || (stage1 == 5 && stage2 == 4);
                     if !is_3pl_gf {
                         if stage1 > stage2 {
-                            // Hard conflict: later stage starts at or before earlier stage
+                            // Hard conflict: later stage starts at or before earlier stage (global sequence)
                             sink.report(CostClass::Hard, 10.0, ConflictKind::StageOrder, &[idx1, idx2]);
                         } else if slot1.day_idx == slot2.day_idx && end1 > slot2.start_minutes {
-                            // stage1 < stage2: overlap between different stages.
-                            sink.report(CostClass::Hard, 10.0, ConflictKind::StageOverlap, &[idx1, idx2]);
+                            // stage1 < stage2: overlap is only a conflict if they are dependent
+                            let is_rr = stage1 == 0 || stage2 == 0;
+                            let dependent = is_rr || {
+                                if let (Some((st1, idx1)), Some((st2, idx2))) = (Self::get_stage_and_index(act1), Self::get_stage_and_index(act2)) {
+                                    Self::match_depends_on(st2, idx2, st1, idx1) || Self::match_depends_on(st1, idx1, st2, idx2)
+                                } else {
+                                    true
+                                }
+                            };
+                            if dependent {
+                                sink.report(CostClass::Hard, 10.0, ConflictKind::StageOverlap, &[idx1, idx2]);
+                            }
                         }
                     }
                 } else if round1 > round2 {
@@ -1265,6 +1347,117 @@ mod tests {
         let cost = evaluator.calculate_total_cost(&schedule);
 
         assert!(cost.0 >= 10.0, "3PL before SF should be a hard conflict in FastEvaluator (got {})", cost.0);
+    }
+
+    #[test]
+    fn test_fast_evaluator_independent_finals_no_conflict() {
+        let mut config = TournamentConfig::default();
+        config.divisions = vec![
+            Division { 
+                id: "div1".into(), name: "Div 1".into(), mode: SchedulingMode::HeadToHead, 
+                games_per_team: 2, volunteers_required: 0, duration_minutes: 20, 
+                allowed_fields: None, interviews_enabled: false, 
+                interview_volunteers_required: 0, interview_duration_minutes: 0,
+                finals_enabled: true, finals_rounds: Some(FinalsRounds::Quarter), finals_duration_minutes: Some(20),
+                finals_third_place_playoff: false,
+                color: None, min_match_break_minutes: None,
+            },
+        ];
+        config.time_slots = vec![
+            TimeSlot { id: "s1".into(), day: "Sat".into(), start_time: "09:00".into(), end_time: "09:20".into(), kind: FieldKind::Competition },
+            TimeSlot { id: "s2".into(), day: "Sat".into(), start_time: "09:30".into(), end_time: "09:50".into(), kind: FieldKind::Competition },
+        ];
+        config.fields = vec![
+            Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: None },
+            Field { id: "f2".into(), name: "Field 2".into(), kind: FieldKind::Competition, allowed_divisions: None },
+            Field { id: "f3".into(), name: "Field 3".into(), kind: FieldKind::Competition, allowed_divisions: None },
+        ];
+        config.day_configs = vec![
+            DayGenConfig { day: "Sat".into(), ..Default::default() },
+        ];
+
+        let activities = vec![
+            Activity::Match { id: "div1_qf_2".into(), team_a: "2nd".into(), team_b: "7th".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::QuarterFinal }, 
+            Activity::Match { id: "div1_qf_3".into(), team_a: "3rd".into(), team_b: "6th".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::QuarterFinal }, 
+            Activity::Match { id: "div1_qf_4".into(), team_a: "4th".into(), team_b: "5th".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::QuarterFinal }, 
+            Activity::Match { id: "div1_sf_2".into(), team_a: "Winner QF2".into(), team_b: "Winner QF3".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::SemiFinal }, 
+        ];
+
+        let internal_config = InternalTournamentConfig::compile(&config, &activities);
+        let params = SolverParams::default();
+        let mut evaluator = FastEvaluator::new(&internal_config, &params);
+
+        // Schedule:
+        // - QF2 at s1 (slot 0)
+        // - QF3 at s1 (slot 0)
+        // - QF4 at s2 (slot 1)
+        // - SF2 at s2 (slot 1)
+        // This is perfectly valid! SF2 starts after QF2 & QF3 finish. QF4 runs in parallel with SF2.
+        let schedule = crate::scheduler::internal::InternalSchedule {
+            assignments: vec![
+                crate::scheduler::internal::InternalAssignment { slot_idx: 0, field_idx: Some(0), volunteer_indices: vec![] },
+                crate::scheduler::internal::InternalAssignment { slot_idx: 0, field_idx: Some(1), volunteer_indices: vec![] },
+                crate::scheduler::internal::InternalAssignment { slot_idx: 1, field_idx: Some(0), volunteer_indices: vec![] },
+                crate::scheduler::internal::InternalAssignment { slot_idx: 1, field_idx: Some(1), volunteer_indices: vec![] },
+            ]
+        };
+
+        evaluator.init(&schedule);
+        let cost = evaluator.calculate_total_cost(&schedule);
+
+        assert_eq!(cost.0, 0.0, "Independent finals overlapping should have 0 hard conflicts, got {}", cost.0);
+    }
+
+    #[test]
+    fn test_fast_evaluator_stage_order_enforced_globally() {
+        let mut config = TournamentConfig::default();
+        config.divisions = vec![
+            Division { 
+                id: "div1".into(), name: "Div 1".into(), mode: SchedulingMode::HeadToHead, 
+                games_per_team: 2, volunteers_required: 0, duration_minutes: 20, 
+                allowed_fields: None, interviews_enabled: false, 
+                interview_volunteers_required: 0, interview_duration_minutes: 0,
+                finals_enabled: true, finals_rounds: Some(FinalsRounds::Quarter), finals_duration_minutes: Some(20),
+                finals_third_place_playoff: false,
+                color: None, min_match_break_minutes: None,
+            },
+        ];
+        config.time_slots = vec![
+            TimeSlot { id: "s1".into(), day: "Sat".into(), start_time: "09:00".into(), end_time: "09:20".into(), kind: FieldKind::Competition },
+            TimeSlot { id: "s2".into(), day: "Sat".into(), start_time: "09:30".into(), end_time: "09:50".into(), kind: FieldKind::Competition },
+        ];
+        config.fields = vec![
+            Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: None },
+            Field { id: "f2".into(), name: "Field 2".into(), kind: FieldKind::Competition, allowed_divisions: None },
+        ];
+        config.day_configs = vec![
+            DayGenConfig { day: "Sat".into(), ..Default::default() },
+        ];
+
+        let activities = vec![
+            Activity::Match { id: "div1_qf_4".into(), team_a: "4th".into(), team_b: "5th".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::QuarterFinal }, 
+            Activity::Match { id: "div1_sf_2".into(), team_a: "Winner QF2".into(), team_b: "Winner QF3".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::SemiFinal }, 
+        ];
+
+        let internal_config = InternalTournamentConfig::compile(&config, &activities);
+        let params = SolverParams::default();
+        let mut evaluator = FastEvaluator::new(&internal_config, &params);
+
+        // Schedule:
+        // - SF2 at s1 (slot 0)
+        // - QF4 at s2 (slot 1)
+        // This is a global StageOrder conflict because a stage 3 match (SF2) starts before a stage 2 match (QF4) has begun.
+        let schedule = crate::scheduler::internal::InternalSchedule {
+            assignments: vec![
+                crate::scheduler::internal::InternalAssignment { slot_idx: 1, field_idx: Some(0), volunteer_indices: vec![] }, // QF4 at s2
+                crate::scheduler::internal::InternalAssignment { slot_idx: 0, field_idx: Some(1), volunteer_indices: vec![] }, // SF2 at s1
+            ]
+        };
+
+        evaluator.init(&schedule);
+        let cost = evaluator.calculate_total_cost(&schedule);
+
+        assert!(cost.0 >= 10.0, "SF2 starting before QF4 should be a global StageOrder hard conflict, got {}", cost.0);
     }
 
     /// Two round-robin matches placed out of round order (the later round in the
