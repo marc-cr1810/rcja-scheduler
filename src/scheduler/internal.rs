@@ -405,7 +405,8 @@ impl InternalTournamentConfig {
                             let range_start = comp_indices[band_starts[bi].min(n_comp - 1)];
                             range_start..n_slots
                         } else {
-                            let range_start = comp_indices[band_starts[bi].min(n_comp - 1)];
+                            let start_bi = bi.saturating_sub(1);
+                            let range_start = comp_indices[band_starts[start_bi].min(n_comp - 1)];
                             range_start..finals_start_slot
                         };
                         for &r_idx in round_idxs {

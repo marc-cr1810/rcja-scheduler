@@ -432,14 +432,14 @@ impl<'a> FastEvaluator<'a> {
             }
         }
 
-        // Peak period: encourage an even spread of activities across the whole
-        // timeline by penalising the variance of per-time-slot occupancy. Competition
-        // and interview slots are scored separately because they have very different
-        // capacities (many fields vs a couple of interview tables) and would never
-        // equalise if pooled. Crucially, *every* slot of each kind is included —
-        // empty ones too — so a sparse early slot is penalised just like an
-        // overloaded one; otherwise the solver is free to leave the start of a day
-        // empty and pack the middle.
+        // Peak period: encourage an even spread of activities within each
+        // day by penalising the variance of per-time-slot occupancy *per
+        // day*. Computing per-day rather than globally prevents cross-day
+        // imbalance from dominating: when Saturday has many more comp slots
+        // than Sunday, a global variance is dominated by the unavoidable
+        // between-day difference and the solver stops trying to equalise
+        // within Saturday. Per-day variance isolates the within-day spread
+        // the solver can actually improve.
         if self.params.peak_period_weight > 0.0 {
             let mut comp_counts = vec![0.0f64; self.config.slots.len()];
             let mut interview_counts = vec![0.0f64; self.config.slots.len()];
@@ -451,17 +451,20 @@ impl<'a> FastEvaluator<'a> {
                     counts[s_idx] += 1.0;
                 }
             }
-            let by_kind = |kind: FieldKind, counts: &[f64]| -> Vec<f64> {
-                self.config.slots.iter().enumerate()
-                    .filter(|(_, s)| s.kind == kind)
-                    .map(|(i, _)| counts[i])
-                    .collect()
-            };
-            let comp = by_kind(FieldKind::Competition, &comp_counts);
-            let interviews = by_kind(FieldKind::Interview, &interview_counts);
-            let mut penalty = calculate_variance_f64(&comp);
-            if !interviews.is_empty() {
-                penalty += calculate_variance_f64(&interviews);
+            let mut penalty = 0.0f64;
+            for day_idx in 0..self.config.days.len() {
+                let day_comp: Vec<f64> = self.config.slots.iter().enumerate()
+                    .filter(|(_, s)| s.kind == FieldKind::Competition && s.day_idx == day_idx)
+                    .map(|(i, _)| comp_counts[i])
+                    .collect();
+                let day_interview: Vec<f64> = self.config.slots.iter().enumerate()
+                    .filter(|(_, s)| s.kind == FieldKind::Interview && s.day_idx == day_idx)
+                    .map(|(i, _)| interview_counts[i])
+                    .collect();
+                penalty += calculate_variance_f64(&day_comp);
+                if !day_interview.is_empty() {
+                    penalty += calculate_variance_f64(&day_interview);
+                }
             }
             sink.report(CostClass::Soft, penalty * self.params.peak_period_weight, ConflictKind::PeakPeriod, &[]);
         }
@@ -847,13 +850,19 @@ impl<'a> FastEvaluator<'a> {
         }
 
         if self.params.peak_period_weight > 0.0 {
-            let by_kind = |kind: FieldKind, counts: &[f64]| -> Vec<f64> {
-                self.config.slots.iter().enumerate().filter(|(_, s)| s.kind == kind).map(|(i, _)| counts[i]).collect()
-            };
-            let comp = by_kind(FieldKind::Competition, &self.comp_slot_occ);
-            let interviews = by_kind(FieldKind::Interview, &self.interview_slot_occ);
-            let mut penalty = calculate_variance_f64(&comp);
-            if !interviews.is_empty() { penalty += calculate_variance_f64(&interviews); }
+            let mut penalty = 0.0f64;
+            for day_idx in 0..self.config.days.len() {
+                let day_comp: Vec<f64> = self.config.slots.iter().enumerate()
+                    .filter(|(_, s)| s.kind == FieldKind::Competition && s.day_idx == day_idx)
+                    .map(|(i, _)| self.comp_slot_occ[i])
+                    .collect();
+                let day_interview: Vec<f64> = self.config.slots.iter().enumerate()
+                    .filter(|(_, s)| s.kind == FieldKind::Interview && s.day_idx == day_idx)
+                    .map(|(i, _)| self.interview_slot_occ[i])
+                    .collect();
+                penalty += calculate_variance_f64(&day_comp);
+                if !day_interview.is_empty() { penalty += calculate_variance_f64(&day_interview); }
+            }
             soft += penalty * self.params.peak_period_weight;
         }
 
@@ -949,16 +958,26 @@ impl<'a> FastEvaluator<'a> {
 
         if !want_soft { return; }
 
-        // Wait Time
+        // Wait Time — penalises a large wall-clock span between a team's
+        // first and last match on a day relative to the number of matches.
+        // Uses real minutes instead of slot indices so that interleaved
+        // interview slots and lunch breaks don't inflate the distance and
+        // bias games away from early time slots.
         if params.team_wait_time_weight > 0.0 && list.len() > 1 {
             let non_interviews: Vec<usize> = list.iter().filter(|&&i| !config.activities[i].is_interview).copied().collect();
             if non_interviews.len() > 1 {
                 let first = non_interviews[0];
                 let last = *non_interviews.last().unwrap();
-                let span = schedule.assignments[last].slot_idx - schedule.assignments[first].slot_idx;
-                let excessive_span = span.saturating_sub(non_interviews.len() * 2);
-                if excessive_span > 0 {
-                    sink.report(CostClass::Soft, (excessive_span as f64) * params.team_wait_time_weight, ConflictKind::TeamWaitTime, &[first, last]);
+                let first_min = config.slots[schedule.assignments[first].slot_idx].start_minutes;
+                let last_min = config.slots[schedule.assignments[last].slot_idx].start_minutes;
+                let span_minutes = last_min.saturating_sub(first_min);
+                // Allow ~20 minutes per game (game duration + comfortable break)
+                // before penalising; anything wider is excessive waiting.
+                let threshold = non_interviews.len() as u32 * 20;
+                let excessive = span_minutes.saturating_sub(threshold);
+                if excessive > 0 {
+                    let penalty = (excessive as f64 / 20.0) * params.team_wait_time_weight;
+                    sink.report(CostClass::Soft, penalty, ConflictKind::TeamWaitTime, &[first, last]);
                 }
             }
         }
