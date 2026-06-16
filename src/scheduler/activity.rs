@@ -225,7 +225,46 @@ fn generate_head_to_head_matches(
         }
     }
 
+    // The two-phase selection above cherry-picks matches across the circle
+    // generator's rounds, so the surviving matches carry sparse, arbitrary round
+    // indices (e.g. 0,1,2,3,4,7,9). Renumber them into a dense, contiguous run of
+    // parallel rounds so the schedule reads as Round 1..k with no gaps.
+    renumber_rounds(division_id, &mut selected);
+
     selected
+}
+
+/// Repacks already-selected matches into contiguous, parallel rounds via a greedy
+/// edge-colouring: each match is placed in the lowest-numbered round that neither
+/// of its teams already occupies, so no team plays twice in a round. The team with
+/// the most games sets the round count. Rewrites each match's `round` (in its
+/// [`MatchStage`] and id) accordingly.
+fn renumber_rounds(division_id: &str, matches: &mut [Activity]) {
+    use std::collections::HashSet;
+    let mut rounds: Vec<HashSet<String>> = Vec::new();
+    let mut match_idx = 0;
+    for m in matches.iter_mut() {
+        if let Activity::Match { id, team_a, team_b, stage, .. } = m {
+            let mut r = 0;
+            loop {
+                if r == rounds.len() {
+                    rounds.push(HashSet::new());
+                }
+                if !rounds[r].contains(team_a) && !rounds[r].contains(team_b) {
+                    rounds[r].insert(team_a.clone());
+                    rounds[r].insert(team_b.clone());
+                    break;
+                }
+                r += 1;
+            }
+            match_idx += 1;
+            *id = format!("{}_m_{}_c0_r{}", division_id, match_idx, r);
+            if let MatchStage::RoundRobin { cycle, round } = stage {
+                *cycle = 0;
+                *round = r;
+            }
+        }
+    }
 }
 
 fn generate_finals_matches(
@@ -373,4 +412,52 @@ fn generate_circle_round_robin(
     }
 
     matches
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// Pulls (round, team_a, team_b) out of generated round-robin matches.
+    fn rounds_of(matches: &[Activity]) -> Vec<(usize, String, String)> {
+        matches.iter().filter_map(|m| match m {
+            Activity::Match { team_a, team_b, stage: MatchStage::RoundRobin { round, .. }, .. } =>
+                Some((*round, team_a.clone(), team_b.clone())),
+            _ => None,
+        }).collect()
+    }
+
+    #[test]
+    fn rounds_are_contiguous_and_parallel_for_odd_team_count() {
+        // 13 teams, 5 games each — the lightweight-soccer shape that used to emit
+        // sparse round labels (…6, 8, 10) after the two-phase selection.
+        let teams: Vec<String> = (0..13).map(|i| format!("T{i}")).collect();
+        let matches = generate_head_to_head_matches("div", &teams, 5, 15);
+        let rr = rounds_of(&matches);
+        assert!(!rr.is_empty());
+
+        let max_round = rr.iter().map(|(r, _, _)| *r).max().unwrap();
+        let present: HashSet<usize> = rr.iter().map(|(r, _, _)| *r).collect();
+
+        // No gaps: every round 0..=max is used.
+        for r in 0..=max_round {
+            assert!(present.contains(&r), "round {r} missing — labels are not contiguous");
+        }
+        // The round count equals the most games any single team plays.
+        let mut games: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for (_, a, b) in &rr {
+            *games.entry(a.as_str()).or_default() += 1;
+            *games.entry(b.as_str()).or_default() += 1;
+        }
+        assert_eq!(max_round + 1, *games.values().max().unwrap());
+
+        // Each round is a parallel set: no team appears twice in a round.
+        let mut per_round: std::collections::HashMap<usize, HashSet<String>> = std::collections::HashMap::new();
+        for (r, a, b) in &rr {
+            let set = per_round.entry(*r).or_default();
+            assert!(set.insert(a.clone()), "team {a} twice in round {r}");
+            assert!(set.insert(b.clone()), "team {b} twice in round {r}");
+        }
+    }
 }

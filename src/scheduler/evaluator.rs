@@ -88,6 +88,14 @@ fn format_hard_conflict(
         config.time_slots.iter().find(|s| &s.id == id).map(|s| format!("{} {}-{}", s.day, s.start_time, s.end_time)).unwrap_or_else(|| id.clone())
     };
     let team_name = |ti: usize| internal.teams[ti].name.clone();
+    // Time of the primary assignment — included in occupancy (double-booking)
+    // messages so the same physical collision formats identically (and dedups)
+    // while distinct collisions on the same entity stay distinct.
+    let assign_time = || {
+        config.time_slots.iter().find(|s| s.id == assign.time_slot_id)
+            .map(|s| format!("{} {}", s.day, s.start_time))
+            .unwrap_or_default()
+    };
     let div_name = || {
         let did = assign.activity.division_id();
         config.divisions.iter().find(|d| d.id == did).map(|d| d.name.clone()).unwrap_or_else(|| did.to_string())
@@ -121,14 +129,15 @@ fn format_hard_conflict(
         ConflictKind::InterviewsDisabled => (ConflictSeverity::Error, format!("Interviews are disabled on the day '{}' is scheduled.", act)),
         ConflictKind::DurationExceedsDay => (ConflictSeverity::Error, format!("Duration Error: Activity '{}' exceeds the end of the day.", act)),
         ConflictKind::DailyShiftCapExceeded { vol_idx } => (ConflictSeverity::Error, format!("Volunteer Shift Cap: '{}' exceeds the daily shift cap.", vol_name(vol_idx))),
-        ConflictKind::TeamDoubleBooked { team_idx } => (ConflictSeverity::Error, format!("Team Double-Booking: Team '{}' is scheduled for overlapping activities.", team_name(team_idx))),
-        ConflictKind::FieldDoubleBooked { field_idx } => (ConflictSeverity::Error, format!("Field Double-Booking: Field/Arena '{}' is double-booked.", field_name(field_idx))),
-        ConflictKind::VolDoubleBooked { vol_idx } => (ConflictSeverity::Warning, format!("Volunteer Double-Booking: '{}' is double-booked.", vol_name(vol_idx))),
+        ConflictKind::TeamDoubleBooked { team_idx } => (ConflictSeverity::Error, format!("Team Double-Booking: Team '{}' is scheduled for overlapping activities at {}.", team_name(team_idx), assign_time())),
+        ConflictKind::FieldDoubleBooked { field_idx } => (ConflictSeverity::Error, format!("Field Double-Booking: Field/Arena '{}' is double-booked at {}.", field_name(field_idx), assign_time())),
+        ConflictKind::VolDoubleBooked { vol_idx } => (ConflictSeverity::Warning, format!("Volunteer Double-Booking: '{}' is double-booked at {}.", vol_name(vol_idx), assign_time())),
         ConflictKind::StageOrder => (ConflictSeverity::Error, format!("Stage Order: In division '{}', a later-stage match is scheduled before an earlier-stage match.", div_name())),
         ConflictKind::StageOverlap => (ConflictSeverity::Error, format!("Stage Overlap: In division '{}', an earlier-stage match overlaps a later stage.", div_name())),
         ConflictKind::FieldVarietyStrict { team_idx, field_idx } => (ConflictSeverity::Error, format!("Field Variety: Team '{}' is assigned field '{}' more than once.", team_name(team_idx), field_name(field_idx))),
         ConflictKind::TeamMinBreak { team_idx } => (ConflictSeverity::Error, format!("Insufficient Break: Team '{}' has an interview and a match scheduled too close together (below the minimum break).", team_name(team_idx))),
         ConflictKind::TeamMatchBreak { team_idx } => (ConflictSeverity::Error, format!("Insufficient Recharge: Team '{}' has two matches scheduled too close together (below the minimum recharge break).", team_name(team_idx))),
+        ConflictKind::TeamRoundOrder { team_idx } => (ConflictSeverity::Error, format!("Round Order: Team '{}' plays a later round before an earlier one (its matches are out of round order).", team_name(team_idx))),
         // Soft penalties are not surfaced as conflicts.
         _ => return None,
     };
@@ -190,6 +199,10 @@ pub fn get_schedule_conflicts(
     }
 
     conflicts.sort();
+    // Occupancy conflicts are reported once per participating assignment, so a
+    // single collision yields one record per side; after formatting they collapse
+    // to the same string (same entity + time), so dedup to show each once.
+    conflicts.dedup();
     conflicts
 }
 
@@ -450,6 +463,53 @@ mod tests {
             "locked volunteer on a disallowed field must be a hard conflict");
         let msgs = get_schedule_conflicts(&config, &violating, &params);
         assert!(msgs.iter().any(|m| m.contains("Field Lock")), "expected a Field Lock conflict, got {msgs:?}");
+    }
+
+    #[test]
+    fn field_double_booking_is_listed_once() {
+        // Two matches forced onto the same field + slot is a single physical
+        // collision. The engine reports it once per participating assignment, so
+        // the display list must collapse them into one message.
+        let mut config = TournamentConfig::default();
+        config.divisions = vec![Division {
+            id: "div1".into(), name: "Div 1".into(), mode: SchedulingMode::HeadToHead,
+            games_per_team: 1, volunteers_required: 0, duration_minutes: 20,
+            allowed_fields: None, interviews_enabled: false,
+            interview_volunteers_required: 0, interview_duration_minutes: 0,
+            finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
+            finals_third_place_playoff: false, color: None, min_match_break_minutes: None,
+        }];
+        config.teams = vec![
+            Team { name: "a".into(), division_id: "div1".into(), organization: "o1".into() },
+            Team { name: "b".into(), division_id: "div1".into(), organization: "o2".into() },
+            Team { name: "c".into(), division_id: "div1".into(), organization: "o3".into() },
+            Team { name: "d".into(), division_id: "div1".into(), organization: "o4".into() },
+        ];
+        config.fields = vec![
+            Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: None },
+        ];
+        config.time_slots = vec![
+            TimeSlot { id: "s1".into(), day: "Sat".into(), start_time: "09:00".into(), end_time: "09:20".into(), kind: FieldKind::Competition },
+        ];
+        config.day_configs = vec![DayGenConfig { day: "Sat".into(), ..Default::default() }];
+
+        let params = SolverParams::default();
+        let schedule = Schedule {
+            assignments: vec![
+                ScheduleAssignment {
+                    activity: Activity::Match { id: "div1_m_1_c0_r0".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } },
+                    time_slot_id: "s1".into(), field_id: Some("f1".into()), volunteer_ids: vec![],
+                },
+                ScheduleAssignment {
+                    activity: Activity::Match { id: "div1_m_2_c0_r0".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } },
+                    time_slot_id: "s1".into(), field_id: Some("f1".into()), volunteer_ids: vec![],
+                },
+            ],
+        };
+
+        let msgs = get_schedule_conflicts(&config, &schedule, &params);
+        let field_dupes = msgs.iter().filter(|m| m.contains("Field Double-Booking")).count();
+        assert_eq!(field_dupes, 1, "one collision must list once, got {field_dupes}: {msgs:?}");
     }
 
     #[test]

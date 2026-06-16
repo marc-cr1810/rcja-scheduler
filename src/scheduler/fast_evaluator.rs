@@ -988,7 +988,6 @@ impl<'a> FastEvaluator<'a> {
 
     fn report_division_penalties<S: ConflictSink>(params: &SolverParams, config: &InternalTournamentConfig, schedule: &InternalSchedule, list: &[usize], sink: &mut S) {
         if list.is_empty() { return; }
-        if params.round_order_weight < 0.0 { return; }
 
         for i in 0..list.len() {
             let idx1 = list[i];
@@ -1021,25 +1020,26 @@ impl<'a> FastEvaluator<'a> {
                             sink.report(CostClass::Hard, 10.0, ConflictKind::StageOverlap, &[idx1, idx2]);
                         }
                     }
-                } else if params.round_order_weight > 0.0 {
-                    // Same stage: enforce round order with soft penalty
-
-                    // Same day check
-                    if slot1.day_idx != slot2.day_idx {
-                        if round1 > round2 {
-                            sink.report(CostClass::Soft, params.round_order_weight, ConflictKind::RoundOrder, &[idx1, idx2]);
-                        }
-                        continue;
-                    }
-
-                    if round1 > round2 {
-                        // Strictly out of order
+                } else if round1 > round2 {
+                    // Same stage (round-robin), and act1 (the earlier slot, since the
+                    // list is sorted by slot) is a *later* round than act2 — an
+                    // out-of-order pair.
+                    if let Some(&t_idx) = act1.team_indices.iter().find(|t| act2.team_indices.contains(t)) {
+                        // The *same* team is sequenced out of order: hard conflict.
+                        // A team must never play a later round before an earlier one.
+                        // Weight 1.0 matches the other per-team hard rules (recharge
+                        // / min-break) so round order doesn't out-bid the occupancy
+                        // rules and trade a physically-impossible double-booking for
+                        // an ordering fix.
+                        sink.report(CostClass::Hard, 1.0, ConflictKind::TeamRoundOrder { team_idx: t_idx }, &[idx1, idx2]);
+                    } else if params.round_order_weight > 0.0 {
+                        // Different teams: overlapping rounds is allowed (a finished
+                        // team can start its next round while others are still in the
+                        // current one). A soft penalty keeps rounds globally ordered
+                        // and compact, so the solver only overlaps them where the
+                        // packing payoff outweighs it.
                         sink.report(CostClass::Soft, params.round_order_weight, ConflictKind::RoundOrder, &[idx1, idx2]);
-                    } else if round1 < round2
-                        && end1 > slot2.start_minutes && assign1.slot_idx == assign2.slot_idx {
-                            // Traditional same-start overlap penalty for same-stage activities
-                            sink.report(CostClass::Soft, params.round_order_weight * 0.5, ConflictKind::RoundOrder, &[idx1, idx2]);
-                        }
+                    }
                 }
             }
         }
@@ -1246,6 +1246,71 @@ mod tests {
         let cost = evaluator.calculate_total_cost(&schedule);
 
         assert!(cost.0 >= 10.0, "3PL before SF should be a hard conflict in FastEvaluator (got {})", cost.0);
+    }
+
+    /// Two round-robin matches placed out of round order (the later round in the
+    /// earlier slot). Returns (config, schedule). When `shared` is true both
+    /// matches involve team A, so the same team is sequenced out of order; when
+    /// false they involve disjoint teams (legitimate cross-team overlap).
+    fn out_of_order_rr(shared: bool) -> (InternalTournamentConfig, crate::scheduler::internal::InternalSchedule) {
+        let mut config = TournamentConfig::default();
+        config.divisions = vec![Division {
+            id: "div1".into(), name: "Div 1".into(), mode: SchedulingMode::HeadToHead,
+            games_per_team: 2, volunteers_required: 0, duration_minutes: 20,
+            allowed_fields: None, interviews_enabled: false,
+            interview_volunteers_required: 0, interview_duration_minutes: 0,
+            finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
+            finals_third_place_playoff: false, color: None, min_match_break_minutes: Some(0),
+        }];
+        // Slots hours apart so the recharge/min-break rules never fire — we want to
+        // isolate the round-order rule.
+        config.time_slots = vec![
+            TimeSlot { id: "s1".into(), day: "Sat".into(), start_time: "09:00".into(), end_time: "09:20".into(), kind: FieldKind::Competition },
+            TimeSlot { id: "s2".into(), day: "Sat".into(), start_time: "13:00".into(), end_time: "13:20".into(), kind: FieldKind::Competition },
+        ];
+        config.fields = vec![
+            Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: None },
+            Field { id: "f2".into(), name: "Field 2".into(), kind: FieldKind::Competition, allowed_divisions: None },
+        ];
+        config.day_configs = vec![DayGenConfig { day: "Sat".into(), ..Default::default() }];
+
+        let second_match_teams = if shared { ("A", "C") } else { ("C", "D") };
+        let activities = vec![
+            // round 0
+            Activity::Match { id: "div1_m_1_c0_r0".into(), team_a: "A".into(), team_b: "B".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } },
+            // round 1
+            Activity::Match { id: "div1_m_2_c0_r1".into(), team_a: second_match_teams.0.into(), team_b: second_match_teams.1.into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 1 } },
+        ];
+        let internal_config = InternalTournamentConfig::compile(&config, &activities);
+        // Put the round-1 match (index 1) in the EARLY slot, round-0 in the late slot.
+        let schedule = crate::scheduler::internal::InternalSchedule {
+            assignments: vec![
+                crate::scheduler::internal::InternalAssignment { slot_idx: 1, field_idx: Some(0), volunteer_indices: vec![] },
+                crate::scheduler::internal::InternalAssignment { slot_idx: 0, field_idx: Some(1), volunteer_indices: vec![] },
+            ],
+        };
+        (internal_config, schedule)
+    }
+
+    #[test]
+    fn same_team_out_of_round_order_is_hard() {
+        let (config, schedule) = out_of_order_rr(true);
+        let params = SolverParams::default();
+        let mut ev = FastEvaluator::new(&config, &params);
+        ev.init(&schedule);
+        let (hard, _soft) = ev.calculate_total_cost(&schedule);
+        assert!(hard >= 1.0, "team A playing round 1 before round 0 must be a hard conflict (got hard={hard})");
+    }
+
+    #[test]
+    fn different_teams_overlapping_rounds_is_not_hard() {
+        let (config, schedule) = out_of_order_rr(false);
+        let params = SolverParams::default();
+        let mut ev = FastEvaluator::new(&config, &params);
+        ev.init(&schedule);
+        let (hard, soft) = ev.calculate_total_cost(&schedule);
+        assert_eq!(hard, 0.0, "disjoint teams overlapping rounds must not be a hard conflict (got hard={hard})");
+        assert!(soft > 0.0, "cross-team out-of-order should still carry the soft round-order nudge (got soft={soft})");
     }
 
     /// Builds a tiny config + schedule with a guaranteed stage-order hard

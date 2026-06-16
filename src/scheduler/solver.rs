@@ -795,4 +795,5 @@ mod tests {
         let schedule = solve_schedule(&config, &params, |_, _, _, _, _, _| {}).expect("some schedule");
         assert!(schedule.assignments.is_empty());
     }
+
 }

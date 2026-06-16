@@ -73,6 +73,10 @@ pub enum ConflictKind {
     /// A team's two consecutive matches are scheduled closer than the required
     /// recharge break (global, or the division's override).
     TeamMatchBreak { team_idx: usize },
+    /// A team plays a later round-robin round before an earlier one (its matches
+    /// run out of round order). Cross-team round overlap is allowed; this fires
+    /// only when the *same* team is sequenced out of order.
+    TeamRoundOrder { team_idx: usize },
 
     // --- Soft, attributable ---
     /// A volunteer lacks a non-strict division capability (soft penalty).
