@@ -115,43 +115,58 @@ pub(crate) fn hard_conflict_total(
     hard_conflicts_by_kind(config, schedule, params).values().sum()
 }
 
-/// Dispersion metric — the coefficient of variation (std / mean) of the number
-/// of competition activities placed in each available `(day, start-time)` band.
+/// Round-robin dispersion — the coefficient of variation (std / mean) of the
+/// number of **non-final** competition activities per `(day, start-time)` band,
+/// measured over the chronological bands **before the finals block**.
 ///
-/// Every competition start time present in the config is a band, so leaving the
-/// later Sunday bands empty (the complaint that motivated the refactor) inflates
-/// the variance. **Lower is more even**; 0.0 is a perfectly flat schedule.
+/// That pre-finals region is the time RR is meant to fill evenly across both
+/// days; the finals tail legitimately holds little/no RR, so including it would
+/// just punish the (desired) reserved finals block. Lower is more even; 0.0 is a
+/// perfectly flat RR schedule over its region.
 pub(crate) fn dispersion(config: &TournamentConfig, schedule: &Schedule) -> f64 {
-    // All competition bands the config offers: (day, start_time).
-    let mut bands: BTreeMap<(String, String), usize> = BTreeMap::new();
-    for s in &config.time_slots {
-        if s.kind == FieldKind::Competition {
-            bands.entry((s.day.clone(), s.start_time.clone())).or_insert(0);
-        }
-    }
-    if bands.is_empty() {
+    let fp = finals_profile(config, schedule);
+    // RR fills every band up to where the finals block begins (or all bands if
+    // there are no finals).
+    let cutoff = fp.first_finals_band.unwrap_or(fp.total_comp_bands);
+    if cutoff == 0 {
         return 0.0;
     }
 
-    // Map slot id -> (day, start_time) so assignments can be bucketed.
-    let slot_band: BTreeMap<&str, (String, String)> = config
-        .time_slots
-        .iter()
-        .map(|s| (s.id.as_str(), (s.day.clone(), s.start_time.clone())))
+    // Chronological comp band index for each slot id (mirrors finals_profile).
+    let mut day_order: BTreeMap<String, usize> = BTreeMap::new();
+    for dc in &config.day_configs {
+        let d = dc.day.to_lowercase();
+        if !day_order.contains_key(&d) { let i = day_order.len(); day_order.insert(d, i); }
+    }
+    for s in &config.time_slots {
+        let d = s.day.to_lowercase();
+        if !day_order.contains_key(&d) { let i = day_order.len(); day_order.insert(d, i); }
+    }
+    let band_key = |day: &str, start: &str| (day_order.get(&day.to_lowercase()).copied().unwrap_or(99), start.to_string());
+    let mut comp_bands: Vec<(usize, String)> = config.time_slots.iter()
+        .filter(|s| s.kind == FieldKind::Competition)
+        .map(|s| band_key(&s.day, &s.start_time))
+        .collect();
+    comp_bands.sort();
+    comp_bands.dedup();
+    let band_index: BTreeMap<(usize, String), usize> =
+        comp_bands.iter().cloned().enumerate().map(|(i, b)| (b, i)).collect();
+    let slot_band: BTreeMap<&str, usize> = config.time_slots.iter()
+        .filter_map(|s| band_index.get(&band_key(&s.day, &s.start_time)).map(|&i| (s.id.as_str(), i)))
         .collect();
 
+    let mut counts = vec![0.0f64; cutoff];
     for a in &schedule.assignments {
-        if matches!(a.activity, Activity::Interview { .. }) {
+        if matches!(a.activity, Activity::Interview { .. }) || a.activity.is_final() {
             continue;
         }
-        if let Some(band) = slot_band.get(a.time_slot_id.as_str())
-            && let Some(c) = bands.get_mut(band)
+        if let Some(&bi) = slot_band.get(a.time_slot_id.as_str())
+            && bi < cutoff
         {
-            *c += 1;
+            counts[bi] += 1.0;
         }
     }
 
-    let counts: Vec<f64> = bands.values().map(|&c| c as f64).collect();
     let n = counts.len() as f64;
     let mean = counts.iter().sum::<f64>() / n;
     if mean == 0.0 {
@@ -159,6 +174,84 @@ pub(crate) fn dispersion(config: &TournamentConfig, schedule: &Schedule) -> f64 
     }
     let var = counts.iter().map(|&c| (c - mean).powi(2)).sum::<f64>() / n;
     var.sqrt() / mean
+}
+
+/// How tightly and how late the finals sit. Competition bands are ordered
+/// chronologically (day, then start); the finals should occupy a short run of
+/// bands at the very end.
+pub(crate) struct FinalsProfile {
+    pub total_comp_bands: usize,
+    /// Chronological band index of the first / last band containing any final.
+    pub first_finals_band: Option<usize>,
+    pub last_finals_band: Option<usize>,
+    /// Distinct bands that contain at least one final.
+    pub finals_band_count: usize,
+    /// Round-robin matches scheduled at or after the first finals band — ideally
+    /// small (RR should mostly precede the finals block).
+    pub rr_at_or_after_finals: usize,
+}
+
+pub(crate) fn finals_profile(config: &TournamentConfig, schedule: &Schedule) -> FinalsProfile {
+    // Day order: config.day_configs first, then first-seen in time_slots.
+    let mut day_order: BTreeMap<String, usize> = BTreeMap::new();
+    for dc in &config.day_configs {
+        let d = dc.day.to_lowercase();
+        if !day_order.contains_key(&d) { let i = day_order.len(); day_order.insert(d, i); }
+    }
+    for s in &config.time_slots {
+        let d = s.day.to_lowercase();
+        if !day_order.contains_key(&d) { let i = day_order.len(); day_order.insert(d, i); }
+    }
+    let band_key = |day: &str, start: &str| (day_order.get(&day.to_lowercase()).copied().unwrap_or(99), start.to_string());
+
+    // Chronological competition bands.
+    let mut comp_bands: Vec<(usize, String)> = config.time_slots.iter()
+        .filter(|s| s.kind == FieldKind::Competition)
+        .map(|s| band_key(&s.day, &s.start_time))
+        .collect();
+    comp_bands.sort();
+    comp_bands.dedup();
+    let band_index: BTreeMap<(usize, String), usize> =
+        comp_bands.iter().cloned().enumerate().map(|(i, b)| (b, i)).collect();
+
+    let slot_key: BTreeMap<&str, (usize, String)> = config.time_slots.iter()
+        .map(|s| (s.id.as_str(), band_key(&s.day, &s.start_time)))
+        .collect();
+
+    let mut first = None;
+    let mut last = None;
+    let mut finals_bands: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+    let mut rr_at_or_after = 0;
+    // First pass: find earliest finals band.
+    for a in &schedule.assignments {
+        if a.activity.is_final()
+            && let Some(k) = slot_key.get(a.time_slot_id.as_str())
+            && let Some(&bi) = band_index.get(k)
+        {
+            finals_bands.insert(bi);
+            first = Some(first.map_or(bi, |f: usize| f.min(bi)));
+            last = Some(last.map_or(bi, |l: usize| l.max(bi)));
+        }
+    }
+    if let Some(f) = first {
+        for a in &schedule.assignments {
+            if matches!(a.activity, Activity::Interview { .. }) || a.activity.is_final() { continue; }
+            if let Some(k) = slot_key.get(a.time_slot_id.as_str())
+                && let Some(&bi) = band_index.get(k)
+                && bi >= f
+            {
+                rr_at_or_after += 1;
+            }
+        }
+    }
+
+    FinalsProfile {
+        total_comp_bands: comp_bands.len(),
+        first_finals_band: first,
+        last_finals_band: last,
+        finals_band_count: finals_bands.len(),
+        rr_at_or_after_finals: rr_at_or_after,
+    }
 }
 
 /// Builds [`SolverParams`] from a config's stored `solver_settings`, mirroring
@@ -214,7 +307,10 @@ mod tests {
     /// ≈2222, dispersion CoV ≈0.255. Phase 2's constructive seeder dropped that to
     /// **0 hard conflicts**, soft ≈937, CoV ≈0.234; Phase 3's free-relocation move
     /// set took CoV to ≈0.198; Phase 5 (banding removed, `peak_period_weight`
-    /// raised to 1.0) reaches **0 hard, soft ≈941, CoV ≈0.166**.
+    /// raised to 1.0) reached 0 hard, soft ≈941. Phase 7 (global RR spread, finals
+    /// excluded from the spread metric so they compact) reaches **0 hard, soft
+    /// ≈921, RR-CoV ≈0.146, finals packed into the last ~6 bands reaching the final
+    /// slot** (RR-CoV is over the pre-finals region — see `dispersion`).
     const GOLDEN_SEED: u64 = 0x60_1DEC0DE;
     const GOLDEN_ITERS: usize = 50_000;
     const GOLDEN_RESTARTS: usize = 5;
@@ -266,7 +362,16 @@ mod tests {
             println!("    {k:<22} {n}");
         }
         println!("  SOFT cost: {soft:.1}");
-        println!("  DISPERSION (CoV, lower=more even): {disp:.4}");
+        println!("  RR DISPERSION (CoV, lower=more even): {disp:.4}");
+        let fp = finals_profile(&config, &schedule);
+        println!(
+            "  FINALS: bands {}..={} of {} total | {} bands wide | {} RR matches at/after finals start",
+            fp.first_finals_band.map_or("-".into(), |v| v.to_string()),
+            fp.last_finals_band.map_or("-".into(), |v| v.to_string()),
+            fp.total_comp_bands.saturating_sub(1),
+            fp.finals_band_count,
+            fp.rr_at_or_after_finals,
+        );
         println!("=====================================\n");
 
         // Regression lock: as of Phase 2 the real config solves to ZERO hard

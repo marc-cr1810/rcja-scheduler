@@ -432,36 +432,35 @@ impl<'a> FastEvaluator<'a> {
             }
         }
 
-        // Peak period: encourage an even spread of activities within each
-        // day by penalising the variance of per-time-slot occupancy *per
-        // day*. Computing per-day rather than globally prevents cross-day
-        // imbalance from dominating: when Saturday has many more comp slots
-        // than Sunday, a global variance is dominated by the unavoidable
-        // between-day difference and the solver stops trying to equalise
-        // within Saturday. Per-day variance isolates the within-day spread
-        // the solver can actually improve.
+        // Peak period: spread activities evenly to make the most of the available
+        // time. Round-robin competition spread is measured *globally* across both
+        // days' competition slots, so the solver actively fills the final day (and
+        // late-day tails) rather than packing everything into the first/longest
+        // day. Finals are excluded (shaped by the finals-span/lateness penalties
+        // into a tight block at the end). Interviews are day-locked, so their
+        // spread stays per-day.
         if self.params.peak_period_weight > 0.0 {
             let mut comp_counts = vec![0.0f64; self.config.slots.len()];
             let mut interview_counts = vec![0.0f64; self.config.slots.len()];
             for (idx, assign) in schedule.assignments.iter().enumerate() {
                 let activity = &self.config.activities[idx];
                 let overlapped = &self.config.activity_overlapping_slots[assign.slot_idx][activity.duration_class];
-                let counts = if activity.is_interview { &mut interview_counts } else { &mut comp_counts };
-                for &s_idx in overlapped {
-                    counts[s_idx] += 1.0;
+                if activity.is_interview {
+                    for &s_idx in overlapped { interview_counts[s_idx] += 1.0; }
+                } else if !activity.is_final {
+                    for &s_idx in overlapped { comp_counts[s_idx] += 1.0; }
                 }
             }
-            let mut penalty = 0.0f64;
+            let all_comp: Vec<f64> = self.config.slots.iter().enumerate()
+                .filter(|(_, s)| s.kind == FieldKind::Competition)
+                .map(|(i, _)| comp_counts[i])
+                .collect();
+            let mut penalty = calculate_variance_f64(&all_comp);
             for day_idx in 0..self.config.days.len() {
-                let day_comp: Vec<f64> = self.config.slots.iter().enumerate()
-                    .filter(|(_, s)| s.kind == FieldKind::Competition && s.day_idx == day_idx)
-                    .map(|(i, _)| comp_counts[i])
-                    .collect();
                 let day_interview: Vec<f64> = self.config.slots.iter().enumerate()
                     .filter(|(_, s)| s.kind == FieldKind::Interview && s.day_idx == day_idx)
                     .map(|(i, _)| interview_counts[i])
                     .collect();
-                penalty += calculate_variance_f64(&day_comp);
                 if !day_interview.is_empty() {
                     penalty += calculate_variance_f64(&day_interview);
                 }
@@ -641,10 +640,15 @@ impl<'a> FastEvaluator<'a> {
             }
         }
 
+        // Spread occupancy. Finals are deliberately excluded from the competition
+        // spread metric: counting them would make the spread objective pull finals
+        // apart to even out occupancy, the opposite of the desired tight, end-of-
+        // event finals block. So `comp_slot_occ` tracks round-robin only; finals
+        // are shaped by the finals-span / lateness penalties instead.
         let overlapped = &config.activity_overlapping_slots[assign.slot_idx][activity.duration_class];
         if activity.is_interview {
             for &s in overlapped { self.interview_slot_occ[s] += 1.0; }
-        } else {
+        } else if !activity.is_final {
             for &s in overlapped { self.comp_slot_occ[s] += 1.0; }
         }
     }
@@ -718,7 +722,7 @@ impl<'a> FastEvaluator<'a> {
         let overlapped = &config.activity_overlapping_slots[assign.slot_idx][activity.duration_class];
         if activity.is_interview {
             for &s in overlapped { self.interview_slot_occ[s] -= 1.0; }
-        } else {
+        } else if !activity.is_final {
             for &s in overlapped { self.comp_slot_occ[s] -= 1.0; }
         }
     }
@@ -850,17 +854,18 @@ impl<'a> FastEvaluator<'a> {
         }
 
         if self.params.peak_period_weight > 0.0 {
-            let mut penalty = 0.0f64;
+            // Global RR spread across both days (see `evaluate`); interviews per-day.
+            // `comp_slot_occ` already excludes finals.
+            let all_comp: Vec<f64> = self.config.slots.iter().enumerate()
+                .filter(|(_, s)| s.kind == FieldKind::Competition)
+                .map(|(i, _)| self.comp_slot_occ[i])
+                .collect();
+            let mut penalty = calculate_variance_f64(&all_comp);
             for day_idx in 0..self.config.days.len() {
-                let day_comp: Vec<f64> = self.config.slots.iter().enumerate()
-                    .filter(|(_, s)| s.kind == FieldKind::Competition && s.day_idx == day_idx)
-                    .map(|(i, _)| self.comp_slot_occ[i])
-                    .collect();
                 let day_interview: Vec<f64> = self.config.slots.iter().enumerate()
                     .filter(|(_, s)| s.kind == FieldKind::Interview && s.day_idx == day_idx)
                     .map(|(i, _)| self.interview_slot_occ[i])
                     .collect();
-                penalty += calculate_variance_f64(&day_comp);
                 if !day_interview.is_empty() { penalty += calculate_variance_f64(&day_interview); }
             }
             soft += penalty * self.params.peak_period_weight;
