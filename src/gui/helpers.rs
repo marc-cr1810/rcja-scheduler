@@ -84,11 +84,12 @@ pub(crate) fn draw_stat_card(ui: &mut egui::Ui, icon: &str, title: &str, value: 
         .rounding(8.0)
         .inner_margin(egui::Margin { left: 14.0, right: 16.0, top: 10.0, bottom: 14.0 })
         .show(ui, |ui| {
-            ui.set_min_size(egui::vec2(140.0, 78.0));
+            let card_width = 140.0;
+            ui.set_min_size(egui::vec2(card_width, 78.0));
             ui.vertical(|ui| {
                 // Thin accent bar in the value's colour across the top of the card.
                 let (bar_rect, _) =
-                    ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.0), egui::Sense::hover());
+                    ui.allocate_exact_size(egui::vec2(card_width, 3.0), egui::Sense::hover());
                 ui.painter().rect_filled(bar_rect, egui::Rounding::same(2.0), color);
                 ui.add_space(8.0);
 
