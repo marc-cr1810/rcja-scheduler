@@ -265,6 +265,55 @@ impl AppState {
 
                 ui.add_space(8.0);
 
+                // Volunteer Capability Mode
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("🎓 Volunteer Capability Mode:").strong().color(theme::text()));
+                    ui.add_space(8.0);
+
+                    let modes = &[
+                        (
+                            false,
+                            "Flexible",
+                            "Qualifications are treated as a soft preference.\nThe solver will try to match capabilities but can assign other volunteers if needed to resolve conflicts.",
+                            theme::border(),
+                            theme::text_faint(),
+                            theme::border(),
+                         ),
+                         (
+                            true,
+                            "🎓 Strict",
+                            "Enforce strict qualifications.\nVolunteers can only be assigned to divisions they are explicitly qualified for.",
+                            theme::warning_bg(),
+                            theme::warning(),
+                            theme::warning_border(),
+                         ),
+                    ];
+
+                    for &(is_strict, label, tooltip, bg_inactive, text_inactive, bg_active) in modes {
+                        let is_active = self.config.strict_capabilities == is_strict;
+                        let (bg, text_col) = if is_active {
+                            (bg_active, theme::on_accent())
+                        } else {
+                            (bg_inactive, text_inactive)
+                        };
+
+                        let btn = egui::Button::new(RichText::new(label).strong().color(text_col))
+                            .fill(bg)
+                            .rounding(6.0)
+                            .min_size(egui::vec2(95.0, 28.0));
+
+                        let resp = ui.add(btn).on_hover_text(tooltip);
+                        if resp.clicked() && self.config.strict_capabilities != is_strict {
+                            self.config.strict_capabilities = is_strict;
+                            self.clear_schedule();
+                            self.update_diagnostics();
+                        }
+                        ui.add_space(4.0);
+                    }
+                });
+
+                ui.add_space(8.0);
+
                 // Volunteer Travel & Shift Cap
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("📍 Volunteer Travel Penalty:").strong().color(theme::text()));

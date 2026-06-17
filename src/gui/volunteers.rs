@@ -222,14 +222,7 @@ impl AppState {
                 });
             });
 
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Capability Mode:").strong());
-            if ui.checkbox(&mut self.config.strict_capabilities, "Enforce strict qualifications (must match 'Qualified for' division)").changed() {
-                self.clear_schedule();
-                self.update_diagnostics();
-            }
-        });
-        ui.add_space(8.0);
+
 
         ui.label(RichText::new("INTERACTIVE AVAILABILITY GRID").strong().color(theme::text_muted()));
         ui.label("Click cells to toggle volunteer availability for each time slot.");
