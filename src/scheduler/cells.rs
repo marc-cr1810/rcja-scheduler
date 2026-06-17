@@ -59,7 +59,12 @@ impl CellGrid {
         let num_fields = config.fields.len();
         let num_slots = config.slots.len();
 
-        let num_days = config.slots.iter().map(|s| s.day_idx + 1).max().unwrap_or(0);
+        let num_days = config
+            .slots
+            .iter()
+            .map(|s| s.day_idx + 1)
+            .max()
+            .unwrap_or(0);
         let mut day_end = vec![0u32; num_days];
         for s in &config.slots {
             let end = s.start_minutes + s.duration_minutes;
@@ -74,17 +79,28 @@ impl CellGrid {
             for (slot_idx, slot) in config.slots.iter().enumerate() {
                 if field.kind == slot.kind {
                     lookup[field_idx * num_slots + slot_idx] = cells.len();
-                    cells.push(Cell { field_idx, slot_idx });
+                    cells.push(Cell {
+                        field_idx,
+                        slot_idx,
+                    });
                 }
             }
         }
 
-        Self { cells, lookup, num_slots, day_end }
+        Self {
+            cells,
+            lookup,
+            num_slots,
+            day_end,
+        }
     }
 
     /// The cell index for `(field, slot)`, or `None` if the kinds don't match.
     pub fn cell_index(&self, field_idx: usize, slot_idx: usize) -> Option<usize> {
-        let i = self.lookup.get(field_idx * self.num_slots + slot_idx).copied()?;
+        let i = self
+            .lookup
+            .get(field_idx * self.num_slots + slot_idx)
+            .copied()?;
         if i == usize::MAX { None } else { Some(i) }
     }
 
@@ -103,7 +119,11 @@ impl CellGrid {
         let field = &config.fields[field_idx];
         let slot = &config.slots[slot_idx];
 
-        let want = if act.is_interview { crate::model::FieldKind::Interview } else { crate::model::FieldKind::Competition };
+        let want = if act.is_interview {
+            crate::model::FieldKind::Interview
+        } else {
+            crate::model::FieldKind::Competition
+        };
         if field.kind != want || slot.kind != want {
             return false;
         }
@@ -152,7 +172,9 @@ pub struct FieldOccupancy {
 
 impl FieldOccupancy {
     pub fn new(num_fields: usize, num_buckets: usize) -> Self {
-        Self { occ: vec![vec![0; num_buckets]; num_fields] }
+        Self {
+            occ: vec![vec![0; num_buckets]; num_fields],
+        }
     }
 
     /// Whether `field_idx` is free for an activity of `duration_class` starting at
@@ -228,7 +250,9 @@ impl FieldOccupancy {
 mod tests {
     use super::*;
     use crate::model::*;
-    use crate::scheduler::internal::{InternalAssignment, InternalSchedule, InternalTournamentConfig};
+    use crate::scheduler::internal::{
+        InternalAssignment, InternalSchedule, InternalTournamentConfig,
+    };
 
     /// Two competition fields (one restricted to d1), one interview table; one
     /// short day with competition + interview slots; two divisions so the
@@ -236,34 +260,79 @@ mod tests {
     fn test_config() -> TournamentConfig {
         let mut c = TournamentConfig::default();
         let div = |id: &str, dur: u32, interviews: bool| Division {
-            id: id.into(), name: id.into(), mode: SchedulingMode::HeadToHead,
-            games_per_team: 2, volunteers_required: 0, duration_minutes: dur,
-            allowed_fields: None, interviews_enabled: interviews,
-            interview_volunteers_required: 0, interview_duration_minutes: 10,
-            finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
-            finals_third_place_playoff: false, color: None, min_match_break_minutes: None,
+            id: id.into(),
+            name: id.into(),
+            mode: SchedulingMode::HeadToHead,
+            games_per_team: 2,
+            volunteers_required: 0,
+            duration_minutes: dur,
+            allowed_fields: None,
+            interviews_enabled: interviews,
+            interview_volunteers_required: 0,
+            interview_duration_minutes: 10,
+            finals_enabled: false,
+            finals_rounds: None,
+            finals_duration_minutes: None,
+            finals_third_place_playoff: false,
+            color: None,
+            min_match_break_minutes: None,
         };
         c.divisions = vec![div("d1", 20, true), div("d2", 20, false)];
         for (d, names) in [("d1", ["A", "B", "C", "D"]), ("d2", ["E", "F", "G", "H"])] {
             for t in names {
-                c.teams.push(Team { name: t.into(), division_id: d.into(), organization: format!("org{t}") });
+                c.teams.push(Team {
+                    name: t.into(),
+                    division_id: d.into(),
+                    organization: format!("org{t}"),
+                });
             }
         }
         c.fields = vec![
-            Field { id: "f1".into(), name: "F1".into(), kind: FieldKind::Competition, allowed_divisions: None },
-            Field { id: "f2".into(), name: "F2".into(), kind: FieldKind::Competition, allowed_divisions: Some(vec!["d1".into()]) },
-            Field { id: "t1".into(), name: "T1".into(), kind: FieldKind::Interview, allowed_divisions: None },
+            Field {
+                id: "f1".into(),
+                name: "F1".into(),
+                kind: FieldKind::Competition,
+                allowed_divisions: None,
+            },
+            Field {
+                id: "f2".into(),
+                name: "F2".into(),
+                kind: FieldKind::Competition,
+                allowed_divisions: Some(vec!["d1".into()]),
+            },
+            Field {
+                id: "t1".into(),
+                name: "T1".into(),
+                kind: FieldKind::Interview,
+                allowed_divisions: None,
+            },
         ];
         let fmt = |m: u32| format!("{:02}:{:02}", m / 60, m % 60);
         // 09:00..11:00, 20-min comp slots; interview slots interleaved.
         let mut slots = Vec::new();
         for i in 0..6u32 {
             let m = 9 * 60 + i * 20;
-            slots.push(TimeSlot { id: format!("c{i}"), day: "Sat".into(), start_time: fmt(m), end_time: fmt(m + 20), kind: FieldKind::Competition });
-            slots.push(TimeSlot { id: format!("it{i}"), day: "Sat".into(), start_time: fmt(m), end_time: fmt(m + 10), kind: FieldKind::Interview });
+            slots.push(TimeSlot {
+                id: format!("c{i}"),
+                day: "Sat".into(),
+                start_time: fmt(m),
+                end_time: fmt(m + 20),
+                kind: FieldKind::Competition,
+            });
+            slots.push(TimeSlot {
+                id: format!("it{i}"),
+                day: "Sat".into(),
+                start_time: fmt(m),
+                end_time: fmt(m + 10),
+                kind: FieldKind::Interview,
+            });
         }
         c.time_slots = slots;
-        c.day_configs.push(DayGenConfig { day: "Sat".into(), interviews_enabled: true, ..Default::default() });
+        c.day_configs.push(DayGenConfig {
+            day: "Sat".into(),
+            interviews_enabled: true,
+            ..Default::default()
+        });
         c
     }
 
@@ -279,12 +348,31 @@ mod tests {
         let (ic, _) = compile(&c);
         let grid = CellGrid::build(&ic);
 
-        let comp_fields = ic.fields.iter().filter(|f| f.kind == FieldKind::Competition).count();
-        let int_fields = ic.fields.iter().filter(|f| f.kind == FieldKind::Interview).count();
-        let comp_slots = ic.slots.iter().filter(|s| s.kind == FieldKind::Competition).count();
-        let int_slots = ic.slots.iter().filter(|s| s.kind == FieldKind::Interview).count();
+        let comp_fields = ic
+            .fields
+            .iter()
+            .filter(|f| f.kind == FieldKind::Competition)
+            .count();
+        let int_fields = ic
+            .fields
+            .iter()
+            .filter(|f| f.kind == FieldKind::Interview)
+            .count();
+        let comp_slots = ic
+            .slots
+            .iter()
+            .filter(|s| s.kind == FieldKind::Competition)
+            .count();
+        let int_slots = ic
+            .slots
+            .iter()
+            .filter(|s| s.kind == FieldKind::Interview)
+            .count();
 
-        assert_eq!(grid.cells.len(), comp_fields * comp_slots + int_fields * int_slots);
+        assert_eq!(
+            grid.cells.len(),
+            comp_fields * comp_slots + int_fields * int_slots
+        );
 
         // Every cell round-trips through the lookup, and is kind-consistent.
         for (ci, cell) in grid.cells.iter().enumerate() {
@@ -303,19 +391,42 @@ mod tests {
         // nor on the d1-restricted competition field f2.
         let d2_idx = ic.divisions.iter().position(|d| d.id == "d2").unwrap();
         let f2 = ic.fields.iter().position(|f| f.id == "f2").unwrap();
-        let d2_match = acts.iter().position(|a| !matches!(a, Activity::Interview { .. }) && {
-            let ai = acts.iter().position(|x| x.id() == a.id()).unwrap();
-            ic.activities[ai].division_idx == d2_idx
-        }).unwrap();
+        let d2_match = acts
+            .iter()
+            .position(|a| {
+                !matches!(a, Activity::Interview { .. }) && {
+                    let ai = acts.iter().position(|x| x.id() == a.id()).unwrap();
+                    ic.activities[ai].division_idx == d2_idx
+                }
+            })
+            .unwrap();
 
         // Restricted field rejects d2.
-        let comp_slot = ic.slots.iter().position(|s| s.kind == FieldKind::Competition).unwrap();
-        assert!(!grid.activity_can_use(&ic, d2_match, f2, comp_slot), "d2 must not use d1-only field");
+        let comp_slot = ic
+            .slots
+            .iter()
+            .position(|s| s.kind == FieldKind::Competition)
+            .unwrap();
+        assert!(
+            !grid.activity_can_use(&ic, d2_match, f2, comp_slot),
+            "d2 must not use d1-only field"
+        );
 
         // Interview slot/field rejects a match.
-        let int_field = ic.fields.iter().position(|f| f.kind == FieldKind::Interview).unwrap();
-        let int_slot = ic.slots.iter().position(|s| s.kind == FieldKind::Interview).unwrap();
-        assert!(!grid.activity_can_use(&ic, d2_match, int_field, int_slot), "match must not use interview cell");
+        let int_field = ic
+            .fields
+            .iter()
+            .position(|f| f.kind == FieldKind::Interview)
+            .unwrap();
+        let int_slot = ic
+            .slots
+            .iter()
+            .position(|s| s.kind == FieldKind::Interview)
+            .unwrap();
+        assert!(
+            !grid.activity_can_use(&ic, d2_match, int_field, int_slot),
+            "match must not use interview cell"
+        );
 
         // An unrestricted competition field accepts it.
         let f1 = ic.fields.iter().position(|f| f.id == "f1").unwrap();
@@ -335,7 +446,13 @@ mod tests {
         let f1 = ic.fields.iter().position(|f| f.id == "f1").unwrap();
         let f2 = ic.fields.iter().position(|f| f.id == "f2").unwrap();
         // First two competition slots (distinct start times).
-        let comp: Vec<usize> = ic.slots.iter().enumerate().filter(|(_, s)| s.kind == FieldKind::Competition).map(|(i, _)| i).collect();
+        let comp: Vec<usize> = ic
+            .slots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.kind == FieldKind::Competition)
+            .map(|(i, _)| i)
+            .collect();
         let (s0, s1) = (comp[0], comp[1]);
         let dc = ic.activities[0].duration_class; // a 20-min match's class
 
@@ -360,19 +477,36 @@ mod tests {
         let c = test_config();
         let (ic, _) = compile(&c);
         let f1 = ic.fields.iter().position(|f| f.id == "f1").unwrap();
-        let comp: Vec<usize> = ic.slots.iter().enumerate().filter(|(_, s)| s.kind == FieldKind::Competition).map(|(i, _)| i).collect();
+        let comp: Vec<usize> = ic
+            .slots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.kind == FieldKind::Competition)
+            .map(|(i, _)| i)
+            .collect();
 
         // Two activities on the same field+slot is an overlap; building occupancy
         // from such a schedule must report it.
         let sched = InternalSchedule {
             assignments: vec![
-                InternalAssignment { slot_idx: comp[0], field_idx: Some(f1), volunteer_indices: vec![] },
-                InternalAssignment { slot_idx: comp[0], field_idx: Some(f1), volunteer_indices: vec![] },
+                InternalAssignment {
+                    slot_idx: comp[0],
+                    field_idx: Some(f1),
+                    volunteer_indices: vec![],
+                },
+                InternalAssignment {
+                    slot_idx: comp[0],
+                    field_idx: Some(f1),
+                    volunteer_indices: vec![],
+                },
             ],
         };
         // Note: from_schedule indexes activities by position, so use the first two
         // real activities' duration classes implicitly via index 0/1 — both 20-min.
         let occ = FieldOccupancy::from_schedule(&ic, &sched);
-        assert!(occ.has_overlap(), "same field+slot twice must register as overlap");
+        assert!(
+            occ.has_overlap(),
+            "same field+slot twice must register as overlap"
+        );
     }
 }

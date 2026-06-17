@@ -1,8 +1,8 @@
 use crate::gui::AppState;
-use crate::gui::theme;
-use crate::model::{Division, SchedulingMode, FinalsRounds};
-use crate::scheduler::sanitize_name;
 use crate::gui::helpers::draw_card;
+use crate::gui::theme;
+use crate::model::{Division, FinalsRounds, SchedulingMode};
+use crate::scheduler::sanitize_name;
 use eframe::egui::{self, RichText, Stroke};
 
 impl AppState {
@@ -44,7 +44,7 @@ impl AppState {
                             }
                             ui.horizontal(|ui| {
                                 ui.add(egui::DragValue::new(&mut self.new_div_games).clamp_range(1..=10));
-                                
+
                                 if self.new_div_mode == SchedulingMode::HeadToHead {
                                     let n = self.config.teams.iter().filter(|t| t.division_id == sanitize_name(&self.new_div_name)).count();
                                     if n >= 2 {
@@ -187,7 +187,7 @@ impl AppState {
                             self.new_div_finals_enabled = false;
                             self.new_div_custom_finals_duration = false;
                             self.new_div_finals_third_place_playoff = false;
-                            
+
                             use rand::Rng;
                             let mut rng = rand::thread_rng();
                             self.new_div_color = [
@@ -195,11 +195,11 @@ impl AppState {
                                 rng.gen_range(50..=200),
                                 rng.gen_range(50..=200),
                             ];
-                            
+
                             self.update_diagnostics();
                         }
                 });
-            });
+        });
 
         ui.add_space(15.0);
 
@@ -214,7 +214,11 @@ impl AppState {
             return;
         }
 
-        ui.label(RichText::new("EXISTING DIVISIONS").strong().color(theme::text_muted()));
+        ui.label(
+            RichText::new("EXISTING DIVISIONS")
+                .strong()
+                .color(theme::text_muted()),
+        );
         ui.add_space(5.0);
 
         let mut division_to_delete = None;
@@ -226,7 +230,7 @@ impl AppState {
                 SchedulingMode::HeadToHead => "⚽",
                 SchedulingMode::IndividualRun => "🤖",
             };
-            
+
             egui::Frame::none()
                 .fill(theme::card_bg_alt())
                 .rounding(8.0)
@@ -240,14 +244,14 @@ impl AppState {
                                 ui.label(RichText::new(&div.name).strong().size(14.0).color(theme::text()));
                                 ui.label(RichText::new(format!("ID: {}", div.id)).size(10.0).color(theme::text_faint()));
                             });
-                            
+
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 if ui.button(RichText::new("🗑 Delete").color(theme::danger())).clicked() {
                                     division_to_delete = Some(idx);
                                 }
                             });
                         });
-                        
+
                         ui.add_space(8.0);
                         ui.separator();
                         ui.add_space(8.0);
@@ -280,7 +284,7 @@ impl AppState {
                             if ui.add(egui::DragValue::new(&mut div.games_per_team).clamp_range(1..=10)).changed() {
                                 divisions_changed = true;
                             }
-                            
+
                             if div.mode == SchedulingMode::HeadToHead {
                                 let n = self.config.teams.iter().filter(|t| t.division_id == div.id).count();
                                 if n >= 2 {

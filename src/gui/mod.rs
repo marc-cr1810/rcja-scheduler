@@ -1,21 +1,21 @@
-mod theme;
-mod helpers;
+mod app_state;
 mod dashboard;
 mod divisions;
-mod teams;
 mod fields;
+mod helpers;
+mod persistence;
+mod solver;
+mod teams;
+mod theme;
 mod time_slots;
 mod volunteers;
-mod solver;
-mod app_state;
-mod persistence;
 
 use crate::model::Schedule;
 use crate::scheduler::SolverParams;
 use eframe::egui::{self, Color32, RichText};
 
-pub(crate) use helpers::setup_custom_style;
 pub use app_state::{AppState, AvailEditor, VolRosterSort};
+pub(crate) use helpers::setup_custom_style;
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Tab {
@@ -54,13 +54,13 @@ pub enum TeamSubTab {
 }
 
 pub enum SolverMessage {
-    Progress { 
-        restart: usize, 
+    Progress {
+        restart: usize,
         total_restarts: usize,
         iteration: usize,
         total_iterations: usize,
-        hard: f64, 
-        soft: f64 
+        hard: f64,
+        soft: f64,
     },
     Done(Option<Schedule>),
 }
@@ -100,15 +100,26 @@ impl eframe::App for AppState {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.heading(RichText::new("RoboCup Jr Australia Coordinator Workspace").strong().color(theme::accent()));
+                        ui.heading(
+                            RichText::new("RoboCup Jr Australia Coordinator Workspace")
+                                .strong()
+                                .color(theme::accent()),
+                        );
                         let subtitle = if let Some(path) = &self.current_file_path {
-                            format!("Per-Competition Workspace & Schedule Solver - {}", path.display())
+                            format!(
+                                "Per-Competition Workspace & Schedule Solver - {}",
+                                path.display()
+                            )
                         } else {
                             "Per-Competition Workspace & Schedule Solver - Unsaved".to_string()
                         };
-                        ui.label(RichText::new(subtitle).size(11.0).color(theme::text_muted()));
+                        ui.label(
+                            RichText::new(subtitle)
+                                .size(11.0)
+                                .color(theme::text_muted()),
+                        );
                     });
-                    
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let demo_resp = ui.button("⚡ Load Demo Data");
                         // The buttons' vertical band, used to align the theme combo
@@ -156,24 +167,36 @@ impl eframe::App for AppState {
                             egui::pos2(right_x, btn_band.max - nudge),
                         );
                         ui.allocate_ui_at_rect(combo_rect, |ui| {
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                egui::ComboBox::from_id_source("theme_picker")
-                                    .selected_text(format!("🎨 {}", self.active_theme_name))
-                                    .show_ui(ui, |ui| {
-                                        for name in theme::names() {
-                                            if ui.selectable_label(self.active_theme_name == name, &name).clicked() {
-                                                chosen = Some(name);
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    egui::ComboBox::from_id_source("theme_picker")
+                                        .selected_text(format!("🎨 {}", self.active_theme_name))
+                                        .show_ui(ui, |ui| {
+                                            for name in theme::names() {
+                                                if ui
+                                                    .selectable_label(
+                                                        self.active_theme_name == name,
+                                                        &name,
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    chosen = Some(name);
+                                                }
                                             }
-                                        }
-                                        ui.separator();
-                                        if ui.button("🔄 Reload from disk")
-                                            .on_hover_text("Re-scan the themes/ folder for *.json files")
-                                            .clicked()
-                                        {
-                                            reload = true;
-                                        }
-                                    });
-                            });
+                                            ui.separator();
+                                            if ui
+                                                .button("🔄 Reload from disk")
+                                                .on_hover_text(
+                                                    "Re-scan the themes/ folder for *.json files",
+                                                )
+                                                .clicked()
+                                            {
+                                                reload = true;
+                                            }
+                                        });
+                                },
+                            );
                         });
                         if reload {
                             self.active_theme_name = theme::reload(&self.active_theme_name);
@@ -194,11 +217,17 @@ impl eframe::App for AppState {
                         .inner_margin(6.0)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("📄 Generating tournament documents...").strong().color(theme::accent()));
-                                ui.add(egui::ProgressBar::new(self.export_progress)
-                                    .show_percentage()
-                                    .animate(true)
-                                    .desired_width(ui.available_width() - 20.0));
+                                ui.label(
+                                    RichText::new("📄 Generating tournament documents...")
+                                        .strong()
+                                        .color(theme::accent()),
+                                );
+                                ui.add(
+                                    egui::ProgressBar::new(self.export_progress)
+                                        .show_percentage()
+                                        .animate(true)
+                                        .desired_width(ui.available_width() - 20.0),
+                                );
                             });
                         });
                 }
@@ -210,105 +239,158 @@ impl eframe::App for AppState {
         egui::TopBottomPanel::bottom("status_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Status: ").color(theme::text_faint()));
-                ui.label(RichText::new(&self.status_message).strong().color(theme::text()));
+                ui.label(
+                    RichText::new(&self.status_message)
+                        .strong()
+                        .color(theme::text()),
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Colour the solver readout (and a leading dot) by state so it
                     // is glanceable: running → accent, clean solve → green,
                     // remaining conflicts → amber, failure → red.
                     let solving = self.solver_rx.is_some();
                     let status_color = solver_status_color(&self.solve_status, solving);
-                    ui.label(RichText::new(format!("Solver Status: {}", self.solve_status)).strong().color(status_color));
-                    let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                    ui.label(
+                        RichText::new(format!("Solver Status: {}", self.solve_status))
+                            .strong()
+                            .color(status_color),
+                    );
+                    let (dot, _) =
+                        ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
                     ui.painter().circle_filled(dot.center(), 4.0, status_color);
                 });
             });
         });
 
         // SIDE PANEL
-        egui::SidePanel::left("navigation_panel").width_range(210.0..=240.0).show(ctx, |ui| {
-            ui.add_space(10.0);
-            ui.label(RichText::new("WORKSPACE PANELS").size(10.0).color(theme::text_faint()).strong());
-            ui.add_space(5.0);
+        egui::SidePanel::left("navigation_panel")
+            .width_range(210.0..=240.0)
+            .show(ctx, |ui| {
+                ui.add_space(10.0);
+                ui.label(
+                    RichText::new("WORKSPACE PANELS")
+                        .size(10.0)
+                        .color(theme::text_faint())
+                        .strong(),
+                );
+                ui.add_space(5.0);
 
-            let tab_buttons = vec![
-                (Tab::Dashboard, "📊 Dashboard & Alerts"),
-                (Tab::Divisions, "🏆 Divisions"),
-                (Tab::Teams, "👥 Teams"),
-                (Tab::Fields, "🏟 Fields & Arenas"),
-                (Tab::TimeSlots, "📅 Time Slots"),
-                (Tab::Volunteers, "👤 Volunteers"),
-                (Tab::Solver, "⚙ Schedule Solver"),
-            ];
+                let tab_buttons = vec![
+                    (Tab::Dashboard, "📊 Dashboard & Alerts"),
+                    (Tab::Divisions, "🏆 Divisions"),
+                    (Tab::Teams, "👥 Teams"),
+                    (Tab::Fields, "🏟 Fields & Arenas"),
+                    (Tab::TimeSlots, "📅 Time Slots"),
+                    (Tab::Volunteers, "👤 Volunteers"),
+                    (Tab::Solver, "⚙ Schedule Solver"),
+                ];
 
-            for (tab, label) in tab_buttons {
-                let is_active = self.active_tab == tab;
-                let text_color = if is_active { theme::on_accent() } else { theme::text_muted() };
+                for (tab, label) in tab_buttons {
+                    let is_active = self.active_tab == tab;
+                    let text_color = if is_active {
+                        theme::on_accent()
+                    } else {
+                        theme::text_muted()
+                    };
 
-                let button = egui::Button::new(RichText::new(label).color(text_color).strong())
-                    .fill(if is_active { theme::accent_strong() } else { Color32::TRANSPARENT })
-                    .rounding(egui::Rounding::same(6.0))
-                    .min_size(egui::vec2(180.0, 32.0));
+                    let button = egui::Button::new(RichText::new(label).color(text_color).strong())
+                        .fill(if is_active {
+                            theme::accent_strong()
+                        } else {
+                            Color32::TRANSPARENT
+                        })
+                        .rounding(egui::Rounding::same(6.0))
+                        .min_size(egui::vec2(180.0, 32.0));
 
-                ui.horizontal(|ui| {
-                    let resp = ui.add(button);
-                    // egui freezes a button's fill once `.fill()` is set, so an
-                    // inactive (transparent) tab gets no hover feedback on its
-                    // own — paint a faint highlight over it on hover.
-                    if resp.hovered() && !is_active {
-                        // Faint tint in the theme's text colour: lightens dark
-                        // themes, darkens light ones.
-                        let t = theme::text();
-                        ui.painter().rect_filled(
-                            resp.rect,
-                            egui::Rounding::same(6.0),
-                            Color32::from_rgba_unmultiplied(t.r(), t.g(), t.b(), 14),
-                        );
-                    }
-                    if resp.clicked() {
-                        self.active_tab = tab;
-                        self.status_message = format!("Opened {} tab", label.split(' ').nth(1).unwrap_or(""));
-                        self.update_diagnostics();
-                    }
-
-                    if tab == Tab::Dashboard {
-                        let error_count = self.diagnostics.iter().filter(|d| matches!(d.severity, crate::validator::DiagnosticSeverity::Error)).count();
-                        let warn_count = self.diagnostics.iter().filter(|d| matches!(d.severity, crate::validator::DiagnosticSeverity::Warning)).count();
-                        
-                        if error_count > 0 || warn_count > 0 {
-                            let (color, text_color, count) = if error_count > 0 {
-                                (theme::danger_border(), theme::on_accent(), error_count)
-                            } else {
-                                (theme::warning(), theme::contrast_text(theme::warning()), warn_count)
-                            };
-
-                            let badge_size = 18.0;
-                            let (rect, _) = ui.allocate_exact_size(egui::vec2(badge_size, badge_size), egui::Sense::hover());
-                            ui.painter().circle_filled(rect.center(), badge_size / 2.0, color);
-                            ui.painter().text(
-                                rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                count.to_string(),
-                                egui::FontId::proportional(11.0),
-                                text_color,
+                    ui.horizontal(|ui| {
+                        let resp = ui.add(button);
+                        // egui freezes a button's fill once `.fill()` is set, so an
+                        // inactive (transparent) tab gets no hover feedback on its
+                        // own — paint a faint highlight over it on hover.
+                        if resp.hovered() && !is_active {
+                            // Faint tint in the theme's text colour: lightens dark
+                            // themes, darkens light ones.
+                            let t = theme::text();
+                            ui.painter().rect_filled(
+                                resp.rect,
+                                egui::Rounding::same(6.0),
+                                Color32::from_rgba_unmultiplied(t.r(), t.g(), t.b(), 14),
                             );
+                        }
+                        if resp.clicked() {
+                            self.active_tab = tab;
+                            self.status_message =
+                                format!("Opened {} tab", label.split(' ').nth(1).unwrap_or(""));
+                            self.update_diagnostics();
+                        }
 
-                            if error_count > 0 {
-                                ui.interact(rect, ui.id(), egui::Sense::hover()).on_hover_text(format!("{} critical errors", error_count));
-                            } else {
-                                ui.interact(rect, ui.id(), egui::Sense::hover()).on_hover_text(format!("{} warnings", warn_count));
+                        if tab == Tab::Dashboard {
+                            let error_count = self
+                                .diagnostics
+                                .iter()
+                                .filter(|d| {
+                                    matches!(
+                                        d.severity,
+                                        crate::validator::DiagnosticSeverity::Error
+                                    )
+                                })
+                                .count();
+                            let warn_count = self
+                                .diagnostics
+                                .iter()
+                                .filter(|d| {
+                                    matches!(
+                                        d.severity,
+                                        crate::validator::DiagnosticSeverity::Warning
+                                    )
+                                })
+                                .count();
+
+                            if error_count > 0 || warn_count > 0 {
+                                let (color, text_color, count) = if error_count > 0 {
+                                    (theme::danger_border(), theme::on_accent(), error_count)
+                                } else {
+                                    (
+                                        theme::warning(),
+                                        theme::contrast_text(theme::warning()),
+                                        warn_count,
+                                    )
+                                };
+
+                                let badge_size = 18.0;
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(badge_size, badge_size),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter()
+                                    .circle_filled(rect.center(), badge_size / 2.0, color);
+                                ui.painter().text(
+                                    rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    count.to_string(),
+                                    egui::FontId::proportional(11.0),
+                                    text_color,
+                                );
+
+                                if error_count > 0 {
+                                    ui.interact(rect, ui.id(), egui::Sense::hover())
+                                        .on_hover_text(format!("{} critical errors", error_count));
+                                } else {
+                                    ui.interact(rect, ui.id(), egui::Sense::hover())
+                                        .on_hover_text(format!("{} warnings", warn_count));
+                                }
                             }
-                        }                    }
-                });
-                ui.add_space(4.0);
-            }
-        });
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
+            });
 
         // CENTRAL PANEL
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
-                .show(ui, |ui| {
-                match self.active_tab {
+                .show(ui, |ui| match self.active_tab {
                     Tab::Dashboard => self.draw_dashboard(ui),
                     Tab::Divisions => self.draw_divisions(ui),
                     Tab::Teams => self.draw_teams(ui),
@@ -316,8 +398,7 @@ impl eframe::App for AppState {
                     Tab::TimeSlots => self.draw_time_slots(ui),
                     Tab::Volunteers => self.draw_volunteers(ui),
                     Tab::Solver => self.draw_solver(ui),
-                }
-            });
+                });
         });
 
         self.draw_export_modal(ctx);
@@ -370,13 +451,20 @@ impl AppState {
 
                 let valid = opts.is_valid();
                 if !valid {
-                    ui.label(RichText::new("Select at least one format and one report.")
-                        .size(11.0).color(theme::warning()));
+                    ui.label(
+                        RichText::new("Select at least one format and one report.")
+                            .size(11.0)
+                            .color(theme::warning()),
+                    );
                     ui.add_space(4.0);
                 }
 
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(valid, egui::Button::new(RichText::new("📤 Export").strong()))
+                    if ui
+                        .add_enabled(
+                            valid,
+                            egui::Button::new(RichText::new("📤 Export").strong()),
+                        )
                         .clicked()
                     {
                         start_export = true;
@@ -426,12 +514,19 @@ impl AppState {
         if let Some(ref rx) = self.solver_rx {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
-                    SolverMessage::Progress { restart: restart_idx, total_restarts, iteration, total_iterations, hard, soft } => {
+                    SolverMessage::Progress {
+                        restart: restart_idx,
+                        total_restarts,
+                        iteration,
+                        total_iterations,
+                        hard,
+                        soft,
+                    } => {
                         // Ensure we have enough slots in the progress vector
                         if self.solver_restarts_progress.len() != total_restarts {
                             self.solver_restarts_progress = vec![0; total_restarts];
                         }
-                        
+
                         // Update this restart's progress
                         if iteration > self.solver_restarts_progress[restart_idx] {
                             self.solver_restarts_progress[restart_idx] = iteration;
@@ -440,22 +535,32 @@ impl AppState {
                         // Calculate total aggregated progress across all parallel threads
                         let total_work = total_restarts * total_iterations;
                         let completed_work: usize = self.solver_restarts_progress.iter().sum();
-                        self.solve_progress = (completed_work as f32 / total_work as f32).clamp(0.0, 1.0);
-                        
+                        self.solve_progress =
+                            (completed_work as f32 / total_work as f32).clamp(0.0, 1.0);
+
                         // Use high-water mark for the text display so it doesn't jump back and forth between threads
                         // We show the stats for the restart that is furthest along.
-                        if restart_idx >= self.solver_current_restart_idx || iteration > self.solver_max_iter_reported {
+                        if restart_idx >= self.solver_current_restart_idx
+                            || iteration > self.solver_max_iter_reported
+                        {
                             self.solver_current_restart_idx = restart_idx;
                             self.solver_max_iter_reported = iteration;
-                            
+
                             self.solve_message = format!(
                                 "Solving... Attempt {}/{} | Iteration {}/{} | Best so far — Hard Conflicts: {}, Soft: {:.1}",
-                                restart_idx + 1, total_restarts, iteration, total_iterations, hard, soft
+                                restart_idx + 1,
+                                total_restarts,
+                                iteration,
+                                total_iterations,
+                                hard,
+                                soft
                             );
                         }
                     }
                     SolverMessage::Done(result) => {
-                        let was_cancelled = self.solver_cancel_flag.as_ref()
+                        let was_cancelled = self
+                            .solver_cancel_flag
+                            .as_ref()
                             .map(|f| f.load(std::sync::atomic::Ordering::Relaxed))
                             .unwrap_or(false);
 
@@ -465,14 +570,18 @@ impl AppState {
                         if let Some(sched) = result {
                             self.schedule = Some(sched);
                             self.re_evaluate_schedule();
-                            
+
                             // Override the manual message with the solver success message.
                             // The hard-conflict count and soft penalty come from the
                             // same engine the solver optimised and the live readout
                             // reported, so the numbers are consistent end to end.
                             if let Some(ref sched) = self.schedule {
                                 let params = self.get_solver_params();
-                                let (_hard, soft) = crate::scheduler::evaluate_schedule_cost(&self.config, sched, &params);
+                                let (_hard, soft) = crate::scheduler::evaluate_schedule_cost(
+                                    &self.config,
+                                    sched,
+                                    &params,
+                                );
                                 let conflicts_count = self.schedule_conflicts.len();
                                 self.solve_message = format!(
                                     "Schedule optimized successfully! Hard Conflicts: {}, Soft Penalties: {:.1}",
@@ -529,7 +638,11 @@ impl AppState {
             cancel_flag: None,
             // Fixed seed only when the user opts in; otherwise None, which makes
             // the solver draw a fresh random seed for every generation.
-            seed: if self.solver_use_seed { Some(self.solver_seed) } else { None },
+            seed: if self.solver_use_seed {
+                Some(self.solver_seed)
+            } else {
+                None
+            },
         }
     }
 }

@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// Controls how aggressively the solver balances volunteer shifts
 /// relative to each volunteer's availability window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum FairnessMode {
     /// No fairness weighting — pure random selection (original behaviour).
     Off,
@@ -16,9 +15,7 @@ pub enum FairnessMode {
     Strict,
 }
 
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SpecialistMode {
     /// Volunteers can be assigned to any division they are qualified for.
     #[default]
@@ -29,23 +26,20 @@ pub enum SpecialistMode {
     Strict,
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SchedulingMode {
     HeadToHead,    // e.g. Soccer: Team A vs Team B
     IndividualRun, // e.g. Rescue/OnStage: Team A runs on arena/stage
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum FinalsRounds {
     #[default]
-    Grand,   // Top 2 (1 match)
+    Grand, // Top 2 (1 match)
     Semis,   // Top 4 (3 matches)
     Quarter, // Top 8 (7 matches)
     Eighths, // Top 16 (15 matches)
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Division {
@@ -54,7 +48,7 @@ pub struct Division {
     pub mode: SchedulingMode,
     pub games_per_team: usize, // number of runs for Rescue, or total matches for Soccer (Head-to-Head)
     pub volunteers_required: usize, // e.g. 2 for standard soccer, 1 for Rescue
-    pub duration_minutes: u32,      // default duration of a game/run (e.g. 20 mins)
+    pub duration_minutes: u32, // default duration of a game/run (e.g. 20 mins)
     pub allowed_fields: Option<Vec<String>>, // None means allowed on all fields
     pub interviews_enabled: bool,
     pub interview_volunteers_required: usize,
@@ -81,7 +75,6 @@ pub enum FieldKind {
     Interview,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Team {
     pub name: String,
@@ -102,7 +95,7 @@ pub struct Field {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TimeSlot {
     pub id: String,
-    pub day: String,       // e.g. "Saturday"
+    pub day: String,        // e.g. "Saturday"
     pub start_time: String, // "HH:MM" format
     pub end_time: String,   // "HH:MM" format
     #[serde(default)]
@@ -146,7 +139,7 @@ use std::collections::HashMap;
 pub struct Volunteer {
     pub id: String,
     pub name: String,
-    pub availabilities: Vec<String>, // list of time slot IDs
+    pub availabilities: Vec<String>,         // list of time slot IDs
     pub capabilities: Option<Vec<String>>, // list of division IDs they can judge. None means can judge anything.
     pub conflict_organizations: Vec<String>, // list of organization names they cannot judge
     #[serde(default)]
@@ -252,9 +245,15 @@ impl Activity {
 
     pub fn duration_minutes(&self) -> u32 {
         match self {
-            Activity::Match { duration_minutes, .. } => *duration_minutes,
-            Activity::Run { duration_minutes, .. } => *duration_minutes,
-            Activity::Interview { duration_minutes, .. } => *duration_minutes,
+            Activity::Match {
+                duration_minutes, ..
+            } => *duration_minutes,
+            Activity::Run {
+                duration_minutes, ..
+            } => *duration_minutes,
+            Activity::Interview {
+                duration_minutes, ..
+            } => *duration_minutes,
         }
     }
 
@@ -281,7 +280,13 @@ impl Activity {
         };
 
         match self {
-            Activity::Match { team_a, team_b, stage, division_id, .. } => {
+            Activity::Match {
+                team_a,
+                team_b,
+                stage,
+                division_id,
+                ..
+            } => {
                 let clean_a = clean_name(team_a, division_id);
                 let clean_b = clean_name(team_b, division_id);
                 if stage.is_final() {
@@ -290,11 +295,18 @@ impl Activity {
                     format!("⚽ {} vs {}", clean_a, clean_b)
                 }
             }
-            Activity::Run { team, run_number, division_id, .. } => {
+            Activity::Run {
+                team,
+                run_number,
+                division_id,
+                ..
+            } => {
                 let clean_t = clean_name(team, division_id);
                 format!("🤖 {} Run #{}", clean_t, run_number)
             }
-            Activity::Interview { team, division_id, .. } => {
+            Activity::Interview {
+                team, division_id, ..
+            } => {
                 let clean_t = clean_name(team, division_id);
                 format!("💬 {} Interview", clean_t)
             }
@@ -312,7 +324,13 @@ impl Activity {
         };
 
         match self {
-            Activity::Match { team_a, team_b, stage, division_id, .. } => {
+            Activity::Match {
+                team_a,
+                team_b,
+                stage,
+                division_id,
+                ..
+            } => {
                 let clean_a = clean_name(team_a, division_id);
                 let clean_b = clean_name(team_b, division_id);
                 if stage.is_final() {
@@ -321,11 +339,18 @@ impl Activity {
                     format!("{} vs {}", clean_a, clean_b)
                 }
             }
-            Activity::Run { team, run_number, division_id, .. } => {
+            Activity::Run {
+                team,
+                run_number,
+                division_id,
+                ..
+            } => {
                 let clean_t = clean_name(team, division_id);
                 format!("{} Run #{}", clean_t, run_number)
             }
-            Activity::Interview { team, division_id, .. } => {
+            Activity::Interview {
+                team, division_id, ..
+            } => {
                 let clean_t = clean_name(team, division_id);
                 format!("{} Interview", clean_t)
             }
@@ -348,7 +373,10 @@ impl Activity {
 
     pub fn round_label(&self) -> String {
         match self {
-            Activity::Match { stage: MatchStage::RoundRobin { .. }, .. } => {
+            Activity::Match {
+                stage: MatchStage::RoundRobin { .. },
+                ..
+            } => {
                 format!("Round {}", self.round_index() + 1)
             }
             Activity::Run { run_number, .. } => {
@@ -360,9 +388,10 @@ impl Activity {
 
     pub fn round_index(&self) -> usize {
         match self {
-            Activity::Match { stage: MatchStage::RoundRobin { cycle, round }, .. } => {
-                cycle * 100 + round
-            }
+            Activity::Match {
+                stage: MatchStage::RoundRobin { cycle, round },
+                ..
+            } => cycle * 100 + round,
             Activity::Match { stage, .. } => {
                 // Finals stages: EF=1, QF=2, SF=3, 3PL=4, GF=5.
                 // Offset by a large number so they sort after any RR cycles.
@@ -570,8 +599,12 @@ mod tests {
     #[test]
     fn finals_stage_ordering_and_labels() {
         let mk = |stage: MatchStage| Activity::Match {
-            id: "x".into(), team_a: "A".into(), team_b: "B".into(),
-            division_id: "d".into(), duration_minutes: 20, stage,
+            id: "x".into(),
+            team_a: "A".into(),
+            team_b: "B".into(),
+            division_id: "d".into(),
+            duration_minutes: 20,
+            stage,
         };
         // Numeric stage ordering EF<QF<SF<3PL<GF, all distinct from RR(0).
         assert_eq!(mk(MatchStage::EighthFinal).stage(), 1);
@@ -584,14 +617,20 @@ mod tests {
         assert!(mk(MatchStage::EighthFinal).round_index() > 10_000);
         assert!(mk(MatchStage::GrandFinal).round_index() > mk(MatchStage::SemiFinal).round_index());
 
-        assert_eq!(mk(MatchStage::GrandFinal).stage_label(), Some("Grand Final"));
+        assert_eq!(
+            mk(MatchStage::GrandFinal).stage_label(),
+            Some("Grand Final")
+        );
         assert!(mk(MatchStage::GrandFinal).is_final());
 
         // A team named with a finals-looking substring must NOT be misclassified
         // (the old id-substring detection would have broken on this).
         let tricky = Activity::Match {
-            id: "div_gf_team".into(), team_a: "Team _sf_ FC".into(), team_b: "B".into(),
-            division_id: "d".into(), duration_minutes: 20,
+            id: "div_gf_team".into(),
+            team_a: "Team _sf_ FC".into(),
+            team_b: "B".into(),
+            division_id: "d".into(),
+            duration_minutes: 20,
             stage: MatchStage::RoundRobin { cycle: 0, round: 0 },
         };
         assert_eq!(tricky.stage(), 0);
@@ -605,22 +644,43 @@ mod tests {
             ..Default::default()
         };
         config.divisions.push(Division {
-            id: "d1".into(), name: "Div 1".into(), mode: SchedulingMode::HeadToHead,
-            games_per_team: 2, volunteers_required: 2, duration_minutes: 20,
-            allowed_fields: None, interviews_enabled: true, interview_volunteers_required: 1,
-            interview_duration_minutes: 10, finals_enabled: true,
-            finals_rounds: Some(FinalsRounds::Semis), finals_duration_minutes: Some(25),
-            finals_third_place_playoff: true, color: Some([10, 20, 30]), min_match_break_minutes: None,
+            id: "d1".into(),
+            name: "Div 1".into(),
+            mode: SchedulingMode::HeadToHead,
+            games_per_team: 2,
+            volunteers_required: 2,
+            duration_minutes: 20,
+            allowed_fields: None,
+            interviews_enabled: true,
+            interview_volunteers_required: 1,
+            interview_duration_minutes: 10,
+            finals_enabled: true,
+            finals_rounds: Some(FinalsRounds::Semis),
+            finals_duration_minutes: Some(25),
+            finals_third_place_playoff: true,
+            color: Some([10, 20, 30]),
+            min_match_break_minutes: None,
         });
-        config.teams.push(Team { name: "Alpha".into(), division_id: "d1".into(), organization: "Org".into() });
+        config.teams.push(Team {
+            name: "Alpha".into(),
+            division_id: "d1".into(),
+            organization: "Org".into(),
+        });
         config.time_slots.push(TimeSlot {
-            id: "s1".into(), day: "Saturday".into(), start_time: "09:00".into(),
-            end_time: "09:20".into(), kind: FieldKind::Competition,
+            id: "s1".into(),
+            day: "Saturday".into(),
+            start_time: "09:00".into(),
+            end_time: "09:20".into(),
+            kind: FieldKind::Competition,
         });
         config.volunteers.push(Volunteer {
-            id: "v1".into(), name: "Vol".into(), availabilities: vec!["s1".into()],
-            capabilities: Some(vec!["d1".into()]), conflict_organizations: vec![],
-            attendance_status: Default::default(), locked_field_ids: None,
+            id: "v1".into(),
+            name: "Vol".into(),
+            availabilities: vec!["s1".into()],
+            capabilities: Some(vec!["d1".into()]),
+            conflict_organizations: vec![],
+            attendance_status: Default::default(),
+            locked_field_ids: None,
         });
 
         let json = serde_json::to_string(&config).expect("serialize");

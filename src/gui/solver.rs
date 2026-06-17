@@ -1,9 +1,9 @@
-use crate::gui::{AppState, ScheduleViewTab, SolverMessage, Tab, VolRosterSort};
-use crate::gui::theme;
-use crate::model::{FairnessMode, SchedulingMode, SpecialistMode, FieldKind, AttendanceStatus};
-use crate::validator::DiagnosticSeverity;
 use crate::gui::helpers::{draw_schedule_cell, get_competition_colors, parse_time_to_minutes};
-use crate::scheduler::{RoundRow, solve_schedule, AssignmentConflict};
+use crate::gui::theme;
+use crate::gui::{AppState, ScheduleViewTab, SolverMessage, Tab, VolRosterSort};
+use crate::model::{AttendanceStatus, FairnessMode, FieldKind, SchedulingMode, SpecialistMode};
+use crate::scheduler::{AssignmentConflict, RoundRow, solve_schedule};
+use crate::validator::DiagnosticSeverity;
 use eframe::egui::{self, Color32, RichText, Stroke};
 
 impl AppState {
@@ -13,8 +13,11 @@ impl AppState {
 
         let is_solving = self.solver_rx.is_some();
         let config_diagnostics = crate::validator::validate_config(&self.config);
-        let config_error_count = config_diagnostics.iter().filter(|d| d.severity == DiagnosticSeverity::Error).count();
-        
+        let config_error_count = config_diagnostics
+            .iter()
+            .filter(|d| d.severity == DiagnosticSeverity::Error)
+            .count();
+
         if config_error_count > 0 {
             egui::Frame::none()
                 .fill(theme::danger_bg())
@@ -547,29 +550,52 @@ impl AppState {
                 .inner_margin(12.0)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("🔍 Timeline Settings:").strong().color(theme::text_muted()));
+                        ui.label(
+                            RichText::new("🔍 Timeline Settings:")
+                                .strong()
+                                .color(theme::text_muted()),
+                        );
                         ui.add_space(10.0);
-                        
+
                         ui.label("Zoom:");
-                        ui.add(egui::Slider::new(&mut self.timeline_zoom, 1.0..=10.0).text("px/min"));
-                        
+                        ui.add(
+                            egui::Slider::new(&mut self.timeline_zoom, 1.0..=10.0).text("px/min"),
+                        );
+
                         ui.add_space(20.0);
                         ui.label("Filter Fields:");
-                        let mut comp = self.timeline_filter_field_kinds.contains(&FieldKind::Competition);
+                        let mut comp = self
+                            .timeline_filter_field_kinds
+                            .contains(&FieldKind::Competition);
                         if ui.checkbox(&mut comp, "Competition").changed() {
-                            if comp { self.timeline_filter_field_kinds.insert(FieldKind::Competition); }
-                            else { self.timeline_filter_field_kinds.remove(&FieldKind::Competition); }
+                            if comp {
+                                self.timeline_filter_field_kinds
+                                    .insert(FieldKind::Competition);
+                            } else {
+                                self.timeline_filter_field_kinds
+                                    .remove(&FieldKind::Competition);
+                            }
                         }
-                        let mut intv = self.timeline_filter_field_kinds.contains(&FieldKind::Interview);
+                        let mut intv = self
+                            .timeline_filter_field_kinds
+                            .contains(&FieldKind::Interview);
                         if ui.checkbox(&mut intv, "Interviews").changed() {
-                            if intv { self.timeline_filter_field_kinds.insert(FieldKind::Interview); }
-                            else { self.timeline_filter_field_kinds.remove(&FieldKind::Interview); }
+                            if intv {
+                                self.timeline_filter_field_kinds
+                                    .insert(FieldKind::Interview);
+                            } else {
+                                self.timeline_filter_field_kinds
+                                    .remove(&FieldKind::Interview);
+                            }
                         }
 
                         ui.add_space(20.0);
                         if ui.button("Reset Filters").clicked() {
                             self.timeline_filter_divisions.clear();
-                            self.timeline_filter_field_kinds = [FieldKind::Competition, FieldKind::Interview].into_iter().collect();
+                            self.timeline_filter_field_kinds =
+                                [FieldKind::Competition, FieldKind::Interview]
+                                    .into_iter()
+                                    .collect();
                             self.timeline_zoom = 3.5;
                         }
                     });
@@ -580,8 +606,11 @@ impl AppState {
                         for div in &self.config.divisions {
                             let mut active = !self.timeline_filter_divisions.contains(&div.id);
                             if ui.checkbox(&mut active, &div.name).changed() {
-                                if active { self.timeline_filter_divisions.remove(&div.id); }
-                                else { self.timeline_filter_divisions.insert(div.id.clone()); }
+                                if active {
+                                    self.timeline_filter_divisions.remove(&div.id);
+                                } else {
+                                    self.timeline_filter_divisions.insert(div.id.clone());
+                                }
                             }
                         }
                     });
@@ -590,26 +619,49 @@ impl AppState {
 
             // ── Manual Editing Controls ─────────────────────────────────────────
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Schedule Management:").strong().color(theme::text_muted()));
+                ui.label(
+                    RichText::new("Schedule Management:")
+                        .strong()
+                        .color(theme::text_muted()),
+                );
                 ui.add_space(8.0);
-                
-                let lock_label = if self.schedule_locked { "🔒 Schedule Locked" } else { "🔓 Schedule Unlocked (Edit Mode)" };
-                let lock_color = if self.schedule_locked { theme::text_faint() } else { theme::warning() };
-                let lock_btn = egui::Button::new(RichText::new(lock_label).strong().color(theme::on_accent()))
-                    .fill(lock_color)
-                    .rounding(6.0)
-                    .min_size(egui::vec2(200.0, 28.0));
-                
-                if ui.add(lock_btn).on_hover_text("Unlock the schedule to manually move activities between slots and fields.").clicked() {
+
+                let lock_label = if self.schedule_locked {
+                    "🔒 Schedule Locked"
+                } else {
+                    "🔓 Schedule Unlocked (Edit Mode)"
+                };
+                let lock_color = if self.schedule_locked {
+                    theme::text_faint()
+                } else {
+                    theme::warning()
+                };
+                let lock_btn =
+                    egui::Button::new(RichText::new(lock_label).strong().color(theme::on_accent()))
+                        .fill(lock_color)
+                        .rounding(6.0)
+                        .min_size(egui::vec2(200.0, 28.0));
+
+                if ui
+                    .add(lock_btn)
+                    .on_hover_text(
+                        "Unlock the schedule to manually move activities between slots and fields.",
+                    )
+                    .clicked()
+                {
                     self.schedule_locked = !self.schedule_locked;
                     if self.schedule_locked {
                         self.dragged_assignment = None;
                     }
                 }
-                
+
                 if !self.schedule_locked {
                     ui.add_space(12.0);
-                    ui.label(RichText::new("🖱 Click and drag any activity cell below to move it.").italics().color(theme::warning()));
+                    ui.label(
+                        RichText::new("🖱 Click and drag any activity cell below to move it.")
+                            .italics()
+                            .color(theme::warning()),
+                    );
                 }
             });
             ui.add_space(10.0);
@@ -617,7 +669,9 @@ impl AppState {
             // ── Tab bar ────────────────────────────────────────────────────────
             let has_scheduled_divs: Vec<String> = {
                 let sched = self.schedule.as_ref().unwrap();
-                self.config.divisions.iter()
+                self.config
+                    .divisions
+                    .iter()
                     .filter(|div| {
                         sched.assignments.iter().any(|a| {
                             a.activity.division_id() == div.id
@@ -630,18 +684,29 @@ impl AppState {
 
             egui::Frame::none()
                 .fill(theme::card_bg())
-                .rounding(egui::Rounding { nw: 8.0, ne: 8.0, sw: 0.0, se: 0.0 })
+                .rounding(egui::Rounding {
+                    nw: 8.0,
+                    ne: 8.0,
+                    sw: 0.0,
+                    se: 0.0,
+                })
                 .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         // All Games tab
                         let is_all = self.schedule_view_tab == ScheduleViewTab::AllGames;
                         let all_btn = egui::Button::new(
-                            RichText::new("📅 All Games")
-                                .strong()
-                                .color(if is_all { theme::on_accent() } else { theme::text_muted() })
+                            RichText::new("📅 All Games").strong().color(if is_all {
+                                theme::on_accent()
+                            } else {
+                                theme::text_muted()
+                            }),
                         )
-                        .fill(if is_all { theme::accent_strong() } else { Color32::TRANSPARENT })
+                        .fill(if is_all {
+                            theme::accent_strong()
+                        } else {
+                            Color32::TRANSPARENT
+                        })
                         .rounding(6.0)
                         .min_size(egui::vec2(110.0, 28.0));
                         if ui.add(all_btn).clicked() {
@@ -652,21 +717,34 @@ impl AppState {
 
                         // Per-division tabs
                         for div_id in &has_scheduled_divs {
-                            let div_name = self.config.divisions.iter()
+                            let div_name = self
+                                .config
+                                .divisions
+                                .iter()
                                 .find(|d| &d.id == div_id)
                                 .map(|d| d.name.as_str())
                                 .unwrap_or(div_id.as_str());
 
                             let (_, border_col) = get_competition_colors(div_id, &self.config);
-                            let is_active = self.schedule_view_tab == ScheduleViewTab::Division(div_id.clone());
+                            let is_active =
+                                self.schedule_view_tab == ScheduleViewTab::Division(div_id.clone());
 
                             let tab_btn = egui::Button::new(
-                                RichText::new(format!("🏟 {}", div_name))
-                                    .strong()
-                                    .color(if is_active { theme::on_accent() } else { theme::text_muted() })
+                                RichText::new(format!("🏟 {}", div_name)).strong().color(
+                                    if is_active {
+                                        theme::on_accent()
+                                    } else {
+                                        theme::text_muted()
+                                    },
+                                ),
                             )
                             .fill(if is_active {
-                                Color32::from_rgba_unmultiplied(border_col.r(), border_col.g(), border_col.b(), 60)
+                                Color32::from_rgba_unmultiplied(
+                                    border_col.r(),
+                                    border_col.g(),
+                                    border_col.b(),
+                                    60,
+                                )
                             } else {
                                 Color32::TRANSPARENT
                             })
@@ -722,15 +800,20 @@ impl AppState {
         let mut attendance_toggle: Option<(String, String, AttendanceStatus)> = None; // (vol_id, day, next_status)
 
         ui.horizontal(|ui| {
-            ui.label(RichText::new("VOLUNTEER ASSIGNMENT ROSTERS").strong().color(theme::text_muted()));
+            ui.label(
+                RichText::new("VOLUNTEER ASSIGNMENT ROSTERS")
+                    .strong()
+                    .color(theme::text_muted()),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if !self.vol_roster_search.is_empty()
-                    && ui.button("Clear").clicked() {
-                        self.vol_roster_search.clear();
-                    }
-                ui.add(egui::TextEdit::singleline(&mut self.vol_roster_search)
-                    .hint_text("🔍 Search volunteers...")
-                    .desired_width(180.0));
+                if !self.vol_roster_search.is_empty() && ui.button("Clear").clicked() {
+                    self.vol_roster_search.clear();
+                }
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.vol_roster_search)
+                        .hint_text("🔍 Search volunteers...")
+                        .desired_width(180.0),
+                );
             });
         });
         ui.add_space(8.0);
@@ -738,13 +821,28 @@ impl AppState {
         if let Some(ref sched) = self.schedule {
             // ── Tools & Sorting ──
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Sort by:").size(11.0).color(theme::text_muted()));
+                ui.label(
+                    RichText::new("Sort by:")
+                        .size(11.0)
+                        .color(theme::text_muted()),
+                );
                 ui.selectable_value(&mut self.vol_roster_sort_by, VolRosterSort::Name, "Name");
-                ui.selectable_value(&mut self.vol_roster_sort_by, VolRosterSort::Shifts, "Shifts");
-                ui.selectable_value(&mut self.vol_roster_sort_by, VolRosterSort::Conflicts, "Conflicts");
-                
+                ui.selectable_value(
+                    &mut self.vol_roster_sort_by,
+                    VolRosterSort::Shifts,
+                    "Shifts",
+                );
+                ui.selectable_value(
+                    &mut self.vol_roster_sort_by,
+                    VolRosterSort::Conflicts,
+                    "Conflicts",
+                );
+
                 ui.add_space(20.0);
-                ui.checkbox(&mut self.vol_roster_show_only_conflicts, "Show Only with Conflicts");
+                ui.checkbox(
+                    &mut self.vol_roster_show_only_conflicts,
+                    "Show Only with Conflicts",
+                );
             });
             ui.add_space(12.0);
 
@@ -753,19 +851,29 @@ impl AppState {
             let mut active_vols = 0;
             let mut max_shifts = 0;
             let mut min_shifts = usize::MAX;
-            
-            let mut vol_data: Vec<_> = self.config.volunteers.iter().map(|vol| {
-                let assign_indices: Vec<usize> = sched.assignments.iter().enumerate()
-                    .filter(|(_, a)| a.volunteer_ids.contains(&vol.id))
-                    .map(|(idx, _)| idx)
-                    .collect();
-                
-                let has_conflict = assign_indices.iter().any(|idx| {
-                    self.assignment_conflicts.get(idx).is_some_and(|c| !c.is_empty())
-                });
 
-                (vol, assign_indices, has_conflict)
-            }).collect();
+            let mut vol_data: Vec<_> = self
+                .config
+                .volunteers
+                .iter()
+                .map(|vol| {
+                    let assign_indices: Vec<usize> = sched
+                        .assignments
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, a)| a.volunteer_ids.contains(&vol.id))
+                        .map(|(idx, _)| idx)
+                        .collect();
+
+                    let has_conflict = assign_indices.iter().any(|idx| {
+                        self.assignment_conflicts
+                            .get(idx)
+                            .is_some_and(|c| !c.is_empty())
+                    });
+
+                    (vol, assign_indices, has_conflict)
+                })
+                .collect();
 
             for (_, assign_indices, _) in &vol_data {
                 let count = assign_indices.len();
@@ -776,32 +884,79 @@ impl AppState {
                     min_shifts = min_shifts.min(count);
                 }
             }
-            if min_shifts == usize::MAX { min_shifts = 0; }
+            if min_shifts == usize::MAX {
+                min_shifts = 0;
+            }
 
             ui.horizontal_wrapped(|ui| {
-                crate::gui::helpers::draw_stat_card(ui, "📋", "Total Assignments", &total_shifts.to_string(), theme::accent());
-                crate::gui::helpers::draw_stat_card(ui, "👤", "Active Volunteers", &active_vols.to_string(), theme::success());
-                let avg = if active_vols > 0 { total_shifts as f32 / active_vols as f32 } else { 0.0 };
-                crate::gui::helpers::draw_stat_card(ui, "⚖", "Avg Shifts/Vol", &format!("{:.1}", avg), theme::warning());
-                crate::gui::helpers::draw_stat_card(ui, "📊", "Shift Range", &format!("{} - {}", min_shifts, max_shifts), theme::accent_alt());
+                crate::gui::helpers::draw_stat_card(
+                    ui,
+                    "📋",
+                    "Total Assignments",
+                    &total_shifts.to_string(),
+                    theme::accent(),
+                );
+                crate::gui::helpers::draw_stat_card(
+                    ui,
+                    "👤",
+                    "Active Volunteers",
+                    &active_vols.to_string(),
+                    theme::success(),
+                );
+                let avg = if active_vols > 0 {
+                    total_shifts as f32 / active_vols as f32
+                } else {
+                    0.0
+                };
+                crate::gui::helpers::draw_stat_card(
+                    ui,
+                    "⚖",
+                    "Avg Shifts/Vol",
+                    &format!("{:.1}", avg),
+                    theme::warning(),
+                );
+                crate::gui::helpers::draw_stat_card(
+                    ui,
+                    "📊",
+                    "Shift Range",
+                    &format!("{} - {}", min_shifts, max_shifts),
+                    theme::accent_alt(),
+                );
             });
             ui.add_space(15.0);
 
             // ── Bulk Roster Tools ──
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Bulk Tools:").strong().color(theme::text()));
-                if ui.button("📋 Copy Names").on_hover_text("Copy all volunteer names to clipboard (one per line)").clicked() {
-                    let mut names: Vec<_> = self.config.volunteers.iter().map(|v| v.name.as_str()).collect();
+                if ui
+                    .button("📋 Copy Names")
+                    .on_hover_text("Copy all volunteer names to clipboard (one per line)")
+                    .clicked()
+                {
+                    let mut names: Vec<_> = self
+                        .config
+                        .volunteers
+                        .iter()
+                        .map(|v| v.name.as_str())
+                        .collect();
                     names.sort();
                     ui.output_mut(|o| o.copied_text = names.join("\n"));
                     self.status_message = "Volunteer names copied to clipboard.".to_string();
                 }
-                
-                if ui.button("🗑 Unassign All").on_hover_text("Clear ALL volunteer assignments for the entire schedule").clicked() {
+
+                if ui
+                    .button("🗑 Unassign All")
+                    .on_hover_text("Clear ALL volunteer assignments for the entire schedule")
+                    .clicked()
+                {
                     unassign_all = true;
                 }
 
-                if ui.button("📊 Export Rosters (CSV)").on_hover_text("Export a CSV with individual volunteer schedules").clicked() {
+                if ui
+                    .button("📊 Export Rosters (CSV)")
+                    .on_hover_text("Export a CSV with individual volunteer schedules")
+                    .clicked()
+                {
                     do_export = true;
                 }
             });
@@ -827,9 +982,17 @@ impl AppState {
 
             for (vol, vol_assign_indices, has_conflict) in vol_data {
                 let header_text = format!("👤 {} ({} shifts)", vol.name, vol_assign_indices.len());
-                let mut header_color = if has_conflict { theme::danger() } else { theme::text() };
-                
-                if vol.attendance_status.values().any(|s| matches!(s, AttendanceStatus::NoShow)) {
+                let mut header_color = if has_conflict {
+                    theme::danger()
+                } else {
+                    theme::text()
+                };
+
+                if vol
+                    .attendance_status
+                    .values()
+                    .any(|s| matches!(s, AttendanceStatus::NoShow))
+                {
                     header_color = theme::danger_border();
                 }
 
@@ -838,12 +1001,17 @@ impl AppState {
                 let mut active_days = Vec::new();
                 for slot_id in &vol.availabilities {
                     if let Some(slot) = self.config.time_slots.iter().find(|s| &s.id == slot_id)
-                        && !active_days.contains(&slot.day) {
-                            active_days.push(slot.day.clone());
-                        }
+                        && !active_days.contains(&slot.day)
+                    {
+                        active_days.push(slot.day.clone());
+                    }
                 }
                 active_days.sort_by_key(|day| {
-                    self.config.time_slots.iter().position(|s| &s.day == day).unwrap_or(0)
+                    self.config
+                        .time_slots
+                        .iter()
+                        .position(|s| &s.day == day)
+                        .unwrap_or(0)
                 });
 
                 ui.horizontal(|ui| {
@@ -861,67 +1029,117 @@ impl AppState {
 
                     ui.scope(|ui| {
                         ui.set_max_width(header_w);
-                        egui::CollapsingHeader::new(RichText::new(header_text).strong().color(header_color))
-                            .id_source(format!("vol_roster_{}", vol.id))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    if ui.button(RichText::new("🗑 Clear All Shifts").color(theme::danger())).on_hover_text("Remove this volunteer from all assigned activities").clicked() {
-                                        vol_to_clear = Some(vol.id.clone());
-                                    }
-                                    if ui.button("📅 View Availability").clicked() {
-                                        vol_to_view = Some(vol.id.clone());
-                                    }
-                                });
-                                ui.add_space(4.0);
-                                ui.separator();
-                                ui.add_space(4.0);
-
-                                for &idx in &vol_assign_indices {
-                                    let assign = &sched.assignments[idx];
-                                    let slot = self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id);
-                                    let field = assign.field_id.as_ref().and_then(|f_id| self.config.fields.iter().find(|f| f.id == *f_id));
-                                    let slot_time = slot.map_or("".to_string(), |s| format!("{} {} - {}", s.day, s.start_time, s.end_time));
-                                    let location = field.map_or("Open Space / Interview Table", |f| f.name.as_str());
-
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new(format!(
-                                            "  ⏰ {} | 📍 {} | {}",
-                                            slot_time, location, assign.activity.label()
-                                        )).color(theme::text_dim()));
-
-                                        if let Some(conflicts) = self.assignment_conflicts.get(&idx)
-                                            && !conflicts.is_empty() {
-                                                let has_error = conflicts.iter().any(|c| matches!(c.severity, crate::scheduler::ConflictSeverity::Error));
-                                                let icon = if has_error { "❌" } else { "⚠" };
-                                                let color = if has_error { theme::danger() } else { theme::warning() };
-                                                ui.label(RichText::new(icon).color(color).strong()).on_hover_ui(|ui| {
-                                                    ui.vertical(|ui| {
-                                                        for c in conflicts {
-                                                            ui.label(format!("- {}", c.message));
-                                                        }
-                                                    });
-                                                });
-                                            }
-                                    });
+                        egui::CollapsingHeader::new(
+                            RichText::new(header_text).strong().color(header_color),
+                        )
+                        .id_source(format!("vol_roster_{}", vol.id))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .button(
+                                        RichText::new("🗑 Clear All Shifts").color(theme::danger()),
+                                    )
+                                    .on_hover_text(
+                                        "Remove this volunteer from all assigned activities",
+                                    )
+                                    .clicked()
+                                {
+                                    vol_to_clear = Some(vol.id.clone());
+                                }
+                                if ui.button("📅 View Availability").clicked() {
+                                    vol_to_view = Some(vol.id.clone());
                                 }
                             });
+                            ui.add_space(4.0);
+                            ui.separator();
+                            ui.add_space(4.0);
+
+                            for &idx in &vol_assign_indices {
+                                let assign = &sched.assignments[idx];
+                                let slot = self
+                                    .config
+                                    .time_slots
+                                    .iter()
+                                    .find(|s| s.id == assign.time_slot_id);
+                                let field = assign.field_id.as_ref().and_then(|f_id| {
+                                    self.config.fields.iter().find(|f| f.id == *f_id)
+                                });
+                                let slot_time = slot.map_or("".to_string(), |s| {
+                                    format!("{} {} - {}", s.day, s.start_time, s.end_time)
+                                });
+                                let location = field
+                                    .map_or("Open Space / Interview Table", |f| f.name.as_str());
+
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "  ⏰ {} | 📍 {} | {}",
+                                            slot_time,
+                                            location,
+                                            assign.activity.label()
+                                        ))
+                                        .color(theme::text_dim()),
+                                    );
+
+                                    if let Some(conflicts) = self.assignment_conflicts.get(&idx)
+                                        && !conflicts.is_empty()
+                                    {
+                                        let has_error = conflicts.iter().any(|c| {
+                                            matches!(
+                                                c.severity,
+                                                crate::scheduler::ConflictSeverity::Error
+                                            )
+                                        });
+                                        let icon = if has_error { "❌" } else { "⚠" };
+                                        let color = if has_error {
+                                            theme::danger()
+                                        } else {
+                                            theme::warning()
+                                        };
+                                        ui.label(RichText::new(icon).color(color).strong())
+                                            .on_hover_ui(|ui| {
+                                                ui.vertical(|ui| {
+                                                    for c in conflicts {
+                                                        ui.label(format!("- {}", c.message));
+                                                    }
+                                                });
+                                            });
+                                    }
+                                });
+                            }
+                        });
                     });
 
                     // ── Attendance toggles (per day), to the right of the header ──
                     for day in &active_days {
                         let status = vol.status_for_day(day);
                         let (btn_text, btn_color, btn_text_color) = match status {
-                            AttendanceStatus::Pending => ("⏳", theme::warning(), theme::contrast_text(theme::warning())),
-                            AttendanceStatus::CheckedIn => ("✅", theme::success(), theme::contrast_text(theme::success())),
-                            AttendanceStatus::NoShow => ("❌", theme::danger(), theme::contrast_text(theme::danger())),
+                            AttendanceStatus::Pending => (
+                                "⏳",
+                                theme::warning(),
+                                theme::contrast_text(theme::warning()),
+                            ),
+                            AttendanceStatus::CheckedIn => (
+                                "✅",
+                                theme::success(),
+                                theme::contrast_text(theme::success()),
+                            ),
+                            AttendanceStatus::NoShow => {
+                                ("❌", theme::danger(), theme::contrast_text(theme::danger()))
+                            }
                         };
 
                         let day_abbr = day.get(..3).unwrap_or(day.as_str());
                         let label = format!("{}: {}", day_abbr, btn_text);
-                        let btn = egui::Button::new(RichText::new(label).size(12.0).strong().color(btn_text_color))
-                            .fill(btn_color)
-                            .min_size(egui::vec2(65.0, 24.0))
-                            .rounding(6.0);
+                        let btn = egui::Button::new(
+                            RichText::new(label)
+                                .size(12.0)
+                                .strong()
+                                .color(btn_text_color),
+                        )
+                        .fill(btn_color)
+                        .min_size(egui::vec2(65.0, 24.0))
+                        .rounding(6.0);
 
                         let tip = format!(
                             "{} — {}. Click to cycle: Pending → Checked-In → No-Show.",
@@ -1032,11 +1250,11 @@ impl AppState {
 
                     // ── Calculate Viable Substitutes ──
                     let mut viable_subs = Vec::new();
-                    
+
                     for vol in &self.config.volunteers {
                         // 1. Not a No-Show for THIS day
                         if matches!(vol.status_for_day(&slot.day), AttendanceStatus::NoShow) { continue; }
-                        
+
                         // 2. Already assigned here?
                         if assign.volunteer_ids.contains(&vol.id) { continue; }
 
@@ -1083,7 +1301,7 @@ impl AppState {
                     } else {
                         ui.label(RichText::new("Select a substitute:").strong());
                         ui.add_space(4.0);
-                        
+
                         egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                             for (v_id, v_name, v_status, count) in viable_subs {
                                 let (status_icon, _status_color) = match v_status {
@@ -1107,12 +1325,12 @@ impl AppState {
                     ui.add_space(12.0);
                     ui.separator();
                     ui.add_space(8.0);
-                    
+
                     ui.horizontal(|ui| {
                         if ui.button("Cancel").clicked() {
                             sub_to_cancel = true;
                         }
-                        
+
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.button(RichText::new("Clear Missing").color(theme::danger())).on_hover_text("Remove no-show volunteers from this assignment").clicked() {
                                 sub_to_clear_missing = true;
@@ -1139,18 +1357,22 @@ impl AppState {
             let slot_id = assign.time_slot_id.clone();
             let day = match self.config.time_slots.iter().find(|s| s.id == slot_id) {
                 Some(slot) => slot.day.clone(),
-                None => { self.active_substitution = None; return; }
+                None => {
+                    self.active_substitution = None;
+                    return;
+                }
             };
 
             // Find a no-show to replace, or just add if there's room
             let mut replaced = false;
             for vol_id in &mut assign.volunteer_ids {
                 if let Some(vol) = self.config.volunteers.iter().find(|v| v.id == *vol_id)
-                    && matches!(vol.status_for_day(&day), AttendanceStatus::NoShow) {
-                        *vol_id = new_vol_id.clone();
-                        replaced = true;
-                        break;
-                    }
+                    && matches!(vol.status_for_day(&day), AttendanceStatus::NoShow)
+                {
+                    *vol_id = new_vol_id.clone();
+                    replaced = true;
+                    break;
+                }
             }
 
             if !replaced {
@@ -1168,12 +1390,17 @@ impl AppState {
             let slot_id = assign.time_slot_id.clone();
             let day = match self.config.time_slots.iter().find(|s| s.id == slot_id) {
                 Some(slot) => slot.day.clone(),
-                None => { self.active_substitution = None; return; }
+                None => {
+                    self.active_substitution = None;
+                    return;
+                }
             };
 
             let vols = self.config.volunteers.clone();
             assign.volunteer_ids.retain(|id| {
-                vols.iter().find(|v| &v.id == id).is_none_or(|v| !matches!(v.status_for_day(&day), AttendanceStatus::NoShow))
+                vols.iter()
+                    .find(|v| &v.id == id)
+                    .is_none_or(|v| !matches!(v.status_for_day(&day), AttendanceStatus::NoShow))
             });
         }
         self.active_substitution = None;
@@ -1183,9 +1410,14 @@ impl AppState {
 
     /// Draws the combined timeline visualizer (All Games tab).
     fn draw_all_games_timeline(&mut self, ui: &mut egui::Ui) {
-        if self.schedule.is_none() { return; }
+        if self.schedule.is_none() {
+            return;
+        }
 
-        let fields_list: Vec<crate::model::Field> = self.config.fields.iter()
+        let fields_list: Vec<crate::model::Field> = self
+            .config
+            .fields
+            .iter()
             .filter(|f| self.timeline_filter_field_kinds.contains(&f.kind))
             .cloned()
             .collect();
@@ -1199,21 +1431,28 @@ impl AppState {
         let slots_list = self.config.time_slots.clone();
 
         // Group slots by day
-        let mut slots_by_day: std::collections::HashMap<String, Vec<crate::model::TimeSlot>> = std::collections::HashMap::new();
+        let mut slots_by_day: std::collections::HashMap<String, Vec<crate::model::TimeSlot>> =
+            std::collections::HashMap::new();
         for slot in &slots_list {
-            slots_by_day.entry(slot.day.clone()).or_default().push(slot.clone());
+            slots_by_day
+                .entry(slot.day.clone())
+                .or_default()
+                .push(slot.clone());
         }
 
         let mut days: Vec<String> = slots_by_day.keys().cloned().collect();
-        days.sort_by_key(|day| {
-            slots_list.iter().position(|s| &s.day == day).unwrap_or(0)
-        });
+        days.sort_by_key(|day| slots_list.iter().position(|s| &s.day == day).unwrap_or(0));
 
         let mut move_request = None;
 
         for day in &days {
             ui.add_space(30.0);
-            ui.label(RichText::new(day.to_uppercase()).strong().size(18.0).color(theme::accent_mid()));
+            ui.label(
+                RichText::new(day.to_uppercase())
+                    .strong()
+                    .size(18.0)
+                    .color(theme::accent_mid()),
+            );
             ui.add_space(10.0);
 
             let day_slots = slots_by_day.get(day).unwrap();
@@ -1223,30 +1462,43 @@ impl AppState {
             for slot in day_slots {
                 let s_min = parse_time_to_minutes(&slot.start_time);
                 let e_min = parse_time_to_minutes(&slot.end_time);
-                if s_min < day_start_min { day_start_min = s_min; }
-                if e_min > day_end_min { day_end_min = e_min; }
+                if s_min < day_start_min {
+                    day_start_min = s_min;
+                }
+                if e_min > day_end_min {
+                    day_end_min = e_min;
+                }
             }
 
             // Also check day configs for the intended range
             if let Some(day_cfg) = self.config.day_configs.iter().find(|cfg| &cfg.day == day) {
                 let s_min = parse_time_to_minutes(&day_cfg.start_time);
                 let e_min = parse_time_to_minutes(&day_cfg.end_time);
-                if s_min < day_start_min { day_start_min = s_min; }
-                if e_min > day_end_min { day_end_min = e_min; }
+                if s_min < day_start_min {
+                    day_start_min = s_min;
+                }
+                if e_min > day_end_min {
+                    day_end_min = e_min;
+                }
             }
 
             if let Some(ref sched) = self.schedule {
                 for assign in &sched.assignments {
                     if let Some(slot) = slots_list.iter().find(|s| s.id == assign.time_slot_id)
-                        && &slot.day == day {
-                            let s_min = parse_time_to_minutes(&slot.start_time);
-                            let e_min = s_min + assign.activity.duration_minutes();
-                            if e_min > day_end_min { day_end_min = e_min; }
+                        && &slot.day == day
+                    {
+                        let s_min = parse_time_to_minutes(&slot.start_time);
+                        let e_min = s_min + assign.activity.duration_minutes();
+                        if e_min > day_end_min {
+                            day_end_min = e_min;
                         }
+                    }
                 }
             }
 
-            if day_start_min >= day_end_min { continue; }
+            if day_start_min >= day_end_min {
+                continue;
+            }
 
             // Ensure at least 4 hours are shown to avoid "tiny slivers"
             if day_end_min - day_start_min < 240 {
@@ -1260,8 +1512,11 @@ impl AppState {
             let time_col_width = 55.0;
             let timeline_padding_top = 15.0;
             let timeline_padding_bottom = 15.0;
-            let timeline_height = total_min as f32 * pixels_per_minute + timeline_padding_top + timeline_padding_bottom;
-            let total_width = time_col_width + sorted_fields.len() as f32 * (col_width + col_spacing);
+            let timeline_height = total_min as f32 * pixels_per_minute
+                + timeline_padding_top
+                + timeline_padding_bottom;
+            let total_width =
+                time_col_width + sorted_fields.len() as f32 * (col_width + col_spacing);
 
             egui::ScrollArea::horizontal()
                 .id_source(format!("timeline_scroll_h_{}", day))
@@ -1269,21 +1524,28 @@ impl AppState {
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
                         // Headers
-                        let (header_rect, _) = ui.allocate_exact_size(egui::vec2(total_width, 25.0), egui::Sense::hover());
+                        let (header_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(total_width, 25.0),
+                            egui::Sense::hover(),
+                        );
                         for (f_idx, f) in sorted_fields.iter().enumerate() {
                             let x = time_col_width + f_idx as f32 * (col_width + col_spacing);
                             let label_rect = egui::Rect::from_min_size(
                                 header_rect.min + egui::vec2(x, 0.0),
-                                egui::vec2(col_width, 25.0)
+                                egui::vec2(col_width, 25.0),
                             );
-                            let mut child_ui = ui.child_ui(label_rect, egui::Layout::centered_and_justified(egui::Direction::LeftToRight));
-                            child_ui.label(RichText::new(&f.name).strong().color(theme::text_dim()));
+                            let mut child_ui = ui.child_ui(
+                                label_rect,
+                                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                            );
+                            child_ui
+                                .label(RichText::new(&f.name).strong().color(theme::text_dim()));
                         }
 
                         // Grid
                         let (rect, _response) = ui.allocate_exact_size(
                             egui::vec2(total_width, timeline_height),
-                            egui::Sense::hover()
+                            egui::Sense::hover(),
                         );
                         let painter = ui.painter_at(rect);
 
@@ -1291,7 +1553,7 @@ impl AppState {
                             let x = time_col_width + f_idx as f32 * (col_width + col_spacing);
                             let col_rect = egui::Rect::from_min_max(
                                 egui::pos2(rect.min.x + x, rect.min.y),
-                                egui::pos2(rect.min.x + x + col_width, rect.max.y)
+                                egui::pos2(rect.min.x + x + col_width, rect.max.y),
                             );
                             painter.rect_filled(col_rect, 0.0, theme::card_bg());
                         }
@@ -1303,38 +1565,70 @@ impl AppState {
                                 let y = (min - day_start_min) as f32 * pixels_per_minute;
                                 let line_y = rect.min.y + timeline_padding_top + y;
                                 let is_major = min % 30 == 0;
-                                let stroke_color = if is_major { theme::text_faint() } else { theme::border() };
+                                let stroke_color = if is_major {
+                                    theme::text_faint()
+                                } else {
+                                    theme::border()
+                                };
                                 let stroke_width = if is_major { 0.6 } else { 0.3 };
                                 painter.line_segment(
-                                    [egui::pos2(rect.min.x + time_col_width, line_y), egui::pos2(rect.max.x - col_spacing, line_y)],
-                                    Stroke::new(stroke_width, stroke_color)
+                                    [
+                                        egui::pos2(rect.min.x + time_col_width, line_y),
+                                        egui::pos2(rect.max.x - col_spacing, line_y),
+                                    ],
+                                    Stroke::new(stroke_width, stroke_color),
                                 );
                                 let hr = min / 60;
                                 let mn = min % 60;
                                 let time_str = format!("{:02}:{:02}", hr, mn);
                                 if is_major || pixels_per_minute >= 1.5 {
-                                    let label_color = if is_major { theme::text_muted() } else { theme::text_faint() };
+                                    let label_color = if is_major {
+                                        theme::text_muted()
+                                    } else {
+                                        theme::text_faint()
+                                    };
                                     let font_size = if is_major { 11.0 } else { 9.0 };
-                                    painter.text(egui::pos2(rect.min.x + 5.0, line_y), egui::Align2::LEFT_CENTER, time_str, egui::FontId::proportional(font_size), label_color);
+                                    painter.text(
+                                        egui::pos2(rect.min.x + 5.0, line_y),
+                                        egui::Align2::LEFT_CENTER,
+                                        time_str,
+                                        egui::FontId::proportional(font_size),
+                                        label_color,
+                                    );
                                 }
                             }
                         }
 
                         for (f_idx, _) in sorted_fields.iter().enumerate() {
                             let x = time_col_width + f_idx as f32 * (col_width + col_spacing);
-                            painter.line_segment([egui::pos2(rect.min.x + x, rect.min.y), egui::pos2(rect.min.x + x, rect.max.y)], Stroke::new(0.5, theme::border()));
+                            painter.line_segment(
+                                [
+                                    egui::pos2(rect.min.x + x, rect.min.y),
+                                    egui::pos2(rect.min.x + x, rect.max.y),
+                                ],
+                                Stroke::new(0.5, theme::border()),
+                            );
                             let right_x = x + col_width;
-                            painter.line_segment([egui::pos2(rect.min.x + right_x, rect.min.y), egui::pos2(rect.min.x + right_x, rect.max.y)], Stroke::new(0.5, theme::border()));
+                            painter.line_segment(
+                                [
+                                    egui::pos2(rect.min.x + right_x, rect.min.y),
+                                    egui::pos2(rect.min.x + right_x, rect.max.y),
+                                ],
+                                Stroke::new(0.5, theme::border()),
+                            );
                         }
 
                         // Drop highlights and move logic
                         if let Some(dragged_idx) = self.dragged_assignment {
-                            let pointer_pos = ui.input(|i| i.pointer.interact_pos().unwrap_or(egui::Pos2::ZERO));
+                            let pointer_pos =
+                                ui.input(|i| i.pointer.interact_pos().unwrap_or(egui::Pos2::ZERO));
 
                             for (f_idx, field) in sorted_fields.iter().enumerate() {
                                 let x = time_col_width + f_idx as f32 * (col_width + col_spacing);
                                 for slot in day_slots {
-                                    if slot.kind != field.kind { continue; }
+                                    if slot.kind != field.kind {
+                                        continue;
+                                    }
 
                                     let start_m = parse_time_to_minutes(&slot.start_time);
                                     let y = (start_m - day_start_min) as f32 * pixels_per_minute;
@@ -1342,14 +1636,22 @@ impl AppState {
 
                                     let cell_rect = egui::Rect::from_min_size(
                                         rect.min + egui::vec2(x, timeline_padding_top + y),
-                                        egui::vec2(col_width, h)
+                                        egui::vec2(col_width, h),
                                     );
 
                                     if cell_rect.contains(pointer_pos) {
-                                        painter.rect_stroke(cell_rect, 4.0, Stroke::new(2.5, theme::warning()));
+                                        painter.rect_stroke(
+                                            cell_rect,
+                                            4.0,
+                                            Stroke::new(2.5, theme::warning()),
+                                        );
 
                                         if ui.input(|i| i.pointer.any_released()) {
-                                            move_request = Some((dragged_idx, slot.id.clone(), Some(field.id.clone())));
+                                            move_request = Some((
+                                                dragged_idx,
+                                                slot.id.clone(),
+                                                Some(field.id.clone()),
+                                            ));
                                         }
                                     }
                                 }
@@ -1357,23 +1659,33 @@ impl AppState {
                         }
 
                         for kind in [FieldKind::Competition, FieldKind::Interview] {
-                            let mut kind_slots: Vec<&crate::model::TimeSlot> = day_slots.iter().filter(|s| s.kind == kind).collect();
-                            if kind_slots.is_empty() { continue; }
+                            let mut kind_slots: Vec<&crate::model::TimeSlot> =
+                                day_slots.iter().filter(|s| s.kind == kind).collect();
+                            if kind_slots.is_empty() {
+                                continue;
+                            }
 
                             kind_slots.sort_by_key(|s| parse_time_to_minutes(&s.start_time));
 
-                            let kind_field_indices: Vec<usize> = sorted_fields.iter().enumerate()
+                            let kind_field_indices: Vec<usize> = sorted_fields
+                                .iter()
+                                .enumerate()
                                 .filter(|(_, f)| f.kind == kind)
                                 .map(|(i, _)| i)
                                 .collect();
 
-                            if kind_field_indices.is_empty() { continue; }
+                            if kind_field_indices.is_empty() {
+                                continue;
+                            }
 
                             let min_f_idx = *kind_field_indices.iter().min().unwrap();
                             let max_f_idx = *kind_field_indices.iter().max().unwrap();
 
-                            let break_x_min = time_col_width + min_f_idx as f32 * (col_width + col_spacing);
-                            let break_x_max = time_col_width + max_f_idx as f32 * (col_width + col_spacing) + col_width;
+                            let break_x_min =
+                                time_col_width + min_f_idx as f32 * (col_width + col_spacing);
+                            let break_x_max = time_col_width
+                                + max_f_idx as f32 * (col_width + col_spacing)
+                                + col_width;
 
                             for idx in 0..kind_slots.len().saturating_sub(1) {
                                 let slot = kind_slots[idx];
@@ -1382,21 +1694,39 @@ impl AppState {
                                 let t2 = parse_time_to_minutes(&next_slot.start_time);
                                 if t2 > t1 {
                                     let gap = t2 - t1;
-                                    if gap >= 45 { // Only show major breaks (Lunch)
+                                    if gap >= 45 {
+                                        // Only show major breaks (Lunch)
                                         let y1 = (t1 - day_start_min) as f32 * pixels_per_minute;
                                         let y2 = (t2 - day_start_min) as f32 * pixels_per_minute;
                                         let break_rect = egui::Rect::from_min_max(
-                                            egui::pos2(rect.min.x + break_x_min, rect.min.y + timeline_padding_top + y1),
-                                            egui::pos2(rect.min.x + break_x_max, rect.min.y + timeline_padding_top + y2)
+                                            egui::pos2(
+                                                rect.min.x + break_x_min,
+                                                rect.min.y + timeline_padding_top + y1,
+                                            ),
+                                            egui::pos2(
+                                                rect.min.x + break_x_max,
+                                                rect.min.y + timeline_padding_top + y2,
+                                            ),
                                         );
                                         let (break_bg, break_border) = {
                                             let r = theme::rose();
                                             theme::cell_colors_from_rgb([r.r(), r.g(), r.b()])
                                         };
-                                        painter.rect(break_rect, 4.0, break_bg, Stroke::new(0.5, break_border));
+                                        painter.rect(
+                                            break_rect,
+                                            4.0,
+                                            break_bg,
+                                            Stroke::new(0.5, break_border),
+                                        );
                                         let break_label = format!("🍔 Lunch Break ({}m)", gap);
                                         let label_color = theme::rose();
-                                        painter.text(break_rect.center(), egui::Align2::CENTER_CENTER, break_label, egui::FontId::proportional(11.0), label_color);
+                                        painter.text(
+                                            break_rect.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            break_label,
+                                            egui::FontId::proportional(11.0),
+                                            label_color,
+                                        );
                                     }
                                 }
                             }
@@ -1404,90 +1734,148 @@ impl AppState {
 
                         if let Some(ref sched) = self.schedule {
                             for (idx, assign) in sched.assignments.iter().enumerate() {
-                                if self.timeline_filter_divisions.contains(assign.activity.division_id()) { continue; }
+                                if self
+                                    .timeline_filter_divisions
+                                    .contains(assign.activity.division_id())
+                                {
+                                    continue;
+                                }
 
                                 if let Some(ref f_id) = assign.field_id
-                                    && let Some(slot) = slots_list.iter().find(|s| s.id == assign.time_slot_id)
-                                        && &slot.day == day
-                                            && let Some(f_idx) = sorted_fields.iter().position(|f| &f.id == f_id) {
-                                                let start_m = parse_time_to_minutes(&slot.start_time);
-                                                let dur = assign.activity.duration_minutes();
-                                                let y = (start_m - day_start_min) as f32 * pixels_per_minute;
-                                                let h = dur as f32 * pixels_per_minute;
-                                                let x = time_col_width + f_idx as f32 * (col_width + col_spacing) + 4.0;
-                                                let w = col_width - 8.0;
+                                    && let Some(slot) =
+                                        slots_list.iter().find(|s| s.id == assign.time_slot_id)
+                                    && &slot.day == day
+                                    && let Some(f_idx) =
+                                        sorted_fields.iter().position(|f| &f.id == f_id)
+                                {
+                                    let start_m = parse_time_to_minutes(&slot.start_time);
+                                    let dur = assign.activity.duration_minutes();
+                                    let y = (start_m - day_start_min) as f32 * pixels_per_minute;
+                                    let h = dur as f32 * pixels_per_minute;
+                                    let x = time_col_width
+                                        + f_idx as f32 * (col_width + col_spacing)
+                                        + 4.0;
+                                    let w = col_width - 8.0;
 
-                                                let mut card_rect = egui::Rect::from_min_size(rect.min + egui::vec2(x, timeline_padding_top + y), egui::vec2(w, h));
+                                    let mut card_rect = egui::Rect::from_min_size(
+                                        rect.min + egui::vec2(x, timeline_padding_top + y),
+                                        egui::vec2(w, h),
+                                    );
 
-                                                let sense = if !self.schedule_locked { egui::Sense::drag() } else { egui::Sense::hover() };
-                                                let response = ui.interact(card_rect, ui.id().with(idx), sense);
+                                    let sense = if !self.schedule_locked {
+                                        egui::Sense::drag()
+                                    } else {
+                                        egui::Sense::hover()
+                                    };
+                                    let response = ui.interact(card_rect, ui.id().with(idx), sense);
 
-                                                if response.drag_started() {
-                                                    self.dragged_assignment = Some(idx);
-                                                    self.drag_accumulated_offset = egui::Vec2::ZERO;
-                                                }
+                                    if response.drag_started() {
+                                        self.dragged_assignment = Some(idx);
+                                        self.drag_accumulated_offset = egui::Vec2::ZERO;
+                                    }
 
-                                                if self.dragged_assignment == Some(idx) {
-                                                    self.drag_accumulated_offset += response.drag_delta();
-                                                    card_rect = card_rect.translate(self.drag_accumulated_offset);
-                                                }
+                                    if self.dragged_assignment == Some(idx) {
+                                        self.drag_accumulated_offset += response.drag_delta();
+                                        card_rect =
+                                            card_rect.translate(self.drag_accumulated_offset);
+                                    }
 
-                                                let conflicts: &[AssignmentConflict] = self.assignment_conflicts.get(&idx).map(|v| v.as_slice()).unwrap_or(&[]);
-                                                let is_dragged = self.dragged_assignment == Some(idx);
-                                                let config = &self.config;
-                                                let draw = |ui: &mut egui::Ui| {
-                                                    let mut child_ui = ui.child_ui(card_rect, egui::Layout::top_down(egui::Align::Min));
-                                                    draw_schedule_cell(&mut child_ui, assign, config, &slot.id, w, h, conflicts, idx)
-                                                };
-                                                // Draw the card currently being dragged on a foreground layer so it
-                                                // stays above cells painted later in the loop.
-                                                let sub = if is_dragged {
-                                                    let layer = egui::LayerId::new(egui::Order::Foreground, ui.id().with(("dragged_card", idx)));
-                                                    ui.with_layer_id(layer, draw).inner
-                                                } else {
-                                                    draw(ui)
-                                                };
-                                                if let Some(sub_idx) = sub {
-                                                    self.active_substitution = Some(sub_idx);
-                                                }
-                                            }
+                                    let conflicts: &[AssignmentConflict] = self
+                                        .assignment_conflicts
+                                        .get(&idx)
+                                        .map(|v| v.as_slice())
+                                        .unwrap_or(&[]);
+                                    let is_dragged = self.dragged_assignment == Some(idx);
+                                    let config = &self.config;
+                                    let draw = |ui: &mut egui::Ui| {
+                                        let mut child_ui = ui.child_ui(
+                                            card_rect,
+                                            egui::Layout::top_down(egui::Align::Min),
+                                        );
+                                        draw_schedule_cell(
+                                            &mut child_ui,
+                                            assign,
+                                            config,
+                                            &slot.id,
+                                            w,
+                                            h,
+                                            conflicts,
+                                            idx,
+                                        )
+                                    };
+                                    // Draw the card currently being dragged on a foreground layer so it
+                                    // stays above cells painted later in the loop.
+                                    let sub = if is_dragged {
+                                        let layer = egui::LayerId::new(
+                                            egui::Order::Foreground,
+                                            ui.id().with(("dragged_card", idx)),
+                                        );
+                                        ui.with_layer_id(layer, draw).inner
+                                    } else {
+                                        draw(ui)
+                                    };
+                                    if let Some(sub_idx) = sub {
+                                        self.active_substitution = Some(sub_idx);
+                                    }
+                                }
                             }
                         }
                     });
                 });
         }
 
-
         if let Some(ref sched) = self.schedule {
-            let open_space_assignments: Vec<(usize, &crate::model::ScheduleAssignment)> = sched.assignments.iter()
+            let open_space_assignments: Vec<(usize, &crate::model::ScheduleAssignment)> = sched
+                .assignments
+                .iter()
                 .enumerate()
                 .filter(|(_, a)| a.field_id.is_none())
                 .collect();
 
             if !open_space_assignments.is_empty() {
                 ui.add_space(20.0);
-                ui.label(RichText::new("INTERVIEWS & UNALLOCATED EVENTS").strong().color(theme::text_muted()));
+                ui.label(
+                    RichText::new("INTERVIEWS & UNALLOCATED EVENTS")
+                        .strong()
+                        .color(theme::text_muted()),
+                );
                 ui.add_space(5.0);
                 for slot in &slots_list {
-                    let slot_assigns: Vec<&(usize, &crate::model::ScheduleAssignment)> = open_space_assignments
-                        .iter()
-                        .filter(|(_, a)| a.time_slot_id == slot.id)
-                        .collect();
-                    
-                    let pointer_pos = ui.input(|i| i.pointer.interact_pos().unwrap_or(egui::Pos2::ZERO));
+                    let slot_assigns: Vec<&(usize, &crate::model::ScheduleAssignment)> =
+                        open_space_assignments
+                            .iter()
+                            .filter(|(_, a)| a.time_slot_id == slot.id)
+                            .collect();
+
+                    let pointer_pos =
+                        ui.input(|i| i.pointer.interact_pos().unwrap_or(egui::Pos2::ZERO));
                     let is_released = ui.input(|i| i.pointer.any_released());
 
                     ui.horizontal(|ui| {
-                        let _label_resp = ui.label(RichText::new(format!("{} ({} - {}):", slot.day, slot.start_time, slot.end_time)).strong().color(theme::text()));
-                        
+                        let _label_resp = ui.label(
+                            RichText::new(format!(
+                                "{} ({} - {}):",
+                                slot.day, slot.start_time, slot.end_time
+                            ))
+                            .strong()
+                            .color(theme::text()),
+                        );
+
                         // Drop target for unallocated section
                         if let Some(dragged_idx) = self.dragged_assignment {
                             // If it's an interview (no field_id) or we want to allow moving grid items to unallocated
-                            if ui.max_rect().contains(pointer_pos) { // This is a bit broad, but works within the horizontal layout
+                            if ui.max_rect().contains(pointer_pos) {
+                                // This is a bit broad, but works within the horizontal layout
                                 // We'll check if the pointer is near this row
                                 let row_rect = ui.max_rect();
-                                if pointer_pos.y >= row_rect.min.y && pointer_pos.y <= row_rect.max.y {
-                                    ui.painter().rect_stroke(row_rect.expand(2.0), 4.0, Stroke::new(1.5, theme::warning()));
+                                if pointer_pos.y >= row_rect.min.y
+                                    && pointer_pos.y <= row_rect.max.y
+                                {
+                                    ui.painter().rect_stroke(
+                                        row_rect.expand(2.0),
+                                        4.0,
+                                        Stroke::new(1.5, theme::warning()),
+                                    );
                                     if is_released {
                                         move_request = Some((dragged_idx, slot.id.clone(), None));
                                     }
@@ -1496,11 +1884,20 @@ impl AppState {
                         }
 
                         for (idx, assign) in slot_assigns {
-                            let conflicts: &[AssignmentConflict] = self.assignment_conflicts.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
-                            
-                            let sense = if !self.schedule_locked { egui::Sense::drag() } else { egui::Sense::hover() };
-                            let (rect, response) = ui.allocate_at_least(egui::vec2(145.0, 48.0), sense);
-                            
+                            let conflicts: &[AssignmentConflict] = self
+                                .assignment_conflicts
+                                .get(idx)
+                                .map(|v| v.as_slice())
+                                .unwrap_or(&[]);
+
+                            let sense = if !self.schedule_locked {
+                                egui::Sense::drag()
+                            } else {
+                                egui::Sense::hover()
+                            };
+                            let (rect, response) =
+                                ui.allocate_at_least(egui::vec2(145.0, 48.0), sense);
+
                             if response.drag_started() {
                                 self.dragged_assignment = Some(*idx);
                                 self.drag_accumulated_offset = egui::Vec2::ZERO;
@@ -1511,8 +1908,18 @@ impl AppState {
                                 self.drag_accumulated_offset += response.drag_delta();
                                 card_rect = card_rect.translate(self.drag_accumulated_offset);
                             }
-                            let mut child_ui = ui.child_ui(card_rect, egui::Layout::top_down(egui::Align::Min));
-                            if let Some(sub_idx) = draw_schedule_cell(&mut child_ui, assign, &self.config, &assign.time_slot_id, 145.0, 48.0, conflicts, *idx) {
+                            let mut child_ui =
+                                ui.child_ui(card_rect, egui::Layout::top_down(egui::Align::Min));
+                            if let Some(sub_idx) = draw_schedule_cell(
+                                &mut child_ui,
+                                assign,
+                                &self.config,
+                                &assign.time_slot_id,
+                                145.0,
+                                48.0,
+                                conflicts,
+                                *idx,
+                            ) {
                                 self.active_substitution = Some(sub_idx);
                             }
                         }
@@ -1545,7 +1952,11 @@ impl AppState {
         accent: Color32,
     ) {
         if rows.is_empty() {
-            ui.label(RichText::new("No matches scheduled yet.").color(theme::text_faint()).italics());
+            ui.label(
+                RichText::new("No matches scheduled yet.")
+                    .color(theme::text_faint())
+                    .italics(),
+            );
             return;
         }
 
@@ -1553,111 +1964,194 @@ impl AppState {
         let panel_width = ui.available_width().max(400.0);
 
         ui.scope(|ui| {
-                for row in rows {
-                    let is_finals = row.matches.iter().any(|m| m.is_final);
+            for row in rows {
+                let is_finals = row.matches.iter().any(|m| m.is_final);
 
-                    let header_bg = if is_finals { theme::warning_bg() } else { theme::card_bg() };
-                    let header_accent = if is_finals { theme::warning() } else { accent };
+                let header_bg = if is_finals {
+                    theme::warning_bg()
+                } else {
+                    theme::card_bg()
+                };
+                let header_accent = if is_finals { theme::warning() } else { accent };
 
-                    // Round header
-                    egui::Frame::none()
-                        .fill(header_bg)
-                        .rounding(egui::Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
-                        .inner_margin(egui::Margin::symmetric(12.0, 6.0))
-                        .show(ui, |ui| {
-                            ui.set_min_width(panel_width - 4.0);
-                            ui.horizontal(|ui| {
-                                let round_icon = if is_finals { "🏆" } else { "🔄" };
-                                ui.label(RichText::new(format!("{} {}", round_icon, row.round_label))
-                                    .strong().size(13.0).color(header_accent));
-                                if !row.bye_teams.is_empty() {
-                                    ui.add_space(12.0);
-                                    ui.label(RichText::new(format!("🟡 Bye: {}", row.bye_teams.join(", ")))
-                                        .size(11.5).color(theme::warning()));
-                                }
-                            });
+                // Round header
+                egui::Frame::none()
+                    .fill(header_bg)
+                    .rounding(egui::Rounding {
+                        nw: 6.0,
+                        ne: 6.0,
+                        sw: 0.0,
+                        se: 0.0,
+                    })
+                    .inner_margin(egui::Margin::symmetric(12.0, 6.0))
+                    .show(ui, |ui| {
+                        ui.set_min_width(panel_width - 4.0);
+                        ui.horizontal(|ui| {
+                            let round_icon = if is_finals { "🏆" } else { "🔄" };
+                            ui.label(
+                                RichText::new(format!("{} {}", round_icon, row.round_label))
+                                    .strong()
+                                    .size(13.0)
+                                    .color(header_accent),
+                            );
+                            if !row.bye_teams.is_empty() {
+                                ui.add_space(12.0);
+                                ui.label(
+                                    RichText::new(format!("🟡 Bye: {}", row.bye_teams.join(", ")))
+                                        .size(11.5)
+                                        .color(theme::warning()),
+                                );
+                            }
                         });
+                    });
 
-                    // Match rows body
-                    egui::Frame::none()
-                        .fill(theme::card_bg_alt())
-                        .rounding(egui::Rounding { nw: 0.0, ne: 0.0, sw: 6.0, se: 6.0 })
-                        .stroke(Stroke::new(1.0, theme::border()))
-                        .show(ui, |ui| {
-                            ui.set_min_width(panel_width - 4.0);
+                // Match rows body
+                egui::Frame::none()
+                    .fill(theme::card_bg_alt())
+                    .rounding(egui::Rounding {
+                        nw: 0.0,
+                        ne: 0.0,
+                        sw: 6.0,
+                        se: 6.0,
+                    })
+                    .stroke(Stroke::new(1.0, theme::border()))
+                    .show(ui, |ui| {
+                        ui.set_min_width(panel_width - 4.0);
 
-                            // Column headers
-                            egui::Frame::none()
+                        // Column headers
+                        egui::Frame::none()
                             .fill(theme::card_bg())
                             .inner_margin(egui::Margin::symmetric(12.0, 5.0))
                             .show(ui, |ui| {
                                 ui.set_min_width(panel_width - 8.0);
                                 ui.horizontal(|ui| {
                                     ui.allocate_ui(egui::vec2(90.0, 16.0), |ui| {
-                                        ui.label(RichText::new("Day / Time").size(10.5).color(theme::text_faint()).strong());
+                                        ui.label(
+                                            RichText::new("Day / Time")
+                                                .size(10.5)
+                                                .color(theme::text_faint())
+                                                .strong(),
+                                        );
                                     });
                                     ui.allocate_ui(egui::vec2(160.0, 16.0), |ui| {
-                                        ui.label(RichText::new("Field / Arena").size(10.5).color(theme::text_faint()).strong());
+                                        ui.label(
+                                            RichText::new("Field / Arena")
+                                                .size(10.5)
+                                                .color(theme::text_faint())
+                                                .strong(),
+                                        );
                                     });
-                                    ui.label(RichText::new(if is_h2h { "Match" } else { "Team" })
-                                        .size(10.5).color(theme::text_faint()).strong());
+                                    ui.label(
+                                        RichText::new(if is_h2h { "Match" } else { "Team" })
+                                            .size(10.5)
+                                            .color(theme::text_faint())
+                                            .strong(),
+                                    );
                                 });
                             });
 
-                            for (m_idx, m) in row.matches.iter().enumerate() {
-                                let row_bg = if m_idx % 2 == 0 { theme::card_bg_alt() } else { theme::row_stripe() };
+                        for (m_idx, m) in row.matches.iter().enumerate() {
+                            let row_bg = if m_idx % 2 == 0 {
+                                theme::card_bg_alt()
+                            } else {
+                                theme::row_stripe()
+                            };
 
-                                // Draw thin separator above every row after the first using painter
-                                if m_idx > 0 {
-                                    let sep_size = egui::vec2(panel_width - 32.0, 1.0);
-                                    let (sep_rect, _) = ui.allocate_exact_size(sep_size, egui::Sense::hover());
-                                    ui.painter().rect_filled(sep_rect, 0.0, theme::border());
-                                }
-
-                                egui::Frame::none()
-                                    .fill(row_bg)
-                                    .inner_margin(egui::Margin::symmetric(12.0, 7.0))
-                                    .show(ui, |ui| {
-                                        ui.set_min_width(panel_width - 8.0);
-                                        ui.horizontal(|ui| {
-                                            // Day / Time
-                                            ui.allocate_ui(egui::vec2(90.0, 20.0), |ui| {
-                                                let day_short = if m.day.len() > 3 { &m.day[..3] } else { &m.day };
-                                                let display_time = if m.time.is_empty() { "—".to_string() } else { format!("{} {}", day_short, m.time) };
-                                                ui.label(RichText::new(display_time)
-                                                    .size(12.0).color(theme::text_dim()).monospace());
-                                            });
-                                            // Field
-                                            ui.allocate_ui(egui::vec2(160.0, 20.0), |ui| {
-                                                let field_color = if m.field_name == "—" { theme::text_faint() } else { theme::text_muted() };
-                                                ui.label(RichText::new(&m.field_name).size(11.5).color(field_color));
-                                            });
-                                            // Match or team
-                                            if is_h2h {
-                                                let icon = if m.is_final { "🏆" } else { "⚽" };
-                                                ui.label(RichText::new(icon).size(12.0));
-                                                ui.label(RichText::new(&m.team_a).strong().size(12.0).color(theme::text()));
-                                                ui.label(RichText::new(" vs ").size(11.5).color(theme::text_faint()));
-                                                ui.label(RichText::new(&m.team_b).strong().size(12.0).color(theme::text()));
-                                            } else {
-                                                ui.label(RichText::new("🤖").size(12.0));
-                                                ui.label(RichText::new(&m.team_a).strong().size(12.0).color(theme::text()));
-                                            }
-                                        });
-                                    });
+                            // Draw thin separator above every row after the first using painter
+                            if m_idx > 0 {
+                                let sep_size = egui::vec2(panel_width - 32.0, 1.0);
+                                let (sep_rect, _) =
+                                    ui.allocate_exact_size(sep_size, egui::Sense::hover());
+                                ui.painter().rect_filled(sep_rect, 0.0, theme::border());
                             }
-                        });
 
-                    ui.add_space(12.0);
-                }
-            });
+                            egui::Frame::none()
+                                .fill(row_bg)
+                                .inner_margin(egui::Margin::symmetric(12.0, 7.0))
+                                .show(ui, |ui| {
+                                    ui.set_min_width(panel_width - 8.0);
+                                    ui.horizontal(|ui| {
+                                        // Day / Time
+                                        ui.allocate_ui(egui::vec2(90.0, 20.0), |ui| {
+                                            let day_short =
+                                                if m.day.len() > 3 { &m.day[..3] } else { &m.day };
+                                            let display_time = if m.time.is_empty() {
+                                                "—".to_string()
+                                            } else {
+                                                format!("{} {}", day_short, m.time)
+                                            };
+                                            ui.label(
+                                                RichText::new(display_time)
+                                                    .size(12.0)
+                                                    .color(theme::text_dim())
+                                                    .monospace(),
+                                            );
+                                        });
+                                        // Field
+                                        ui.allocate_ui(egui::vec2(160.0, 20.0), |ui| {
+                                            let field_color = if m.field_name == "—" {
+                                                theme::text_faint()
+                                            } else {
+                                                theme::text_muted()
+                                            };
+                                            ui.label(
+                                                RichText::new(&m.field_name)
+                                                    .size(11.5)
+                                                    .color(field_color),
+                                            );
+                                        });
+                                        // Match or team
+                                        if is_h2h {
+                                            let icon = if m.is_final { "🏆" } else { "⚽" };
+                                            ui.label(RichText::new(icon).size(12.0));
+                                            ui.label(
+                                                RichText::new(&m.team_a)
+                                                    .strong()
+                                                    .size(12.0)
+                                                    .color(theme::text()),
+                                            );
+                                            ui.label(
+                                                RichText::new(" vs ")
+                                                    .size(11.5)
+                                                    .color(theme::text_faint()),
+                                            );
+                                            ui.label(
+                                                RichText::new(&m.team_b)
+                                                    .strong()
+                                                    .size(12.0)
+                                                    .color(theme::text()),
+                                            );
+                                        } else {
+                                            ui.label(RichText::new("🤖").size(12.0));
+                                            ui.label(
+                                                RichText::new(&m.team_a)
+                                                    .strong()
+                                                    .size(12.0)
+                                                    .color(theme::text()),
+                                            );
+                                        }
+                                    });
+                                });
+                        }
+                    });
+
+                ui.add_space(12.0);
+            }
+        });
     }
 }
 
 impl AppState {
     fn draw_division_view(&mut self, ui: &mut egui::Ui, div_id: &str) {
-        let div = self.config.divisions.iter().find(|d| d.id == div_id).cloned();
-        if div.is_none() { return; }
+        let div = self
+            .config
+            .divisions
+            .iter()
+            .find(|d| d.id == div_id)
+            .cloned();
+        if div.is_none() {
+            return;
+        }
         let div = div.unwrap();
         let div_name = &div.name;
         let is_h2h = div.mode == SchedulingMode::HeadToHead;
@@ -1667,24 +2161,65 @@ impl AppState {
         // Header
         ui.horizontal(|ui| {
             ui.label(RichText::new("●").size(16.0).color(accent));
-            ui.label(RichText::new(div_name).strong().size(15.0).color(theme::text()));
-            ui.label(RichText::new(if is_h2h { " · Head-to-Head" } else { " · Individual Run" })
-                .size(11.0).color(theme::text_faint()));
+            ui.label(
+                RichText::new(div_name)
+                    .strong()
+                    .size(15.0)
+                    .color(theme::text()),
+            );
+            ui.label(
+                RichText::new(if is_h2h {
+                    " · Head-to-Head"
+                } else {
+                    " · Individual Run"
+                })
+                .size(11.0)
+                .color(theme::text_faint()),
+            );
         });
 
         // Subtitle: explain round count
-        if is_h2h
-            && let Some(rows) = self.division_rounds.get(div_id) {
-                let rr_rounds: Vec<&RoundRow> = rows.iter().filter(|r| !r.matches.iter().any(|m| m.is_final)).collect();
-                let finals_rounds: Vec<&RoundRow> = rows.iter().filter(|r| r.matches.iter().any(|m| m.is_final)).collect();
-                let parts: Vec<String> = [
-                    if rr_rounds.is_empty() { None } else { Some(format!("{} round-robin round{}", rr_rounds.len(), if rr_rounds.len() == 1 { "" } else { "s" })) },
-                    if finals_rounds.is_empty() { None } else { Some(format!("{} finals stage{}", finals_rounds.len(), if finals_rounds.len() == 1 { "" } else { "s" })) },
-                ].into_iter().flatten().collect();
-                if !parts.is_empty() {
-                    ui.label(RichText::new(parts.join(" + ")).size(11.0).color(theme::text_faint()).italics());
-                }
+        if is_h2h && let Some(rows) = self.division_rounds.get(div_id) {
+            let rr_rounds: Vec<&RoundRow> = rows
+                .iter()
+                .filter(|r| !r.matches.iter().any(|m| m.is_final))
+                .collect();
+            let finals_rounds: Vec<&RoundRow> = rows
+                .iter()
+                .filter(|r| r.matches.iter().any(|m| m.is_final))
+                .collect();
+            let parts: Vec<String> = [
+                if rr_rounds.is_empty() {
+                    None
+                } else {
+                    Some(format!(
+                        "{} round-robin round{}",
+                        rr_rounds.len(),
+                        if rr_rounds.len() == 1 { "" } else { "s" }
+                    ))
+                },
+                if finals_rounds.is_empty() {
+                    None
+                } else {
+                    Some(format!(
+                        "{} finals stage{}",
+                        finals_rounds.len(),
+                        if finals_rounds.len() == 1 { "" } else { "s" }
+                    ))
+                },
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            if !parts.is_empty() {
+                ui.label(
+                    RichText::new(parts.join(" + "))
+                        .size(11.0)
+                        .color(theme::text_faint())
+                        .italics(),
+                );
             }
+        }
         ui.add_space(8.0);
 
         // Sub-tabs
@@ -1696,14 +2231,22 @@ impl AppState {
             ];
             for (tab, label) in tabs {
                 let is_active = self.active_division_sub_tab == tab;
-                let text_color = if is_active { theme::on_accent() } else { theme::text_muted() };
-                let bg_color = if is_active { theme::accent_strong() } else { theme::surface() };
-                
+                let text_color = if is_active {
+                    theme::on_accent()
+                } else {
+                    theme::text_muted()
+                };
+                let bg_color = if is_active {
+                    theme::accent_strong()
+                } else {
+                    theme::surface()
+                };
+
                 let btn = egui::Button::new(RichText::new(label).strong().color(text_color))
                     .fill(bg_color)
                     .rounding(4.0)
                     .min_size(egui::vec2(100.0, 26.0));
-                
+
                 if ui.add(btn).clicked() {
                     self.active_division_sub_tab = tab;
                 }
@@ -1717,7 +2260,11 @@ impl AppState {
                 if let Some(rows) = self.division_rounds.get(div_id).cloned() {
                     self.draw_division_rounds_table(ui, div_id, &rows, is_h2h, accent);
                 } else {
-                    ui.label(RichText::new("No rounds scheduled yet.").italics().color(theme::text_faint()));
+                    ui.label(
+                        RichText::new("No rounds scheduled yet.")
+                            .italics()
+                            .color(theme::text_faint()),
+                    );
                 }
             }
             crate::gui::DivisionSubTab::Teams => {
@@ -1730,186 +2277,142 @@ impl AppState {
     }
 
     fn draw_division_teams(&self, ui: &mut egui::Ui, div_id: &str, accent: Color32) {
-        let div_teams: Vec<&crate::model::Team> = self.config.teams.iter().filter(|t| t.division_id == div_id).collect();
+        let div_teams: Vec<&crate::model::Team> = self
+            .config
+            .teams
+            .iter()
+            .filter(|t| t.division_id == div_id)
+            .collect();
         if div_teams.is_empty() {
-            ui.label(RichText::new("No teams in this division.").italics().color(theme::text_faint()));
+            ui.label(
+                RichText::new("No teams in this division.")
+                    .italics()
+                    .color(theme::text_faint()),
+            );
             return;
         }
 
         let panel_width = ui.available_width().max(400.0);
 
         ui.scope(|ui| {
-                for team in div_teams {
-                    // Find activities for this team
-                    let mut team_activities: Vec<&crate::model::ScheduleAssignment> = Vec::new();
-                    if let Some(ref sched) = self.schedule {
-                        team_activities = sched.assignments.iter()
-                            .filter(|a| a.activity.teams().contains(&team.name.as_str()))
-                            .collect();
-                        
-                        // Sort chronologically
-                        team_activities.sort_by_key(|a| {
-                            let slot = self.config.time_slots.iter().find(|s| s.id == a.time_slot_id);
-                            slot.map(|s| (s.day.clone(), parse_time_to_minutes(&s.start_time)))
-                        });
-                    }
+            for team in div_teams {
+                // Find activities for this team
+                let mut team_activities: Vec<&crate::model::ScheduleAssignment> = Vec::new();
+                if let Some(ref sched) = self.schedule {
+                    team_activities = sched
+                        .assignments
+                        .iter()
+                        .filter(|a| a.activity.teams().contains(&team.name.as_str()))
+                        .collect();
 
-                    // Team header
-                    egui::Frame::none()
-                        .fill(theme::card_bg())
-                        .rounding(egui::Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
-                        .inner_margin(egui::Margin::symmetric(12.0, 6.0))
-                        .show(ui, |ui| {
-                            ui.set_min_width(panel_width - 4.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("👥").size(13.0).color(accent));
-                                ui.label(RichText::new(&team.name).strong().size(13.0).color(theme::text()));
-                                ui.add_space(8.0);
-                                ui.label(RichText::new(format!("({})", team.organization)).size(11.0).color(theme::text_muted()));
-                            });
-                        });
-
-                    // Activities body
-                    egui::Frame::none()
-                        .fill(theme::card_bg_alt())
-                        .rounding(egui::Rounding { nw: 0.0, ne: 0.0, sw: 6.0, se: 6.0 })
-                        .stroke(Stroke::new(1.0, theme::border()))
-                        .show(ui, |ui| {
-                            ui.set_min_width(panel_width - 4.0);
-
-                            // Column headers
-                            egui::Frame::none()
-                                .fill(theme::card_bg())
-                                .inner_margin(egui::Margin::symmetric(12.0, 5.0))
-                                .show(ui, |ui| {
-                                    ui.set_min_width(panel_width - 8.0);
-                                    ui.horizontal(|ui| {
-                                        ui.allocate_ui(egui::vec2(90.0, 16.0), |ui| {
-                                            ui.label(RichText::new("Day / Time").size(10.5).color(theme::text_faint()).strong());
-                                        });
-                                        ui.allocate_ui(egui::vec2(160.0, 16.0), |ui| {
-                                            ui.label(RichText::new("Field / Arena").size(10.5).color(theme::text_faint()).strong());
-                                        });
-                                        ui.label(RichText::new("Activity").size(10.5).color(theme::text_faint()).strong());
-                                    });
-                                });
-
-                            if team_activities.is_empty() {
-                                egui::Frame::none()
-                                    .inner_margin(egui::Margin::symmetric(12.0, 7.0))
-                                    .show(ui, |ui| {
-                                        ui.label(RichText::new("No activities scheduled.").small().italics().color(theme::text_faint()));
-                                    });
-                            } else {
-                                for (a_idx, assign) in team_activities.iter().enumerate() {
-                                    let row_bg = if a_idx % 2 == 0 { theme::card_bg_alt() } else { theme::row_stripe() };
-
-                                    if a_idx > 0 {
-                                        let sep_size = egui::vec2(panel_width - 32.0, 1.0);
-                                        let (sep_rect, _) = ui.allocate_exact_size(sep_size, egui::Sense::hover());
-                                        ui.painter().rect_filled(sep_rect, 0.0, theme::border());
-                                    }
-
-                                    egui::Frame::none()
-                                        .fill(row_bg)
-                                        .inner_margin(egui::Margin::symmetric(12.0, 7.0))
-                                        .show(ui, |ui| {
-                                            ui.set_min_width(panel_width - 8.0);
-                                            
-                                            let slot = self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id);
-                                            let field = assign.field_id.as_ref().and_then(|f_id| self.config.fields.iter().find(|f| f.id == *f_id));
-                                            let day_short = slot.map_or("???".to_string(), |s| if s.day.len() > 3 { s.day[..3].to_string() } else { s.day.clone() });
-                                            let time_str = slot.map_or("—".to_string(), |s| s.start_time.clone());
-                                            let field_name = field.map_or("—".to_string(), |f| f.name.clone());
-                                            
-                                            ui.horizontal(|ui| {
-                                                // Day / Time
-                                                ui.allocate_ui(egui::vec2(90.0, 20.0), |ui| {
-                                                    ui.label(RichText::new(format!("{} {}", day_short, time_str))
-                                                        .size(12.0).color(theme::text_dim()).monospace());
-                                                });
-                                                // Field
-                                                ui.allocate_ui(egui::vec2(160.0, 20.0), |ui| {
-                                                    let field_color = if field_name == "—" { theme::text_faint() } else { theme::text_muted() };
-                                                    ui.label(RichText::new(&field_name).size(11.5).color(field_color));
-                                                });
-                                                // Activity
-                                                let label = assign.activity.label();
-                                                ui.label(RichText::new(label).size(11.5).color(accent).strong());
-                                            });
-                                        });
-                                }
-                            }
-                        });
-                    ui.add_space(12.0);
+                    // Sort chronologically
+                    team_activities.sort_by_key(|a| {
+                        let slot = self
+                            .config
+                            .time_slots
+                            .iter()
+                            .find(|s| s.id == a.time_slot_id);
+                        slot.map(|s| (s.day.clone(), parse_time_to_minutes(&s.start_time)))
+                    });
                 }
-            });
-    }
 
-    fn draw_division_interviews(&self, ui: &mut egui::Ui, div_id: &str, accent: Color32) {
-        if let Some(ref sched) = self.schedule {
-            let mut interviews: Vec<&crate::model::ScheduleAssignment> = sched.assignments.iter()
-                .filter(|a| a.activity.division_id() == div_id && matches!(a.activity, crate::model::Activity::Interview { .. }))
-                .collect();
-            
-            // Sort interviews chronologically
-            interviews.sort_by_key(|a| {
-                let slot = self.config.time_slots.iter().find(|s| s.id == a.time_slot_id);
-                slot.map(|s| (s.day.clone(), parse_time_to_minutes(&s.start_time)))
-            });
-
-            if interviews.is_empty() {
-                ui.label(RichText::new("No interviews scheduled for this division.").italics().color(theme::text_faint()));
-                return;
-            }
-
-            let panel_width = ui.available_width().max(400.0);
-
-            ui.scope(|ui| {
-                    // Interviews header
-                    egui::Frame::none()
-                        .fill(theme::card_bg())
-                        .rounding(egui::Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
-                        .inner_margin(egui::Margin::symmetric(12.0, 6.0))
-                        .show(ui, |ui| {
-                            ui.set_min_width(panel_width - 4.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("💬").size(13.0).color(accent));
-                                ui.label(RichText::new("Interviews").strong().size(13.0).color(theme::text()));
-                            });
+                // Team header
+                egui::Frame::none()
+                    .fill(theme::card_bg())
+                    .rounding(egui::Rounding {
+                        nw: 6.0,
+                        ne: 6.0,
+                        sw: 0.0,
+                        se: 0.0,
+                    })
+                    .inner_margin(egui::Margin::symmetric(12.0, 6.0))
+                    .show(ui, |ui| {
+                        ui.set_min_width(panel_width - 4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("👥").size(13.0).color(accent));
+                            ui.label(
+                                RichText::new(&team.name)
+                                    .strong()
+                                    .size(13.0)
+                                    .color(theme::text()),
+                            );
+                            ui.add_space(8.0);
+                            ui.label(
+                                RichText::new(format!("({})", team.organization))
+                                    .size(11.0)
+                                    .color(theme::text_muted()),
+                            );
                         });
+                    });
 
-                    // Interviews body
-                    egui::Frame::none()
-                        .fill(theme::card_bg_alt())
-                        .rounding(egui::Rounding { nw: 0.0, ne: 0.0, sw: 6.0, se: 6.0 })
-                        .stroke(Stroke::new(1.0, theme::border()))
-                        .show(ui, |ui| {
-                            ui.set_min_width(panel_width - 4.0);
+                // Activities body
+                egui::Frame::none()
+                    .fill(theme::card_bg_alt())
+                    .rounding(egui::Rounding {
+                        nw: 0.0,
+                        ne: 0.0,
+                        sw: 6.0,
+                        se: 6.0,
+                    })
+                    .stroke(Stroke::new(1.0, theme::border()))
+                    .show(ui, |ui| {
+                        ui.set_min_width(panel_width - 4.0);
 
-                            // Column headers
-                            egui::Frame::none()
-                                .fill(theme::card_bg())
-                                .inner_margin(egui::Margin::symmetric(12.0, 5.0))
-                                .show(ui, |ui| {
-                                    ui.set_min_width(panel_width - 8.0);
-                                    ui.horizontal(|ui| {
-                                        ui.allocate_ui(egui::vec2(90.0, 16.0), |ui| {
-                                            ui.label(RichText::new("Day / Time").size(10.5).color(theme::text_faint()).strong());
-                                        });
-                                        ui.allocate_ui(egui::vec2(160.0, 16.0), |ui| {
-                                            ui.label(RichText::new("Field / Arena").size(10.5).color(theme::text_faint()).strong());
-                                        });
-                                        ui.label(RichText::new("Activity").size(10.5).color(theme::text_faint()).strong());
+                        // Column headers
+                        egui::Frame::none()
+                            .fill(theme::card_bg())
+                            .inner_margin(egui::Margin::symmetric(12.0, 5.0))
+                            .show(ui, |ui| {
+                                ui.set_min_width(panel_width - 8.0);
+                                ui.horizontal(|ui| {
+                                    ui.allocate_ui(egui::vec2(90.0, 16.0), |ui| {
+                                        ui.label(
+                                            RichText::new("Day / Time")
+                                                .size(10.5)
+                                                .color(theme::text_faint())
+                                                .strong(),
+                                        );
                                     });
+                                    ui.allocate_ui(egui::vec2(160.0, 16.0), |ui| {
+                                        ui.label(
+                                            RichText::new("Field / Arena")
+                                                .size(10.5)
+                                                .color(theme::text_faint())
+                                                .strong(),
+                                        );
+                                    });
+                                    ui.label(
+                                        RichText::new("Activity")
+                                            .size(10.5)
+                                            .color(theme::text_faint())
+                                            .strong(),
+                                    );
                                 });
+                            });
 
-                            for (a_idx, assign) in interviews.iter().enumerate() {
-                                let row_bg = if a_idx % 2 == 0 { theme::card_bg_alt() } else { theme::row_stripe() };
+                        if team_activities.is_empty() {
+                            egui::Frame::none()
+                                .inner_margin(egui::Margin::symmetric(12.0, 7.0))
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        RichText::new("No activities scheduled.")
+                                            .small()
+                                            .italics()
+                                            .color(theme::text_faint()),
+                                    );
+                                });
+                        } else {
+                            for (a_idx, assign) in team_activities.iter().enumerate() {
+                                let row_bg = if a_idx % 2 == 0 {
+                                    theme::card_bg_alt()
+                                } else {
+                                    theme::row_stripe()
+                                };
 
                                 if a_idx > 0 {
                                     let sep_size = egui::vec2(panel_width - 32.0, 1.0);
-                                    let (sep_rect, _) = ui.allocate_exact_size(sep_size, egui::Sense::hover());
+                                    let (sep_rect, _) =
+                                        ui.allocate_exact_size(sep_size, egui::Sense::hover());
                                     ui.painter().rect_filled(sep_rect, 0.0, theme::border());
                                 }
 
@@ -1918,34 +2421,254 @@ impl AppState {
                                     .inner_margin(egui::Margin::symmetric(12.0, 7.0))
                                     .show(ui, |ui| {
                                         ui.set_min_width(panel_width - 8.0);
-                                        
-                                        let slot = self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id);
-                                        let field = assign.field_id.as_ref().and_then(|f_id| self.config.fields.iter().find(|f| f.id == *f_id));
-                                        let day_short = slot.map_or("???".to_string(), |s| if s.day.len() > 3 { s.day[..3].to_string() } else { s.day.clone() });
-                                        let time_str = slot.map_or("—".to_string(), |s| s.start_time.clone());
-                                        let field_name = field.map_or("—".to_string(), |f| f.name.clone());
-                                        
+
+                                        let slot = self
+                                            .config
+                                            .time_slots
+                                            .iter()
+                                            .find(|s| s.id == assign.time_slot_id);
+                                        let field = assign.field_id.as_ref().and_then(|f_id| {
+                                            self.config.fields.iter().find(|f| f.id == *f_id)
+                                        });
+                                        let day_short = slot.map_or("???".to_string(), |s| {
+                                            if s.day.len() > 3 {
+                                                s.day[..3].to_string()
+                                            } else {
+                                                s.day.clone()
+                                            }
+                                        });
+                                        let time_str = slot
+                                            .map_or("—".to_string(), |s| s.start_time.clone());
+                                        let field_name =
+                                            field.map_or("—".to_string(), |f| f.name.clone());
+
                                         ui.horizontal(|ui| {
                                             // Day / Time
                                             ui.allocate_ui(egui::vec2(90.0, 20.0), |ui| {
-                                                ui.label(RichText::new(format!("{} {}", day_short, time_str))
-                                                    .size(12.0).color(theme::text_dim()).monospace());
+                                                ui.label(
+                                                    RichText::new(format!(
+                                                        "{} {}",
+                                                        day_short, time_str
+                                                    ))
+                                                    .size(12.0)
+                                                    .color(theme::text_dim())
+                                                    .monospace(),
+                                                );
                                             });
                                             // Field
                                             ui.allocate_ui(egui::vec2(160.0, 20.0), |ui| {
-                                                let field_color = if field_name == "—" { theme::text_faint() } else { theme::text_muted() };
-                                                ui.label(RichText::new(&field_name).size(11.5).color(field_color));
+                                                let field_color = if field_name == "—" {
+                                                    theme::text_faint()
+                                                } else {
+                                                    theme::text_muted()
+                                                };
+                                                ui.label(
+                                                    RichText::new(&field_name)
+                                                        .size(11.5)
+                                                        .color(field_color),
+                                                );
                                             });
                                             // Activity
                                             let label = assign.activity.label();
-                                            ui.label(RichText::new(label).size(11.5).color(accent).strong());
+                                            ui.label(
+                                                RichText::new(label)
+                                                    .size(11.5)
+                                                    .color(accent)
+                                                    .strong(),
+                                            );
                                         });
                                     });
                             }
+                        }
+                    });
+                ui.add_space(12.0);
+            }
+        });
+    }
+
+    fn draw_division_interviews(&self, ui: &mut egui::Ui, div_id: &str, accent: Color32) {
+        if let Some(ref sched) = self.schedule {
+            let mut interviews: Vec<&crate::model::ScheduleAssignment> = sched
+                .assignments
+                .iter()
+                .filter(|a| {
+                    a.activity.division_id() == div_id
+                        && matches!(a.activity, crate::model::Activity::Interview { .. })
+                })
+                .collect();
+
+            // Sort interviews chronologically
+            interviews.sort_by_key(|a| {
+                let slot = self
+                    .config
+                    .time_slots
+                    .iter()
+                    .find(|s| s.id == a.time_slot_id);
+                slot.map(|s| (s.day.clone(), parse_time_to_minutes(&s.start_time)))
+            });
+
+            if interviews.is_empty() {
+                ui.label(
+                    RichText::new("No interviews scheduled for this division.")
+                        .italics()
+                        .color(theme::text_faint()),
+                );
+                return;
+            }
+
+            let panel_width = ui.available_width().max(400.0);
+
+            ui.scope(|ui| {
+                // Interviews header
+                egui::Frame::none()
+                    .fill(theme::card_bg())
+                    .rounding(egui::Rounding {
+                        nw: 6.0,
+                        ne: 6.0,
+                        sw: 0.0,
+                        se: 0.0,
+                    })
+                    .inner_margin(egui::Margin::symmetric(12.0, 6.0))
+                    .show(ui, |ui| {
+                        ui.set_min_width(panel_width - 4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("💬").size(13.0).color(accent));
+                            ui.label(
+                                RichText::new("Interviews")
+                                    .strong()
+                                    .size(13.0)
+                                    .color(theme::text()),
+                            );
                         });
-                });
+                    });
+
+                // Interviews body
+                egui::Frame::none()
+                    .fill(theme::card_bg_alt())
+                    .rounding(egui::Rounding {
+                        nw: 0.0,
+                        ne: 0.0,
+                        sw: 6.0,
+                        se: 6.0,
+                    })
+                    .stroke(Stroke::new(1.0, theme::border()))
+                    .show(ui, |ui| {
+                        ui.set_min_width(panel_width - 4.0);
+
+                        // Column headers
+                        egui::Frame::none()
+                            .fill(theme::card_bg())
+                            .inner_margin(egui::Margin::symmetric(12.0, 5.0))
+                            .show(ui, |ui| {
+                                ui.set_min_width(panel_width - 8.0);
+                                ui.horizontal(|ui| {
+                                    ui.allocate_ui(egui::vec2(90.0, 16.0), |ui| {
+                                        ui.label(
+                                            RichText::new("Day / Time")
+                                                .size(10.5)
+                                                .color(theme::text_faint())
+                                                .strong(),
+                                        );
+                                    });
+                                    ui.allocate_ui(egui::vec2(160.0, 16.0), |ui| {
+                                        ui.label(
+                                            RichText::new("Field / Arena")
+                                                .size(10.5)
+                                                .color(theme::text_faint())
+                                                .strong(),
+                                        );
+                                    });
+                                    ui.label(
+                                        RichText::new("Activity")
+                                            .size(10.5)
+                                            .color(theme::text_faint())
+                                            .strong(),
+                                    );
+                                });
+                            });
+
+                        for (a_idx, assign) in interviews.iter().enumerate() {
+                            let row_bg = if a_idx % 2 == 0 {
+                                theme::card_bg_alt()
+                            } else {
+                                theme::row_stripe()
+                            };
+
+                            if a_idx > 0 {
+                                let sep_size = egui::vec2(panel_width - 32.0, 1.0);
+                                let (sep_rect, _) =
+                                    ui.allocate_exact_size(sep_size, egui::Sense::hover());
+                                ui.painter().rect_filled(sep_rect, 0.0, theme::border());
+                            }
+
+                            egui::Frame::none()
+                                .fill(row_bg)
+                                .inner_margin(egui::Margin::symmetric(12.0, 7.0))
+                                .show(ui, |ui| {
+                                    ui.set_min_width(panel_width - 8.0);
+
+                                    let slot = self
+                                        .config
+                                        .time_slots
+                                        .iter()
+                                        .find(|s| s.id == assign.time_slot_id);
+                                    let field = assign.field_id.as_ref().and_then(|f_id| {
+                                        self.config.fields.iter().find(|f| f.id == *f_id)
+                                    });
+                                    let day_short = slot.map_or("???".to_string(), |s| {
+                                        if s.day.len() > 3 {
+                                            s.day[..3].to_string()
+                                        } else {
+                                            s.day.clone()
+                                        }
+                                    });
+                                    let time_str =
+                                        slot.map_or("—".to_string(), |s| s.start_time.clone());
+                                    let field_name =
+                                        field.map_or("—".to_string(), |f| f.name.clone());
+
+                                    ui.horizontal(|ui| {
+                                        // Day / Time
+                                        ui.allocate_ui(egui::vec2(90.0, 20.0), |ui| {
+                                            ui.label(
+                                                RichText::new(format!(
+                                                    "{} {}",
+                                                    day_short, time_str
+                                                ))
+                                                .size(12.0)
+                                                .color(theme::text_dim())
+                                                .monospace(),
+                                            );
+                                        });
+                                        // Field
+                                        ui.allocate_ui(egui::vec2(160.0, 20.0), |ui| {
+                                            let field_color = if field_name == "—" {
+                                                theme::text_faint()
+                                            } else {
+                                                theme::text_muted()
+                                            };
+                                            ui.label(
+                                                RichText::new(&field_name)
+                                                    .size(11.5)
+                                                    .color(field_color),
+                                            );
+                                        });
+                                        // Activity
+                                        let label = assign.activity.label();
+                                        ui.label(
+                                            RichText::new(label).size(11.5).color(accent).strong(),
+                                        );
+                                    });
+                                });
+                        }
+                    });
+            });
         } else {
-            ui.label(RichText::new("Schedule not generated yet.").italics().color(theme::text_faint()));
+            ui.label(
+                RichText::new("Schedule not generated yet.")
+                    .italics()
+                    .color(theme::text_faint()),
+            );
         }
     }
 
@@ -1968,16 +2691,20 @@ impl AppState {
 
         std::thread::spawn(move || {
             let tx_clone = tx.clone();
-            let result = solve_schedule(&config, &params, move |restart, total_restarts, iteration, total_iterations, hard, soft| {
-                let _ = tx_clone.send(SolverMessage::Progress { 
-                    restart, 
-                    total_restarts, 
-                    iteration, 
-                    total_iterations, 
-                    hard, 
-                    soft 
-                });
-            });
+            let result = solve_schedule(
+                &config,
+                &params,
+                move |restart, total_restarts, iteration, total_iterations, hard, soft| {
+                    let _ = tx_clone.send(SolverMessage::Progress {
+                        restart,
+                        total_restarts,
+                        iteration,
+                        total_iterations,
+                        hard,
+                        soft,
+                    });
+                },
+            );
             let _ = tx.send(SolverMessage::Done(result));
         });
     }

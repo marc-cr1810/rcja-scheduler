@@ -12,8 +12,16 @@ impl AppState {
         ui.add_space(10.0);
 
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.active_volunteer_sub_tab, super::VolunteerSubTab::Availability, "📅 Availability Grid");
-            ui.selectable_value(&mut self.active_volunteer_sub_tab, super::VolunteerSubTab::WorkloadHeatmap, "🔥 Workload Heatmap");
+            ui.selectable_value(
+                &mut self.active_volunteer_sub_tab,
+                super::VolunteerSubTab::Availability,
+                "📅 Availability Grid",
+            );
+            ui.selectable_value(
+                &mut self.active_volunteer_sub_tab,
+                super::VolunteerSubTab::WorkloadHeatmap,
+                "🔥 Workload Heatmap",
+            );
         });
         ui.add_space(10.0);
 
@@ -24,13 +32,19 @@ impl AppState {
     }
 
     fn draw_volunteer_availability(&mut self, ui: &mut egui::Ui) {
-        let divisions_list: Vec<(String, String)> = self.config.divisions.iter()
+        let divisions_list: Vec<(String, String)> = self
+            .config
+            .divisions
+            .iter()
             .map(|d| (d.id.clone(), d.name.clone()))
             .collect();
 
         // (id, display name) for every field / interview table, used by the
         // per-volunteer field-lock selectors.
-        let fields_list: Vec<(String, String)> = self.config.fields.iter()
+        let fields_list: Vec<(String, String)> = self
+            .config
+            .fields
+            .iter()
             .map(|f| {
                 let label = match f.kind {
                     crate::model::FieldKind::Interview => format!("🎤 {}", f.name),
@@ -40,7 +54,10 @@ impl AppState {
             })
             .collect();
 
-        let mut all_orgs: Vec<String> = self.config.teams.iter()
+        let mut all_orgs: Vec<String> = self
+            .config
+            .teams
+            .iter()
             .map(|t| t.organization.clone())
             .filter(|s| !s.is_empty())
             .collect();
@@ -130,9 +147,9 @@ impl AppState {
                         ui.vertical(|ui| {
                             ui.label(RichText::new("Conflict Organizations:").size(11.0).color(theme::text_muted()))
                                 .on_hover_text("Select any organizations this volunteer belongs to (e.g. their school or club)");
-                            
+
                             let display_conflicts = truncate_list(&self.new_vol_conflicts_list, "No Conflicts");
-                            
+
                             egui::ComboBox::from_id_source("new_vol_org_edit")
                                 .selected_text(display_conflicts)
                                 .width(150.0)
@@ -158,7 +175,7 @@ impl AppState {
                             ui.vertical(|ui| {
                                 ui.label(RichText::new("Lock to Fields:").size(11.0).color(theme::text_muted()))
                                     .on_hover_text("If any are selected, this volunteer will only be rostered on those fields.");
-                                
+
                                 let display_locks = if self.new_vol_locked_fields.is_empty() {
                                     "Any Field".to_string()
                                 } else {
@@ -194,7 +211,7 @@ impl AppState {
                             let register_btn = egui::Button::new(RichText::new("➕ Register Volunteer").strong().color(theme::on_accent()))
                                 .fill(theme::accent_strong())
                                 .rounding(6.0);
-                            
+
                             if ui.add(register_btn).clicked()
                                 && !self.new_vol_name.trim().is_empty() {
                                     let id = sanitize_name(&self.new_vol_name);
@@ -222,9 +239,11 @@ impl AppState {
                 });
             });
 
-
-
-        ui.label(RichText::new("INTERACTIVE AVAILABILITY GRID").strong().color(theme::text_muted()));
+        ui.label(
+            RichText::new("INTERACTIVE AVAILABILITY GRID")
+                .strong()
+                .color(theme::text_muted()),
+        );
         ui.label("Click cells to toggle volunteer availability for each time slot.");
         ui.add_space(5.0);
 
@@ -250,9 +269,10 @@ impl AppState {
         }
 
         if !unique_days.contains(&self.active_vol_day)
-            && let Some(first_day) = unique_days.first() {
-                self.active_vol_day = first_day.clone();
-            }
+            && let Some(first_day) = unique_days.first()
+        {
+            self.active_vol_day = first_day.clone();
+        }
 
         // Day selection tabs
         ui.horizontal(|ui| {
@@ -266,7 +286,10 @@ impl AppState {
         });
         ui.add_space(8.0);
 
-        let active_slots: Vec<crate::model::TimeSlot> = self.config.time_slots.iter()
+        let active_slots: Vec<crate::model::TimeSlot> = self
+            .config
+            .time_slots
+            .iter()
             .filter(|s| s.day == self.active_vol_day)
             .cloned()
             .collect();
@@ -287,256 +310,309 @@ impl AppState {
         egui::ScrollArea::horizontal()
             .id_source("volunteers_avail_scroll")
             .show(ui, |ui| {
-                egui::Grid::new("vol_avail_grid").num_columns(num_cols).spacing(egui::vec2(10.0, 10.0)).striped(true).show(ui, |ui| {
-                ui.label(RichText::new("Volunteer").strong());
-                ui.label(RichText::new("Qualified for").strong());
-                ui.label(RichText::new("Conflicts").strong());
-                ui.label(RichText::new("Locked To").strong());
-                ui.label(RichText::new("Availability").strong());
-                ui.label(RichText::new("Actions").strong());
-                ui.end_row();
+                egui::Grid::new("vol_avail_grid")
+                    .num_columns(num_cols)
+                    .spacing(egui::vec2(10.0, 10.0))
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.label(RichText::new("Volunteer").strong());
+                        ui.label(RichText::new("Qualified for").strong());
+                        ui.label(RichText::new("Conflicts").strong());
+                        ui.label(RichText::new("Locked To").strong());
+                        ui.label(RichText::new("Availability").strong());
+                        ui.label(RichText::new("Actions").strong());
+                        ui.end_row();
 
-                let mut config_changed = false;
+                        let mut config_changed = false;
 
-                for (v_idx, vol) in self.config.volunteers.iter_mut().enumerate() {
-                    // 1. Volunteer Name edit
-                    ui.horizontal(|ui| {
-                        if vol.availabilities.is_empty() {
-                            ui.label(RichText::new("⚠").color(theme::warning()))
-                                .on_hover_text("Volunteer has no available time slots.");
-                        }
-                        if ui.add_sized([180.0, 20.0], egui::TextEdit::singleline(&mut vol.name)).changed() {
-                            config_changed = true;
-                        }
-                    });
-
-                    // 2. Capabilities drop-down edit
-                    let mut cap_changed = false;
-                    let display_caps = match &vol.capabilities {
-                        Some(caps) => {
-                            if caps.is_empty() {
-                                "None (No capability)".to_string()
-                            } else {
-                                let names: Vec<String> = caps
-                                    .iter()
-                                    .map(|d_id| {
-                                        if d_id == "Interview" {
-                                            "🎤 Interviews".to_string()
-                                        } else {
-                                            division_names_map
-                                                .get(d_id).cloned()
-                                                .unwrap_or_else(|| d_id.clone())
-                                        }
-                                    })
-                                    .collect();
-                                names.join(", ")
-                            }
-                        }
-                        None => "Any Division".to_string(),
-                    };
-
-                    egui::ComboBox::from_id_source(format!("vol_cap_edit_{}", v_idx))
-                        .selected_text(display_caps)
-                        .show_ui(ui, |ui| {
-                            let mut is_any = vol.capabilities.is_none();
-                            if ui.checkbox(&mut is_any, "Any Division").changed() {
-                                if is_any {
-                                    vol.capabilities = None;
-                                } else {
-                                    vol.capabilities = Some(Vec::new());
+                        for (v_idx, vol) in self.config.volunteers.iter_mut().enumerate() {
+                            // 1. Volunteer Name edit
+                            ui.horizontal(|ui| {
+                                if vol.availabilities.is_empty() {
+                                    ui.label(RichText::new("⚠").color(theme::warning()))
+                                        .on_hover_text("Volunteer has no available time slots.");
                                 }
-                                cap_changed = true;
-                            }
+                                if ui
+                                    .add_sized(
+                                        [180.0, 20.0],
+                                        egui::TextEdit::singleline(&mut vol.name),
+                                    )
+                                    .changed()
+                                {
+                                    config_changed = true;
+                                }
+                            });
 
-                            if let Some(ref mut caps) = vol.capabilities {
-                                for (div_id, div_name) in &divisions_list {
-                                    let mut has_div = caps.contains(div_id);
-                                    if ui.checkbox(&mut has_div, div_name).changed() {
-                                        if has_div {
-                                            caps.push(div_id.clone());
+                            // 2. Capabilities drop-down edit
+                            let mut cap_changed = false;
+                            let display_caps = match &vol.capabilities {
+                                Some(caps) => {
+                                    if caps.is_empty() {
+                                        "None (No capability)".to_string()
+                                    } else {
+                                        let names: Vec<String> = caps
+                                            .iter()
+                                            .map(|d_id| {
+                                                if d_id == "Interview" {
+                                                    "🎤 Interviews".to_string()
+                                                } else {
+                                                    division_names_map
+                                                        .get(d_id)
+                                                        .cloned()
+                                                        .unwrap_or_else(|| d_id.clone())
+                                                }
+                                            })
+                                            .collect();
+                                        names.join(", ")
+                                    }
+                                }
+                                None => "Any Division".to_string(),
+                            };
+
+                            egui::ComboBox::from_id_source(format!("vol_cap_edit_{}", v_idx))
+                                .selected_text(display_caps)
+                                .show_ui(ui, |ui| {
+                                    let mut is_any = vol.capabilities.is_none();
+                                    if ui.checkbox(&mut is_any, "Any Division").changed() {
+                                        if is_any {
+                                            vol.capabilities = None;
                                         } else {
-                                            caps.retain(|x| x != div_id);
+                                            vol.capabilities = Some(Vec::new());
                                         }
                                         cap_changed = true;
                                     }
-                                }
-                                let mut has_interview = caps.contains(&"Interview".to_string());
-                                if ui.checkbox(&mut has_interview, "🎤 Interviews").changed() {
-                                    if has_interview {
-                                        caps.push("Interview".to_string());
-                                    } else {
-                                        caps.retain(|x| x != "Interview");
-                                    }
-                                    cap_changed = true;
-                                }
-                            }
-                        });
 
-                    if cap_changed {
-                        config_changed = true;
-                    }
-
-                    // 3. Organization Conflicts (Checkboxes)
-                    let mut org_changed = false;
-                    egui::ComboBox::from_id_source(format!("vol_org_edit_{}", v_idx))
-                        .selected_text(if vol.conflict_organizations.is_empty() {
-                            "No Conflicts".to_string()
-                        } else {
-                            vol.conflict_organizations.join(", ")
-                        })
-                        .show_ui(ui, |ui| {
-                            for org in &all_orgs {
-                                let mut has_org = vol.conflict_organizations.contains(org);
-                                if ui.checkbox(&mut has_org, org).changed() {
-                                    if has_org {
-                                        vol.conflict_organizations.push(org.clone());
-                                    } else {
-                                        vol.conflict_organizations.retain(|x| x != org);
+                                    if let Some(ref mut caps) = vol.capabilities {
+                                        for (div_id, div_name) in &divisions_list {
+                                            let mut has_div = caps.contains(div_id);
+                                            if ui.checkbox(&mut has_div, div_name).changed() {
+                                                if has_div {
+                                                    caps.push(div_id.clone());
+                                                } else {
+                                                    caps.retain(|x| x != div_id);
+                                                }
+                                                cap_changed = true;
+                                            }
+                                        }
+                                        let mut has_interview =
+                                            caps.contains(&"Interview".to_string());
+                                        if ui
+                                            .checkbox(&mut has_interview, "🎤 Interviews")
+                                            .changed()
+                                        {
+                                            if has_interview {
+                                                caps.push("Interview".to_string());
+                                            } else {
+                                                caps.retain(|x| x != "Interview");
+                                            }
+                                            cap_changed = true;
+                                        }
                                     }
-                                    org_changed = true;
-                                }
-                            }
-                        });
+                                });
 
-                    if org_changed {
-                        config_changed = true;
-                    }
-
-                    // 3b. Field lock (Locked To) — restrict this volunteer to a set
-                    // of fields / interview tables. Empty means no restriction.
-                    let mut lock_changed = false;
-                    let lock_label = match &vol.locked_field_ids {
-                        Some(ids) if !ids.is_empty() => {
-                            let names: Vec<String> = ids.iter()
-                                .map(|fid| fields_list.iter().find(|(id, _)| id == fid)
-                                    .map(|(_, n)| n.clone())
-                                    .unwrap_or_else(|| fid.clone()))
-                                .collect();
-                            names.join(", ")
-                        }
-                        _ => "Any Field".to_string(),
-                    };
-                    egui::ComboBox::from_id_source(format!("vol_lock_edit_{}", v_idx))
-                        .selected_text(lock_label)
-                        .show_ui(ui, |ui| {
-                            if fields_list.is_empty() {
-                                ui.label("No fields defined");
-                            }
-                            for (fid, fname) in &fields_list {
-                                let mut locked = vol.locked_field_ids.as_ref().is_some_and(|ids| ids.contains(fid));
-                                if ui.checkbox(&mut locked, fname).changed() {
-                                    let ids = vol.locked_field_ids.get_or_insert_with(Vec::new);
-                                    if locked {
-                                        ids.push(fid.clone());
-                                    } else {
-                                        ids.retain(|x| x != fid);
-                                    }
-                                    if ids.is_empty() {
-                                        vol.locked_field_ids = None;
-                                    }
-                                    lock_changed = true;
-                                }
+                            if cap_changed {
+                                config_changed = true;
                             }
 
-                            // Surface any locks pointing at a field that no longer
-                            // exists (e.g. a deleted field in an older config) so
-                            // they can still be cleared from here.
-                            let dangling: Vec<String> = vol.locked_field_ids.as_ref()
-                                .map(|ids| ids.iter()
-                                    .filter(|fid| !fields_list.iter().any(|(id, _)| &id == fid))
-                                    .cloned()
-                                    .collect())
-                                .unwrap_or_default();
-                            if !dangling.is_empty() {
-                                ui.separator();
-                                for fid in dangling {
-                                    let mut locked = true;
-                                    if ui.checkbox(&mut locked, RichText::new(format!("⚠ {} (missing)", fid)).color(theme::warning())).changed() {
-                                        if let Some(ids) = vol.locked_field_ids.as_mut() {
-                                            ids.retain(|x| x != &fid);
+                            // 3. Organization Conflicts (Checkboxes)
+                            let mut org_changed = false;
+                            egui::ComboBox::from_id_source(format!("vol_org_edit_{}", v_idx))
+                                .selected_text(if vol.conflict_organizations.is_empty() {
+                                    "No Conflicts".to_string()
+                                } else {
+                                    vol.conflict_organizations.join(", ")
+                                })
+                                .show_ui(ui, |ui| {
+                                    for org in &all_orgs {
+                                        let mut has_org = vol.conflict_organizations.contains(org);
+                                        if ui.checkbox(&mut has_org, org).changed() {
+                                            if has_org {
+                                                vol.conflict_organizations.push(org.clone());
+                                            } else {
+                                                vol.conflict_organizations.retain(|x| x != org);
+                                            }
+                                            org_changed = true;
+                                        }
+                                    }
+                                });
+
+                            if org_changed {
+                                config_changed = true;
+                            }
+
+                            // 3b. Field lock (Locked To) — restrict this volunteer to a set
+                            // of fields / interview tables. Empty means no restriction.
+                            let mut lock_changed = false;
+                            let lock_label = match &vol.locked_field_ids {
+                                Some(ids) if !ids.is_empty() => {
+                                    let names: Vec<String> = ids
+                                        .iter()
+                                        .map(|fid| {
+                                            fields_list
+                                                .iter()
+                                                .find(|(id, _)| id == fid)
+                                                .map(|(_, n)| n.clone())
+                                                .unwrap_or_else(|| fid.clone())
+                                        })
+                                        .collect();
+                                    names.join(", ")
+                                }
+                                _ => "Any Field".to_string(),
+                            };
+                            egui::ComboBox::from_id_source(format!("vol_lock_edit_{}", v_idx))
+                                .selected_text(lock_label)
+                                .show_ui(ui, |ui| {
+                                    if fields_list.is_empty() {
+                                        ui.label("No fields defined");
+                                    }
+                                    for (fid, fname) in &fields_list {
+                                        let mut locked = vol
+                                            .locked_field_ids
+                                            .as_ref()
+                                            .is_some_and(|ids| ids.contains(fid));
+                                        if ui.checkbox(&mut locked, fname).changed() {
+                                            let ids =
+                                                vol.locked_field_ids.get_or_insert_with(Vec::new);
+                                            if locked {
+                                                ids.push(fid.clone());
+                                            } else {
+                                                ids.retain(|x| x != fid);
+                                            }
                                             if ids.is_empty() {
                                                 vol.locked_field_ids = None;
                                             }
+                                            lock_changed = true;
                                         }
-                                        lock_changed = true;
                                     }
-                                }
+
+                                    // Surface any locks pointing at a field that no longer
+                                    // exists (e.g. a deleted field in an older config) so
+                                    // they can still be cleared from here.
+                                    let dangling: Vec<String> = vol
+                                        .locked_field_ids
+                                        .as_ref()
+                                        .map(|ids| {
+                                            ids.iter()
+                                                .filter(|fid| {
+                                                    !fields_list.iter().any(|(id, _)| &id == fid)
+                                                })
+                                                .cloned()
+                                                .collect()
+                                        })
+                                        .unwrap_or_default();
+                                    if !dangling.is_empty() {
+                                        ui.separator();
+                                        for fid in dangling {
+                                            let mut locked = true;
+                                            if ui
+                                                .checkbox(
+                                                    &mut locked,
+                                                    RichText::new(format!("⚠ {} (missing)", fid))
+                                                        .color(theme::warning()),
+                                                )
+                                                .changed()
+                                            {
+                                                if let Some(ids) = vol.locked_field_ids.as_mut() {
+                                                    ids.retain(|x| x != &fid);
+                                                    if ids.is_empty() {
+                                                        vol.locked_field_ids = None;
+                                                    }
+                                                }
+                                                lock_changed = true;
+                                            }
+                                        }
+                                    }
+                                });
+                            if lock_changed {
+                                config_changed = true;
                             }
-                        });
-                    if lock_changed {
-                        config_changed = true;
-                    }
 
-                    // 4. Availability summary (timeline bar + ranges + edit).
-                    // The per-slot checkbox grid was replaced by a range editor:
-                    // overlapping, varying-duration slots made one checkbox per
-                    // slot unmanageable. Ranges are derived from the stored slot
-                    // IDs for display and converted back on apply.
-                    ui.horizontal(|ui| {
-                        let ranges = covered_ranges(vol, &active_slots);
-                        let all_day = !active_slots.is_empty()
-                            && active_slots.iter().all(|s| vol.availabilities.contains(&s.id));
-                        draw_timeline(ui, &ranges, day_start, day_end);
+                            // 4. Availability summary (timeline bar + ranges + edit).
+                            // The per-slot checkbox grid was replaced by a range editor:
+                            // overlapping, varying-duration slots made one checkbox per
+                            // slot unmanageable. Ranges are derived from the stored slot
+                            // IDs for display and converted back on apply.
+                            ui.horizontal(|ui| {
+                                let ranges = covered_ranges(vol, &active_slots);
+                                let all_day = !active_slots.is_empty()
+                                    && active_slots
+                                        .iter()
+                                        .all(|s| vol.availabilities.contains(&s.id));
+                                draw_timeline(ui, &ranges, day_start, day_end);
 
-                        let summary = if active_slots.is_empty() {
-                            "—".to_string()
-                        } else if ranges.is_empty() {
-                            "None".to_string()
-                        } else if all_day {
-                            "All day".to_string()
-                        } else {
-                            ranges.iter()
-                                .map(|(s, e)| format!("{}–{}", fmt_minutes(*s), fmt_minutes(*e)))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        };
-                        let color = if ranges.is_empty() { theme::warning() } else { theme::text() };
-                        ui.label(RichText::new(summary).size(11.0).color(color));
+                                let summary = if active_slots.is_empty() {
+                                    "—".to_string()
+                                } else if ranges.is_empty() {
+                                    "None".to_string()
+                                } else if all_day {
+                                    "All day".to_string()
+                                } else {
+                                    ranges
+                                        .iter()
+                                        .map(|(s, e)| {
+                                            format!("{}–{}", fmt_minutes(*s), fmt_minutes(*e))
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                };
+                                let color = if ranges.is_empty() {
+                                    theme::warning()
+                                } else {
+                                    theme::text()
+                                };
+                                ui.label(RichText::new(summary).size(11.0).color(color));
 
-                        if ui.button("✎ Edit").clicked() {
-                            let ed_ranges = ranges.iter()
-                                .map(|(s, e)| (fmt_minutes(*s), fmt_minutes(*e)))
-                                .collect();
-                            editor_to_open = Some(AvailEditor {
-                                vol_idx: v_idx,
-                                day: active_day.clone(),
-                                ranges: ed_ranges,
-                                all_day,
+                                if ui.button("✎ Edit").clicked() {
+                                    let ed_ranges = ranges
+                                        .iter()
+                                        .map(|(s, e)| (fmt_minutes(*s), fmt_minutes(*e)))
+                                        .collect();
+                                    editor_to_open = Some(AvailEditor {
+                                        vol_idx: v_idx,
+                                        day: active_day.clone(),
+                                        ranges: ed_ranges,
+                                        all_day,
+                                    });
+                                }
                             });
-                        }
-                    });
 
-                    // 5. Action buttons (All for active day, Clear active day, Delete)
-                    ui.horizontal(|ui| {
-                        if ui.button(format!("✔ All {}", self.active_vol_day)).clicked() {
-                            for slot in &active_slots {
-                                if !vol.availabilities.contains(&slot.id) {
-                                    vol.availabilities.push(slot.id.clone());
+                            // 5. Action buttons (All for active day, Clear active day, Delete)
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .button(format!("✔ All {}", self.active_vol_day))
+                                    .clicked()
+                                {
+                                    for slot in &active_slots {
+                                        if !vol.availabilities.contains(&slot.id) {
+                                            vol.availabilities.push(slot.id.clone());
+                                        }
+                                    }
+                                    config_changed = true;
                                 }
-                            }
-                            config_changed = true;
+                                if ui
+                                    .button(format!("❌ Clear {}", self.active_vol_day))
+                                    .clicked()
+                                {
+                                    let active_ids: std::collections::HashSet<&str> =
+                                        active_slots.iter().map(|s| s.id.as_str()).collect();
+                                    vol.availabilities
+                                        .retain(|id| !active_ids.contains(id.as_str()));
+                                    config_changed = true;
+                                }
+                                if ui.button("🗑 Delete").clicked() {
+                                    to_delete = Some(v_idx);
+                                }
+                            });
+
+                            ui.end_row();
                         }
-                        if ui.button(format!("❌ Clear {}", self.active_vol_day)).clicked() {
-                            let active_ids: std::collections::HashSet<&str> = active_slots.iter()
-                                .map(|s| s.id.as_str())
-                                .collect();
-                            vol.availabilities.retain(|id| !active_ids.contains(id.as_str()));
-                            config_changed = true;
-                        }
-                        if ui.button("🗑 Delete").clicked() {
-                            to_delete = Some(v_idx);
+
+                        if config_changed {
+                            self.clear_schedule();
+                            self.update_diagnostics();
                         }
                     });
-
-                    ui.end_row();
-                }
-
-                if config_changed {
-                    self.clear_schedule();
-                    self.update_diagnostics();
-                }
             });
-        });
 
         if let Some(idx) = to_delete {
             self.config.volunteers.remove(idx);
@@ -554,14 +630,22 @@ impl AppState {
     /// Modal-ish popup that edits one volunteer's availability for one day as a
     /// list of time ranges (or "all day"), writing the result back as slot IDs.
     fn draw_avail_editor(&mut self, ui: &mut egui::Ui) {
-        let Some(mut ed) = self.vol_avail_editor.take() else { return };
+        let Some(mut ed) = self.vol_avail_editor.take() else {
+            return;
+        };
 
-        let day_slots: Vec<TimeSlot> = self.config.time_slots.iter()
+        let day_slots: Vec<TimeSlot> = self
+            .config
+            .time_slots
+            .iter()
             .filter(|s| s.day == ed.day)
             .cloned()
             .collect();
         let boundaries = day_boundaries(&day_slots);
-        let vol_name = self.config.volunteers.get(ed.vol_idx)
+        let vol_name = self
+            .config
+            .volunteers
+            .get(ed.vol_idx)
             .map(|v| v.name.clone())
             .unwrap_or_default();
 
@@ -589,8 +673,11 @@ impl AppState {
 
                 if !ed.all_day {
                     if ed.ranges.is_empty() {
-                        ui.label(RichText::new("No ranges — volunteer is unavailable this day.")
-                            .size(11.0).color(theme::text_muted()));
+                        ui.label(
+                            RichText::new("No ranges — volunteer is unavailable this day.")
+                                .size(11.0)
+                                .color(theme::text_muted()),
+                        );
                     }
 
                     // For each range, the end of the previous range and the start
@@ -624,9 +711,15 @@ impl AppState {
                             };
                             ui.add_sized([56.0, row_h], egui::Label::new(label).selectable(false));
                             // start: at/after the previous range, before its own end.
-                            boundary_combo(ui, format!("avail_start_{i}"), start, &boundaries, |b| {
-                                prev_end.is_none_or(|m| b >= m) && end_min.is_none_or(|m| b < m)
-                            });
+                            boundary_combo(
+                                ui,
+                                format!("avail_start_{i}"),
+                                start,
+                                &boundaries,
+                                |b| {
+                                    prev_end.is_none_or(|m| b >= m) && end_min.is_none_or(|m| b < m)
+                                },
+                            );
                             ui.add_sized([12.0, row_h], egui::Label::new("–").selectable(false));
                             // end: after its own start, at/before the next range.
                             boundary_combo(ui, format!("avail_end_{i}"), end, &boundaries, |b| {
@@ -645,16 +738,23 @@ impl AppState {
                         // Default to the next free slot after the existing ranges,
                         // running to the end of the day — so it never overlaps and
                         // the start picker has room to narrow it down.
-                        let after = ed.ranges.iter()
+                        let after = ed
+                            .ranges
+                            .iter()
                             .filter_map(|(_, e)| parse_time_minutes(e))
                             .max();
                         let s = match after {
-                            Some(end) => boundaries.iter().copied()
+                            Some(end) => boundaries
+                                .iter()
+                                .copied()
                                 .find(|b| *b >= end)
                                 .unwrap_or_else(|| boundaries.last().copied().unwrap_or(0)),
                             None => boundaries.first().copied().unwrap_or(0),
                         };
-                        let e = boundaries.last().copied().filter(|e| *e > s)
+                        let e = boundaries
+                            .last()
+                            .copied()
+                            .filter(|e| *e > s)
                             .or_else(|| boundaries.iter().copied().find(|b| *b > s))
                             .unwrap_or(s);
                         ed.ranges.push((fmt_minutes(s), fmt_minutes(e)));
@@ -663,13 +763,20 @@ impl AppState {
 
                 if let Some(err) = &range_error {
                     ui.add_space(6.0);
-                    ui.label(RichText::new(format!("⚠ {err}")).size(11.0).color(theme::danger()));
+                    ui.label(
+                        RichText::new(format!("⚠ {err}"))
+                            .size(11.0)
+                            .color(theme::danger()),
+                    );
                 }
 
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(range_error.is_none(), |ui| {
-                        if ui.button(RichText::new("Apply").strong().color(theme::text())).clicked() {
+                        if ui
+                            .button(RichText::new("Apply").strong().color(theme::text()))
+                            .clicked()
+                        {
                             apply = true;
                         }
                     });
@@ -682,12 +789,15 @@ impl AppState {
         if apply {
             if let Some(vol) = self.config.volunteers.get_mut(ed.vol_idx) {
                 let day_ids: HashSet<&str> = day_slots.iter().map(|s| s.id.as_str()).collect();
-                vol.availabilities.retain(|id| !day_ids.contains(id.as_str()));
+                vol.availabilities
+                    .retain(|id| !day_ids.contains(id.as_str()));
 
                 let new_ids: Vec<String> = if ed.all_day {
                     day_slots.iter().map(|s| s.id.clone()).collect()
                 } else {
-                    let ranges_min: Vec<(u32, u32)> = ed.ranges.iter()
+                    let ranges_min: Vec<(u32, u32)> = ed
+                        .ranges
+                        .iter()
                         .filter_map(|(s, e)| {
                             let s = parse_time_minutes(s)?;
                             let e = parse_time_minutes(e)?;
@@ -712,13 +822,24 @@ impl AppState {
         if self.schedule.is_none() {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
-                ui.label(RichText::new("No Schedule Generated").size(16.0).color(theme::text_faint()).strong());
-                ui.label("The workload heatmap requires a generated schedule to visualize assignments.");
+                ui.label(
+                    RichText::new("No Schedule Generated")
+                        .size(16.0)
+                        .color(theme::text_faint())
+                        .strong(),
+                );
+                ui.label(
+                    "The workload heatmap requires a generated schedule to visualize assignments.",
+                );
             });
             return;
         }
 
-        ui.label(RichText::new("VOLUNTEER WORKLOAD TIMELINE").strong().color(theme::text_muted()));
+        ui.label(
+            RichText::new("VOLUNTEER WORKLOAD TIMELINE")
+                .strong()
+                .color(theme::text_muted()),
+        );
         ui.label("Solid blocks show when each volunteer is actually working; gaps (lunch / idle) are shown to scale.");
         ui.add_space(10.0);
 
@@ -726,7 +847,9 @@ impl AppState {
         let slots = &self.config.time_slots;
         let volunteers = &self.config.volunteers;
 
-        if volunteers.is_empty() || slots.is_empty() { return; }
+        if volunteers.is_empty() || slots.is_empty() {
+            return;
+        }
 
         // Fixed widths so the name column, timeline bars and totals line up into
         // readable columns across every row.
@@ -743,24 +866,37 @@ impl AppState {
 
         for day in unique_days {
             ui.add_space(15.0);
-            ui.label(RichText::new(&day).strong().size(14.0).color(theme::accent()));
+            ui.label(
+                RichText::new(&day)
+                    .strong()
+                    .size(14.0)
+                    .color(theme::accent()),
+            );
             ui.add_space(5.0);
 
             let day_slots: Vec<&TimeSlot> = slots.iter().filter(|s| s.day == day).collect();
-            if day_slots.is_empty() { continue; }
+            if day_slots.is_empty() {
+                continue;
+            }
 
             // Day span from the actual schedulable slots, so the bars cover only
             // the working hours of the day.
             let day_start = day_slots.iter().map(|s| slot_span(s).0).min().unwrap_or(0);
-            let day_end = day_slots.iter().map(|s| slot_span(s).1).max().unwrap_or(day_start);
+            let day_end = day_slots
+                .iter()
+                .map(|s| slot_span(s).1)
+                .max()
+                .unwrap_or(day_start);
 
             // The bar fills the space left after the fixed columns.
-            let bar_w = (ui.available_width() - NAME_W - TOTAL_W - RANGES_W - 24.0).clamp(220.0, 900.0);
+            let bar_w =
+                (ui.available_width() - NAME_W - TOTAL_W - RANGES_W - 24.0).clamp(220.0, 900.0);
 
             // Hour-tick axis aligned with the bars below.
             ui.horizontal(|ui| {
                 ui.add_space(NAME_W);
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, 14.0), egui::Sense::hover());
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(bar_w, 14.0), egui::Sense::hover());
                 let painter = ui.painter();
                 let span = day_end.saturating_sub(day_start).max(1) as f32;
                 let mut h = (day_start / 60 + 1) * 60;
@@ -779,9 +915,14 @@ impl AppState {
 
             for vol in volunteers {
                 // Spans of the slots this volunteer is actually assigned to today.
-                let mut spans: Vec<(u32, u32)> = day_slots.iter()
-                    .filter(|s| sched.assignments.iter()
-                        .any(|a| a.time_slot_id == s.id && a.volunteer_ids.contains(&vol.id)))
+                let mut spans: Vec<(u32, u32)> = day_slots
+                    .iter()
+                    .filter(|s| {
+                        sched
+                            .assignments
+                            .iter()
+                            .any(|a| a.time_slot_id == s.id && a.volunteer_ids.contains(&vol.id))
+                    })
                     .map(|s| slot_span(s))
                     .collect();
                 let day_total = spans.len();
@@ -792,21 +933,40 @@ impl AppState {
                 let blocks = merge_work_blocks(&spans, 5);
 
                 ui.horizontal(|ui| {
-                    ui.add_sized([NAME_W, 22.0], egui::Label::new(RichText::new(&vol.name).size(11.0)).truncate(true));
+                    ui.add_sized(
+                        [NAME_W, 22.0],
+                        egui::Label::new(RichText::new(&vol.name).size(11.0)).truncate(true),
+                    );
                     draw_work_timeline(ui, &blocks, day_start, day_end, bar_w);
 
-                    let color = if day_total == 0 { theme::text_faint() } else { theme::text() };
-                    ui.add_sized([TOTAL_W, 22.0], egui::Label::new(RichText::new(day_total.to_string()).strong().color(color)));
+                    let color = if day_total == 0 {
+                        theme::text_faint()
+                    } else {
+                        theme::text()
+                    };
+                    ui.add_sized(
+                        [TOTAL_W, 22.0],
+                        egui::Label::new(
+                            RichText::new(day_total.to_string()).strong().color(color),
+                        ),
+                    );
 
                     let summary = if blocks.is_empty() {
                         "—".to_string()
                     } else {
-                        blocks.iter()
+                        blocks
+                            .iter()
                             .map(|(s, e)| format!("{}–{}", fmt_minutes(*s), fmt_minutes(*e)))
                             .collect::<Vec<_>>()
                             .join(", ")
                     };
-                    ui.add_sized([RANGES_W, 22.0], egui::Label::new(RichText::new(summary).size(10.0).color(theme::text_muted())).truncate(true));
+                    ui.add_sized(
+                        [RANGES_W, 22.0],
+                        egui::Label::new(
+                            RichText::new(summary).size(10.0).color(theme::text_muted()),
+                        )
+                        .truncate(true),
+                    );
                 });
             }
         }
@@ -829,7 +989,13 @@ fn merge_work_blocks(spans: &[(u32, u32)], bridge: u32) -> Vec<(u32, u32)> {
 
 /// Horizontal bar of working blocks across the day span, with faint hour
 /// gridlines. Idle time shows as the bar's background between blocks.
-fn draw_work_timeline(ui: &mut egui::Ui, blocks: &[(u32, u32)], day_start: u32, day_end: u32, width: f32) {
+fn draw_work_timeline(
+    ui: &mut egui::Ui,
+    blocks: &[(u32, u32)],
+    day_start: u32,
+    day_end: u32,
+    width: f32,
+) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 22.0), egui::Sense::hover());
     let painter = ui.painter();
     painter.rect_filled(rect, 3.0, theme::surface());
@@ -905,7 +1071,8 @@ fn gap_has_slot(slots: &[TimeSlot], g0: u32, g1: u32) -> bool {
 /// A gap that *does* contain slots the volunteer isn't available for stays a
 /// real break.
 fn covered_ranges(vol: &Volunteer, slots: &[TimeSlot]) -> Vec<(u32, u32)> {
-    let mut spans: Vec<(u32, u32)> = slots.iter()
+    let mut spans: Vec<(u32, u32)> = slots
+        .iter()
         .filter(|s| vol.availabilities.contains(&s.id))
         .map(slot_span)
         .collect();
@@ -914,9 +1081,7 @@ fn covered_ranges(vol: &Volunteer, slots: &[TimeSlot]) -> Vec<(u32, u32)> {
     let mut merged: Vec<(u32, u32)> = Vec::new();
     for (s, e) in spans {
         match merged.last_mut() {
-            Some(last) if s <= last.1 || !gap_has_slot(slots, last.1, s) => {
-                last.1 = last.1.max(e)
-            }
+            Some(last) if s <= last.1 || !gap_has_slot(slots, last.1, s) => last.1 = last.1.max(e),
             _ => merged.push((s, e)),
         }
     }
@@ -927,7 +1092,8 @@ fn covered_ranges(vol: &Volunteer, slots: &[TimeSlot]) -> Vec<(u32, u32)> {
 /// volunteer must be present for the whole slot, so a slot only counts when it
 /// is entirely contained.
 fn slots_in_ranges(slots: &[TimeSlot], ranges: &[(u32, u32)]) -> Vec<String> {
-    slots.iter()
+    slots
+        .iter()
         .filter(|s| {
             let (st, en) = slot_span(s);
             ranges.iter().any(|(rs, re)| *rs <= st && en <= *re)
@@ -946,10 +1112,8 @@ fn draw_timeline(ui: &mut egui::Ui, ranges: &[(u32, u32)], day_start: u32, day_e
     for (s, e) in ranges {
         let x0 = rect.left() + rect.width() * (s.saturating_sub(day_start) as f32 / span);
         let x1 = rect.left() + rect.width() * (e.saturating_sub(day_start) as f32 / span);
-        let seg = egui::Rect::from_min_max(
-            egui::pos2(x0, rect.top()),
-            egui::pos2(x1, rect.bottom()),
-        );
+        let seg =
+            egui::Rect::from_min_max(egui::pos2(x0, rect.top()), egui::pos2(x1, rect.bottom()));
         painter.rect_filled(seg, 2.0, theme::accent());
     }
     painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, theme::border()));
@@ -985,7 +1149,8 @@ fn boundary_combo(
 /// so two ranges can never be made to overlap. Unparseable ranges contribute no
 /// bound (`None`).
 fn range_neighbour_bounds(ranges: &[(String, String)]) -> Vec<(Option<u32>, Option<u32>)> {
-    let parsed: Vec<Option<(u32, u32)>> = ranges.iter()
+    let parsed: Vec<Option<(u32, u32)>> = ranges
+        .iter()
         .map(|(s, e)| Some((parse_time_minutes(s)?, parse_time_minutes(e)?)))
         .collect();
 
@@ -994,7 +1159,9 @@ fn range_neighbour_bounds(ranges: &[(String, String)]) -> Vec<(Option<u32>, Opti
 
     let mut bounds = vec![(None, None); ranges.len()];
     for pos in 0..order.len() {
-        let prev_end = pos.checked_sub(1).and_then(|p| parsed[order[p]].map(|(_, e)| e));
+        let prev_end = pos
+            .checked_sub(1)
+            .and_then(|p| parsed[order[p]].map(|(_, e)| e));
         let next_start = order.get(pos + 1).and_then(|&n| parsed[n].map(|(s, _)| s));
         bounds[order[pos]] = (prev_end, next_start);
     }
@@ -1007,7 +1174,8 @@ fn range_neighbour_bounds(ranges: &[(String, String)]) -> Vec<(Option<u32>, Opti
 /// (it just means the volunteer is unavailable that day).
 fn validate_ranges(ranges: &[(String, String)]) -> (Vec<bool>, Option<String>) {
     let mut flags = vec![false; ranges.len()];
-    let parsed: Vec<Option<(u32, u32)>> = ranges.iter()
+    let parsed: Vec<Option<(u32, u32)>> = ranges
+        .iter()
         .map(|(s, e)| Some((parse_time_minutes(s)?, parse_time_minutes(e)?)))
         .collect();
 

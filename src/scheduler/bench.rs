@@ -22,12 +22,12 @@
 //! cargo test --release solver_benchmark -- --ignored --nocapture
 //! ```
 
+use super::{SolverParams, evaluate_schedule_cost, solve_schedule};
 use crate::model::{
     DayGenConfig, Division, Field, FieldKind, SchedulingMode, Team, TimeSlot, TournamentConfig,
 };
-use super::{evaluate_schedule_cost, solve_schedule, SolverParams};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 /// Number of independent solver runs per instance. Each run uses a different
@@ -94,7 +94,13 @@ fn day_slots(
 
 /// Appends a head-to-head division plus its teams (no volunteers required, finals
 /// off — keeps the instance focused on placement, spacing, and breaks).
-fn add_division(config: &mut TournamentConfig, id: &str, n_teams: usize, games: usize, interviews: bool) {
+fn add_division(
+    config: &mut TournamentConfig,
+    id: &str,
+    n_teams: usize,
+    games: usize,
+    interviews: bool,
+) {
     config.divisions.push(Division {
         id: id.into(),
         name: id.into(),
@@ -123,7 +129,10 @@ fn add_division(config: &mut TournamentConfig, id: &str, n_teams: usize, games: 
 }
 
 fn with_day(mut config: TournamentConfig, slots: Vec<TimeSlot>) -> TournamentConfig {
-    config.day_configs.push(DayGenConfig { day: "Saturday".into(), ..Default::default() });
+    config.day_configs.push(DayGenConfig {
+        day: "Saturday".into(),
+        ..Default::default()
+    });
     config.time_slots = slots;
     config
 }
@@ -133,13 +142,36 @@ fn easy_case() -> TournamentConfig {
     let mut config = TournamentConfig::default();
     add_division(&mut config, "Soccer", 6, 3, true);
     config.fields = vec![
-        Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: None },
-        Field { id: "f2".into(), name: "Field 2".into(), kind: FieldKind::Competition, allowed_divisions: None },
-        Field { id: "f3".into(), name: "Field 3".into(), kind: FieldKind::Competition, allowed_divisions: None },
-        Field { id: "t1".into(), name: "Table 1".into(), kind: FieldKind::Interview, allowed_divisions: None },
+        Field {
+            id: "f1".into(),
+            name: "Field 1".into(),
+            kind: FieldKind::Competition,
+            allowed_divisions: None,
+        },
+        Field {
+            id: "f2".into(),
+            name: "Field 2".into(),
+            kind: FieldKind::Competition,
+            allowed_divisions: None,
+        },
+        Field {
+            id: "f3".into(),
+            name: "Field 3".into(),
+            kind: FieldKind::Competition,
+            allowed_divisions: None,
+        },
+        Field {
+            id: "t1".into(),
+            name: "Table 1".into(),
+            kind: FieldKind::Interview,
+            allowed_divisions: None,
+        },
     ];
     // 09:00–17:00.
-    with_day(config, day_slots("Saturday", 9 * 60, 17 * 60, 20, 5, 10, 5, true))
+    with_day(
+        config,
+        day_slots("Saturday", 9 * 60, 17 * 60, 20, 5, 10, 5, true),
+    )
 }
 
 /// Tight: enough matches/interviews that the default break floors genuinely bind.
@@ -147,12 +179,30 @@ fn tight_case() -> TournamentConfig {
     let mut config = TournamentConfig::default();
     add_division(&mut config, "Soccer", 8, 3, true);
     config.fields = vec![
-        Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: None },
-        Field { id: "f2".into(), name: "Field 2".into(), kind: FieldKind::Competition, allowed_divisions: None },
-        Field { id: "t1".into(), name: "Table 1".into(), kind: FieldKind::Interview, allowed_divisions: None },
+        Field {
+            id: "f1".into(),
+            name: "Field 1".into(),
+            kind: FieldKind::Competition,
+            allowed_divisions: None,
+        },
+        Field {
+            id: "f2".into(),
+            name: "Field 2".into(),
+            kind: FieldKind::Competition,
+            allowed_divisions: None,
+        },
+        Field {
+            id: "t1".into(),
+            name: "Table 1".into(),
+            kind: FieldKind::Interview,
+            allowed_divisions: None,
+        },
     ];
     // 09:00–13:00 — capacity is close to demand, so spacing is hard to satisfy.
-    with_day(config, day_slots("Saturday", 9 * 60, 13 * 60, 20, 5, 10, 5, true))
+    with_day(
+        config,
+        day_slots("Saturday", 9 * 60, 13 * 60, 20, 5, 10, 5, true),
+    )
 }
 
 /// Break-stress: ample raw capacity, but the slot cadence is only 25 min (20-min
@@ -164,11 +214,29 @@ fn break_stress_case() -> TournamentConfig {
     let mut config = TournamentConfig::default();
     add_division(&mut config, "Soccer", 6, 4, true);
     config.fields = vec![
-        Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: None },
-        Field { id: "f2".into(), name: "Field 2".into(), kind: FieldKind::Competition, allowed_divisions: None },
-        Field { id: "t1".into(), name: "Table 1".into(), kind: FieldKind::Interview, allowed_divisions: None },
+        Field {
+            id: "f1".into(),
+            name: "Field 1".into(),
+            kind: FieldKind::Competition,
+            allowed_divisions: None,
+        },
+        Field {
+            id: "f2".into(),
+            name: "Field 2".into(),
+            kind: FieldKind::Competition,
+            allowed_divisions: None,
+        },
+        Field {
+            id: "t1".into(),
+            name: "Table 1".into(),
+            kind: FieldKind::Interview,
+            allowed_divisions: None,
+        },
     ];
-    with_day(config, day_slots("Saturday", 9 * 60, 15 * 60, 20, 5, 10, 5, true))
+    with_day(
+        config,
+        day_slots("Saturday", 9 * 60, 15 * 60, 20, 5, 10, 5, true),
+    )
 }
 
 /// Over-constrained: far more matches than the single field + short day can hold,
@@ -177,11 +245,24 @@ fn over_constrained_case() -> TournamentConfig {
     let mut config = TournamentConfig::default();
     add_division(&mut config, "Soccer", 10, 4, true);
     config.fields = vec![
-        Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: None },
-        Field { id: "t1".into(), name: "Table 1".into(), kind: FieldKind::Interview, allowed_divisions: None },
+        Field {
+            id: "f1".into(),
+            name: "Field 1".into(),
+            kind: FieldKind::Competition,
+            allowed_divisions: None,
+        },
+        Field {
+            id: "t1".into(),
+            name: "Table 1".into(),
+            kind: FieldKind::Interview,
+            allowed_divisions: None,
+        },
     ];
     // 09:00–12:00 on one field.
-    with_day(config, day_slots("Saturday", 9 * 60, 12 * 60, 20, 5, 10, 5, true))
+    with_day(
+        config,
+        day_slots("Saturday", 9 * 60, 12 * 60, 20, 5, 10, 5, true),
+    )
 }
 
 /// Large: four divisions over two days on many fields. ~140 activities — big
@@ -194,13 +275,29 @@ fn large_case() -> TournamentConfig {
         add_division(&mut config, &format!("Div{d}"), 12, 4, true);
     }
     config.fields = (0..8)
-        .map(|i| Field { id: format!("f{i}"), name: format!("Field {i}"), kind: FieldKind::Competition, allowed_divisions: None })
-        .chain((0..3).map(|i| Field { id: format!("t{i}"), name: format!("Table {i}"), kind: FieldKind::Interview, allowed_divisions: None }))
+        .map(|i| Field {
+            id: format!("f{i}"),
+            name: format!("Field {i}"),
+            kind: FieldKind::Competition,
+            allowed_divisions: None,
+        })
+        .chain((0..3).map(|i| Field {
+            id: format!("t{i}"),
+            name: format!("Table {i}"),
+            kind: FieldKind::Interview,
+            allowed_divisions: None,
+        }))
         .collect();
     let mut slots = day_slots("Saturday", 9 * 60, 17 * 60, 20, 5, 10, 5, true);
     slots.extend(day_slots("Sunday", 9 * 60, 17 * 60, 20, 5, 10, 5, true));
-    config.day_configs.push(DayGenConfig { day: "Saturday".into(), ..Default::default() });
-    config.day_configs.push(DayGenConfig { day: "Sunday".into(), ..Default::default() });
+    config.day_configs.push(DayGenConfig {
+        day: "Saturday".into(),
+        ..Default::default()
+    });
+    config.day_configs.push(DayGenConfig {
+        day: "Sunday".into(),
+        ..Default::default()
+    });
     config.time_slots = slots;
     config
 }
@@ -235,24 +332,52 @@ fn run_once(config: &TournamentConfig, params: &SolverParams) -> RunResult {
         v => Some(v as u128),
     };
 
-    RunResult { hard, soft, total_ms, feasible_ms }
+    RunResult {
+        hard,
+        soft,
+        total_ms,
+        feasible_ms,
+    }
 }
 
 fn mean(xs: &[f64]) -> f64 {
-    if xs.is_empty() { 0.0 } else { xs.iter().sum::<f64>() / xs.len() as f64 }
+    if xs.is_empty() {
+        0.0
+    } else {
+        xs.iter().sum::<f64>() / xs.len() as f64
+    }
 }
 
 fn report(name: &str, config: &TournamentConfig, results: &[RunResult]) {
     let activities = super::generate_activities(config).len();
-    let comp_slots = config.time_slots.iter().filter(|s| s.kind == FieldKind::Competition).count();
-    let int_slots = config.time_slots.iter().filter(|s| s.kind == FieldKind::Interview).count();
-    let comp_fields = config.fields.iter().filter(|f| f.kind == FieldKind::Competition).count();
-    let int_fields = config.fields.iter().filter(|f| f.kind == FieldKind::Interview).count();
+    let comp_slots = config
+        .time_slots
+        .iter()
+        .filter(|s| s.kind == FieldKind::Competition)
+        .count();
+    let int_slots = config
+        .time_slots
+        .iter()
+        .filter(|s| s.kind == FieldKind::Interview)
+        .count();
+    let comp_fields = config
+        .fields
+        .iter()
+        .filter(|f| f.kind == FieldKind::Competition)
+        .count();
+    let int_fields = config
+        .fields
+        .iter()
+        .filter(|f| f.kind == FieldKind::Interview)
+        .count();
 
     let hard: Vec<f64> = results.iter().map(|r| r.hard).collect();
     let soft: Vec<f64> = results.iter().map(|r| r.soft).collect();
     let total: Vec<f64> = results.iter().map(|r| r.total_ms as f64).collect();
-    let feasible_runs: Vec<f64> = results.iter().filter_map(|r| r.feasible_ms.map(|m| m as f64)).collect();
+    let feasible_runs: Vec<f64> = results
+        .iter()
+        .filter_map(|r| r.feasible_ms.map(|m| m as f64))
+        .collect();
 
     let hmin = hard.iter().cloned().fold(f64::INFINITY, f64::min);
     let hmax = hard.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
@@ -265,11 +390,20 @@ fn report(name: &str, config: &TournamentConfig, results: &[RunResult]) {
         "  instance: {activities} activities | comp {comp_slots} slots × {comp_fields} fields | interview {int_slots} slots × {int_fields} tables"
     );
     println!("  runs: {}", results.len());
-    println!("  HARD  min {hmin:>6.0}  mean {:>8.1}  max {hmax:>6.0}", mean(&hard));
-    println!("  SOFT  min {smin:>6.1}  mean {:>8.1}  max {smax:>6.1}", mean(&soft));
+    println!(
+        "  HARD  min {hmin:>6.0}  mean {:>8.1}  max {hmax:>6.0}",
+        mean(&hard)
+    );
+    println!(
+        "  SOFT  min {smin:>6.1}  mean {:>8.1}  max {smax:>6.1}",
+        mean(&soft)
+    );
     println!("  feasible (0 hard): {feas_rate:.0}% of runs");
     if !feasible_runs.is_empty() {
-        println!("  time-to-feasible:  mean {:>6.0} ms (over feasible runs)", mean(&feasible_runs));
+        println!(
+            "  time-to-feasible:  mean {:>6.0} ms (over feasible runs)",
+            mean(&feasible_runs)
+        );
     }
     println!("  total solve time:  mean {:>6.0} ms", mean(&total));
 }
@@ -279,7 +413,11 @@ fn report(name: &str, config: &TournamentConfig, results: &[RunResult]) {
 fn solver_benchmark() {
     // Match the GUI defaults so the baseline reflects real usage. Kept modest so
     // the whole sweep finishes in a few seconds in release.
-    let params = SolverParams { max_iterations: 20_000, num_restarts: 4, ..SolverParams::default() };
+    let params = SolverParams {
+        max_iterations: 20_000,
+        num_restarts: 4,
+        ..SolverParams::default()
+    };
 
     println!("\n=== SOLVER BENCHMARK (baseline) ===");
     println!(
@@ -297,7 +435,10 @@ fn solver_benchmark() {
         let results: Vec<RunResult> = (0..RUNS_PER_CASE)
             .map(|i| {
                 // Distinct fixed seed per run: reproducible, but still a spread.
-                let p = SolverParams { seed: Some(BASE_SEED.wrapping_add(i as u64)), ..params.clone() };
+                let p = SolverParams {
+                    seed: Some(BASE_SEED.wrapping_add(i as u64)),
+                    ..params.clone()
+                };
                 run_once(&config, &p)
             })
             .collect();

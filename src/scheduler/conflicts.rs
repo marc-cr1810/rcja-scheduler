@@ -204,7 +204,9 @@ pub struct ConflictedSink {
 
 impl ConflictedSink {
     pub fn new(num_assignments: usize) -> Self {
-        Self { conflicted: vec![false; num_assignments] }
+        Self {
+            conflicted: vec![false; num_assignments],
+        }
     }
 
     pub fn into_indices(self) -> Vec<usize> {

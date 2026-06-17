@@ -1,5 +1,5 @@
-use crate::model::{Activity, MatchStage, SchedulingMode, TournamentConfig};
 use super::utils::sanitize_name;
+use crate::model::{Activity, MatchStage, SchedulingMode, TournamentConfig};
 
 /// Computes the actual number of round-robin matches that will be generated for
 /// a division, accounting for the two-phase selection logic that minimises
@@ -9,7 +9,11 @@ pub fn compute_rr_match_count(num_teams: usize, games_per_team: usize) -> usize 
         return 0;
     }
 
-    let padded_n = if num_teams % 2 == 0 { num_teams } else { num_teams + 1 };
+    let padded_n = if num_teams % 2 == 0 {
+        num_teams
+    } else {
+        num_teams + 1
+    };
     let num_rounds = padded_n - 1;
     let games_per_round = padded_n / 2;
 
@@ -23,9 +27,16 @@ pub fn compute_rr_match_count(num_teams: usize, games_per_team: usize) -> usize 
         for r in 0..num_rounds {
             for g in 0..games_per_round {
                 let (home, away) = if g == 0 {
-                    if r % 2 == 0 { (padded_n - 1, r) } else { (r, padded_n - 1) }
+                    if r % 2 == 0 {
+                        (padded_n - 1, r)
+                    } else {
+                        (r, padded_n - 1)
+                    }
                 } else {
-                    ((r + g) % (padded_n - 1), (r + padded_n - 1 - g) % (padded_n - 1))
+                    (
+                        (r + g) % (padded_n - 1),
+                        (r + padded_n - 1 - g) % (padded_n - 1),
+                    )
                 };
                 if home < num_teams && away < num_teams {
                     all_pairs.push((home, away));
@@ -75,7 +86,6 @@ pub fn compute_rr_match_count(num_teams: usize, games_per_team: usize) -> usize 
     total
 }
 
-
 pub fn generate_activities(config: &TournamentConfig) -> Vec<Activity> {
     let mut activities = Vec::new();
 
@@ -104,7 +114,8 @@ pub fn generate_activities(config: &TournamentConfig) -> Vec<Activity> {
                 if div.finals_enabled {
                     let mut finals_matches = generate_finals_matches(
                         &div.id,
-                        div.finals_rounds.unwrap_or(crate::model::FinalsRounds::Grand),
+                        div.finals_rounds
+                            .unwrap_or(crate::model::FinalsRounds::Grand),
                         div.finals_duration_minutes.unwrap_or(div.duration_minutes),
                         div.finals_third_place_playoff,
                     );
@@ -174,13 +185,19 @@ fn generate_head_to_head_matches(
     // Two-phase selection to minimise variance in games per team:
     // Phase 1: Take matches where BOTH teams are below quota (pairs deficit teams).
     // Phase 2: Fill remaining deficits with matches where at least one team needs games.
-    let mut team_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut team_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     let mut selected = Vec::new();
     let mut deferred = Vec::new();
 
     // Phase 1: both below quota
     for m in all_matches {
-        if let Activity::Match { ref team_a, ref team_b, .. } = m {
+        if let Activity::Match {
+            ref team_a,
+            ref team_b,
+            ..
+        } = m
+        {
             let ca = *team_counts.get(team_a).unwrap_or(&0);
             let cb = *team_counts.get(team_b).unwrap_or(&0);
             if ca < games_per_team && cb < games_per_team {
@@ -196,7 +213,12 @@ fn generate_head_to_head_matches(
     // Phase 2a: among deferred, catch any remaining both-below pairings
     let mut still_deferred = Vec::new();
     for m in deferred {
-        if let Activity::Match { ref team_a, ref team_b, .. } = m {
+        if let Activity::Match {
+            ref team_a,
+            ref team_b,
+            ..
+        } = m
+        {
             let ca = *team_counts.get(team_a).unwrap_or(&0);
             let cb = *team_counts.get(team_b).unwrap_or(&0);
             if ca < games_per_team && cb < games_per_team {
@@ -211,10 +233,18 @@ fn generate_head_to_head_matches(
 
     // Phase 2b: one below quota (fills the last straggler)
     for m in still_deferred {
-        if teams.iter().all(|t| *team_counts.get(t).unwrap_or(&0) >= games_per_team) {
+        if teams
+            .iter()
+            .all(|t| *team_counts.get(t).unwrap_or(&0) >= games_per_team)
+        {
             break;
         }
-        if let Activity::Match { ref team_a, ref team_b, .. } = m {
+        if let Activity::Match {
+            ref team_a,
+            ref team_b,
+            ..
+        } = m
+        {
             let ca = *team_counts.get(team_a).unwrap_or(&0);
             let cb = *team_counts.get(team_b).unwrap_or(&0);
             if ca < games_per_team || cb < games_per_team {
@@ -244,7 +274,14 @@ fn renumber_rounds(division_id: &str, matches: &mut [Activity]) {
     let mut rounds: Vec<HashSet<String>> = Vec::new();
     let mut match_idx = 0;
     for m in matches.iter_mut() {
-        if let Activity::Match { id, team_a, team_b, stage, .. } = m {
+        if let Activity::Match {
+            id,
+            team_a,
+            team_b,
+            stage,
+            ..
+        } = m
+        {
             let mut r = 0;
             loop {
                 if r == rounds.len() {
@@ -276,7 +313,11 @@ fn generate_finals_matches(
     let mut matches = Vec::new();
     let prefix = format!("{} ", division_id);
 
-    let push_match = |matches: &mut Vec<Activity>, id: String, team_a: String, team_b: String, stage: MatchStage| {
+    let push_match = |matches: &mut Vec<Activity>,
+                      id: String,
+                      team_a: String,
+                      team_b: String,
+                      stage: MatchStage| {
         matches.push(Activity::Match {
             id,
             team_a,
@@ -289,16 +330,36 @@ fn generate_finals_matches(
 
     match rounds {
         crate::model::FinalsRounds::Grand => {
-            push_match(&mut matches, format!("{}_gf", division_id),
-                format!("{}1st Place", prefix), format!("{}2nd Place", prefix), MatchStage::GrandFinal);
+            push_match(
+                &mut matches,
+                format!("{}_gf", division_id),
+                format!("{}1st Place", prefix),
+                format!("{}2nd Place", prefix),
+                MatchStage::GrandFinal,
+            );
         }
         crate::model::FinalsRounds::Semis => {
-            push_match(&mut matches, format!("{}_sf_1", division_id),
-                format!("{}1st Place", prefix), format!("{}4th Place", prefix), MatchStage::SemiFinal);
-            push_match(&mut matches, format!("{}_sf_2", division_id),
-                format!("{}2nd Place", prefix), format!("{}3rd Place", prefix), MatchStage::SemiFinal);
-            push_match(&mut matches, format!("{}_gf", division_id),
-                format!("{}Winner SF1", prefix), format!("{}Winner SF2", prefix), MatchStage::GrandFinal);
+            push_match(
+                &mut matches,
+                format!("{}_sf_1", division_id),
+                format!("{}1st Place", prefix),
+                format!("{}4th Place", prefix),
+                MatchStage::SemiFinal,
+            );
+            push_match(
+                &mut matches,
+                format!("{}_sf_2", division_id),
+                format!("{}2nd Place", prefix),
+                format!("{}3rd Place", prefix),
+                MatchStage::SemiFinal,
+            );
+            push_match(
+                &mut matches,
+                format!("{}_gf", division_id),
+                format!("{}Winner SF1", prefix),
+                format!("{}Winner SF2", prefix),
+                MatchStage::GrandFinal,
+            );
         }
         crate::model::FinalsRounds::Quarter => {
             for i in 1..=4 {
@@ -309,15 +370,35 @@ fn generate_finals_matches(
                     4 => ("4th Place", "5th Place"),
                     _ => unreachable!(),
                 };
-                push_match(&mut matches, format!("{}_qf_{}", division_id, i),
-                    format!("{}{}", prefix, ta), format!("{}{}", prefix, tb), MatchStage::QuarterFinal);
+                push_match(
+                    &mut matches,
+                    format!("{}_qf_{}", division_id, i),
+                    format!("{}{}", prefix, ta),
+                    format!("{}{}", prefix, tb),
+                    MatchStage::QuarterFinal,
+                );
             }
-            push_match(&mut matches, format!("{}_sf_1", division_id),
-                format!("{}Winner QF1", prefix), format!("{}Winner QF4", prefix), MatchStage::SemiFinal);
-            push_match(&mut matches, format!("{}_sf_2", division_id),
-                format!("{}Winner QF2", prefix), format!("{}Winner QF3", prefix), MatchStage::SemiFinal);
-            push_match(&mut matches, format!("{}_gf", division_id),
-                format!("{}Winner SF1", prefix), format!("{}Winner SF2", prefix), MatchStage::GrandFinal);
+            push_match(
+                &mut matches,
+                format!("{}_sf_1", division_id),
+                format!("{}Winner QF1", prefix),
+                format!("{}Winner QF4", prefix),
+                MatchStage::SemiFinal,
+            );
+            push_match(
+                &mut matches,
+                format!("{}_sf_2", division_id),
+                format!("{}Winner QF2", prefix),
+                format!("{}Winner QF3", prefix),
+                MatchStage::SemiFinal,
+            );
+            push_match(
+                &mut matches,
+                format!("{}_gf", division_id),
+                format!("{}Winner SF1", prefix),
+                format!("{}Winner SF2", prefix),
+                MatchStage::GrandFinal,
+            );
         }
         crate::model::FinalsRounds::Eighths => {
             for i in 1..=8 {
@@ -333,8 +414,13 @@ fn generate_finals_matches(
                     16 => "16th Place".to_string(),
                     other => format!("{}th Place", other),
                 };
-                push_match(&mut matches, format!("{}_ef_{}", division_id, i),
-                    format!("{}{}", prefix, ta_str), format!("{}{}", prefix, tb_str), MatchStage::EighthFinal);
+                push_match(
+                    &mut matches,
+                    format!("{}_ef_{}", division_id, i),
+                    format!("{}{}", prefix, ta_str),
+                    format!("{}{}", prefix, tb_str),
+                    MatchStage::EighthFinal,
+                );
             }
             for i in 1..=4 {
                 let (ta, tb) = match i {
@@ -344,21 +430,46 @@ fn generate_finals_matches(
                     4 => ("Winner EF4", "Winner EF5"),
                     _ => unreachable!(),
                 };
-                push_match(&mut matches, format!("{}_qf_{}", division_id, i),
-                    format!("{}{}", prefix, ta), format!("{}{}", prefix, tb), MatchStage::QuarterFinal);
+                push_match(
+                    &mut matches,
+                    format!("{}_qf_{}", division_id, i),
+                    format!("{}{}", prefix, ta),
+                    format!("{}{}", prefix, tb),
+                    MatchStage::QuarterFinal,
+                );
             }
-            push_match(&mut matches, format!("{}_sf_1", division_id),
-                format!("{}Winner QF1", prefix), format!("{}Winner QF4", prefix), MatchStage::SemiFinal);
-            push_match(&mut matches, format!("{}_sf_2", division_id),
-                format!("{}Winner QF2", prefix), format!("{}Winner QF3", prefix), MatchStage::SemiFinal);
-            push_match(&mut matches, format!("{}_gf", division_id),
-                format!("{}Winner SF1", prefix), format!("{}Winner SF2", prefix), MatchStage::GrandFinal);
+            push_match(
+                &mut matches,
+                format!("{}_sf_1", division_id),
+                format!("{}Winner QF1", prefix),
+                format!("{}Winner QF4", prefix),
+                MatchStage::SemiFinal,
+            );
+            push_match(
+                &mut matches,
+                format!("{}_sf_2", division_id),
+                format!("{}Winner QF2", prefix),
+                format!("{}Winner QF3", prefix),
+                MatchStage::SemiFinal,
+            );
+            push_match(
+                &mut matches,
+                format!("{}_gf", division_id),
+                format!("{}Winner SF1", prefix),
+                format!("{}Winner SF2", prefix),
+                MatchStage::GrandFinal,
+            );
         }
     }
 
     if third_place_playoff && rounds != crate::model::FinalsRounds::Grand {
-        push_match(&mut matches, format!("{}_3pl", division_id),
-            format!("{}Loser SF1", prefix), format!("{}Loser SF2", prefix), MatchStage::ThirdPlace);
+        push_match(
+            &mut matches,
+            format!("{}_3pl", division_id),
+            format!("{}Loser SF1", prefix),
+            format!("{}Loser SF2", prefix),
+            MatchStage::ThirdPlace,
+        );
     }
 
     matches
@@ -383,11 +494,7 @@ fn generate_circle_round_robin(
     for r in 0..num_rounds {
         for g in 0..games_per_round {
             let (home, away) = if g == 0 {
-                if r % 2 == 0 {
-                    (n - 1, r)
-                } else {
-                    (r, n - 1)
-                }
+                if r % 2 == 0 { (n - 1, r) } else { (r, n - 1) }
             } else {
                 let h = (r + g) % (n - 1);
                 let a = (r + n - 1 - g) % (n - 1);
@@ -421,11 +528,18 @@ mod tests {
 
     /// Pulls (round, team_a, team_b) out of generated round-robin matches.
     fn rounds_of(matches: &[Activity]) -> Vec<(usize, String, String)> {
-        matches.iter().filter_map(|m| match m {
-            Activity::Match { team_a, team_b, stage: MatchStage::RoundRobin { round, .. }, .. } =>
-                Some((*round, team_a.clone(), team_b.clone())),
-            _ => None,
-        }).collect()
+        matches
+            .iter()
+            .filter_map(|m| match m {
+                Activity::Match {
+                    team_a,
+                    team_b,
+                    stage: MatchStage::RoundRobin { round, .. },
+                    ..
+                } => Some((*round, team_a.clone(), team_b.clone())),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
@@ -442,7 +556,10 @@ mod tests {
 
         // No gaps: every round 0..=max is used.
         for r in 0..=max_round {
-            assert!(present.contains(&r), "round {r} missing — labels are not contiguous");
+            assert!(
+                present.contains(&r),
+                "round {r} missing — labels are not contiguous"
+            );
         }
         // The round count equals the most games any single team plays.
         let mut games: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
@@ -453,7 +570,8 @@ mod tests {
         assert_eq!(max_round + 1, *games.values().max().unwrap());
 
         // Each round is a parallel set: no team appears twice in a round.
-        let mut per_round: std::collections::HashMap<usize, HashSet<String>> = std::collections::HashMap::new();
+        let mut per_round: std::collections::HashMap<usize, HashSet<String>> =
+            std::collections::HashMap::new();
         for (r, a, b) in &rr {
             let set = per_round.entry(*r).or_default();
             assert!(set.insert(a.clone()), "team {a} twice in round {r}");

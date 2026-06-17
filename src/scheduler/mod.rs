@@ -1,25 +1,28 @@
 pub mod activity;
-mod evaluator;
-mod solver;
-pub mod utils;
-pub mod internal;
-mod fast_evaluator;
-mod conflicts;
-mod cells;
 #[cfg(test)]
 mod bench;
+mod cells;
+mod conflicts;
+mod evaluator;
+mod fast_evaluator;
 #[cfg(test)]
 mod golden;
+pub mod internal;
+mod solver;
+pub mod utils;
 
 use crate::model::{FairnessMode, SpecialistMode, TournamentConfig};
 use std::collections::{HashMap, HashSet};
 
+pub use activity::generate_activities;
+#[allow(unused_imports)]
+pub use evaluator::{
+    AssignmentConflict, ConflictSeverity, evaluate_schedule_cost, get_assignment_conflicts,
+    get_occupied_slots, get_schedule_conflicts,
+};
 #[allow(unused_imports)]
 pub use solver::solve_schedule;
-#[allow(unused_imports)]
-pub use evaluator::{evaluate_schedule_cost, get_schedule_conflicts, get_occupied_slots, get_assignment_conflicts, AssignmentConflict, ConflictSeverity};
-pub use activity::generate_activities;
-pub use utils::{sanitize_name, unique_id, is_field_suitable_for_activity};
+pub use utils::{is_field_suitable_for_activity, sanitize_name, unique_id};
 
 /// Solver parameters
 #[derive(Debug, Clone)]
@@ -160,14 +163,16 @@ pub fn get_division_rounds(
     }
 
     for div in &config.divisions {
-        let div_teams: Vec<String> = config.teams
+        let div_teams: Vec<String> = config
+            .teams
             .iter()
             .filter(|t| t.division_id == div.id)
             .map(|t| t.name.clone())
             .collect();
 
         // Collect all scheduled assignments for this division (excluding interviews)
-        let div_assignments: Vec<&crate::model::ScheduleAssignment> = schedule.assignments
+        let div_assignments: Vec<&crate::model::ScheduleAssignment> = schedule
+            .assignments
             .iter()
             .filter(|a| {
                 a.activity.division_id() == div.id
@@ -178,17 +183,29 @@ pub fn get_division_rounds(
         match div.mode {
             SchedulingMode::HeadToHead => {
                 // Separate round-robin matches from finals
-                let mut rr_rounds: HashMap<usize, Vec<&crate::model::ScheduleAssignment>> = HashMap::new();
-                let mut finals_stages: std::collections::BTreeMap<u8, Vec<&crate::model::ScheduleAssignment>> = std::collections::BTreeMap::new();
+                let mut rr_rounds: HashMap<usize, Vec<&crate::model::ScheduleAssignment>> =
+                    HashMap::new();
+                let mut finals_stages: std::collections::BTreeMap<
+                    u8,
+                    Vec<&crate::model::ScheduleAssignment>,
+                > = std::collections::BTreeMap::new();
 
                 for assign in &div_assignments {
                     let stage = assign.activity.stage();
                     if stage > 0 {
                         // Finals match
                         finals_stages.entry(stage as u8).or_default().push(assign);
-                    } else if let Activity::Match { stage: crate::model::MatchStage::RoundRobin { cycle, round }, .. } = &assign.activity {
+                    } else if let Activity::Match {
+                        stage: crate::model::MatchStage::RoundRobin { cycle, round },
+                        ..
+                    } = &assign.activity
+                    {
                         // n_teams - 1 rounds per cycle (using padded team count for odd divisions)
-                        let n_padded = if div_teams.len().is_multiple_of(2) { div_teams.len() } else { div_teams.len() + 1 };
+                        let n_padded = if div_teams.len().is_multiple_of(2) {
+                            div_teams.len()
+                        } else {
+                            div_teams.len() + 1
+                        };
                         let rounds_per_cycle = n_padded.saturating_sub(1).max(1);
                         let global_round = cycle * rounds_per_cycle + round;
                         rr_rounds.entry(global_round).or_default().push(assign);
@@ -207,8 +224,11 @@ pub fn get_division_rounds(
 
                     for a in assignments {
                         let slot = config.time_slots.iter().find(|s| s.id == a.time_slot_id);
-                        let field = a.field_id.as_ref().and_then(|fid| config.fields.iter().find(|f| f.id == *fid));
-                        
+                        let field = a
+                            .field_id
+                            .as_ref()
+                            .and_then(|fid| config.fields.iter().find(|f| f.id == *fid));
+
                         if let Activity::Match { team_a, team_b, .. } = &a.activity {
                             matches.push(RoundMatch {
                                 team_a: team_a.clone(),
@@ -230,7 +250,8 @@ pub fn get_division_rounds(
                         (d_idx, t_min)
                     });
 
-                    let bye_teams: Vec<String> = div_teams.iter()
+                    let bye_teams: Vec<String> = div_teams
+                        .iter()
                         .filter(|t| !round_teams.contains(*t))
                         .cloned()
                         .collect();
@@ -258,9 +279,18 @@ pub fn get_division_rounds(
 
                     for a in assignments {
                         let slot = config.time_slots.iter().find(|s| s.id == a.time_slot_id);
-                        let field = a.field_id.as_ref().and_then(|fid| config.fields.iter().find(|f| f.id == *fid));
-                        
-                        if let Activity::Match { team_a, team_b, division_id, .. } = &a.activity {
+                        let field = a
+                            .field_id
+                            .as_ref()
+                            .and_then(|fid| config.fields.iter().find(|f| f.id == *fid));
+
+                        if let Activity::Match {
+                            team_a,
+                            team_b,
+                            division_id,
+                            ..
+                        } = &a.activity
+                        {
                             if let Some(l) = a.activity.stage_label() {
                                 label = l;
                             }
@@ -291,7 +321,8 @@ pub fn get_division_rounds(
                 result.insert(div.id.clone(), rows);
             }
             SchedulingMode::IndividualRun => {
-                let mut run_groups: HashMap<usize, Vec<&crate::model::ScheduleAssignment>> = HashMap::new();
+                let mut run_groups: HashMap<usize, Vec<&crate::model::ScheduleAssignment>> =
+                    HashMap::new();
 
                 for assign in &div_assignments {
                     if let Activity::Run { run_number, .. } = &assign.activity {
@@ -310,8 +341,11 @@ pub fn get_division_rounds(
 
                     for a in assignments {
                         let slot = config.time_slots.iter().find(|s| s.id == a.time_slot_id);
-                        let field = a.field_id.as_ref().and_then(|fid| config.fields.iter().find(|f| f.id == *fid));
-                        
+                        let field = a
+                            .field_id
+                            .as_ref()
+                            .and_then(|fid| config.fields.iter().find(|f| f.id == *fid));
+
                         if let Activity::Run { team, .. } = &a.activity {
                             matches.push(RoundMatch {
                                 team_a: team.clone(),
@@ -331,7 +365,8 @@ pub fn get_division_rounds(
                         (d_idx, t_min)
                     });
 
-                    let bye_teams: Vec<String> = div_teams.iter()
+                    let bye_teams: Vec<String> = div_teams
+                        .iter()
                         .filter(|t| !round_teams.contains(*t))
                         .cloned()
                         .collect();

@@ -48,7 +48,12 @@ fn parse_hex(s: &str) -> Result<Color32, String> {
     };
     match h.len() {
         6 => Ok(Color32::from_rgb(byte(0)?, byte(2)?, byte(4)?)),
-        8 => Ok(Color32::from_rgba_unmultiplied(byte(0)?, byte(2)?, byte(4)?, byte(6)?)),
+        8 => Ok(Color32::from_rgba_unmultiplied(
+            byte(0)?,
+            byte(2)?,
+            byte(4)?,
+            byte(6)?,
+        )),
         _ => Err(format!("hex colour must be 6 or 8 digits, got '{s}'")),
     }
 }
@@ -138,18 +143,18 @@ impl Default for Theme {
             info_bg: c(30, 58, 138),
             rose: c(244, 63, 94),
             division_palette: vec![
-                c(99, 102, 241),  // indigo
-                c(16, 185, 129),  // emerald
-                c(245, 158, 11),  // amber
-                c(244, 63, 94),   // rose
-                c(14, 165, 233),  // sky
-                c(139, 92, 246),  // violet
-                c(249, 115, 22),  // orange
-                c(20, 184, 166),  // teal
-                c(236, 72, 153),  // pink
-                c(132, 204, 22),  // lime
-                c(6, 182, 212),   // cyan
-                c(217, 70, 239),  // fuchsia
+                c(99, 102, 241), // indigo
+                c(16, 185, 129), // emerald
+                c(245, 158, 11), // amber
+                c(244, 63, 94),  // rose
+                c(14, 165, 233), // sky
+                c(139, 92, 246), // violet
+                c(249, 115, 22), // orange
+                c(20, 184, 166), // teal
+                c(236, 72, 153), // pink
+                c(132, 204, 22), // lime
+                c(6, 182, 212),  // cyan
+                c(217, 70, 239), // fuchsia
             ],
         }
     }
@@ -166,7 +171,8 @@ impl Theme {
 static ACTIVE: LazyLock<RwLock<Theme>> = LazyLock::new(|| RwLock::new(Theme::default()));
 /// All selectable themes (built-in default + discovered files), populated by
 /// [`init`].
-static REGISTRY: LazyLock<RwLock<Vec<Theme>>> = LazyLock::new(|| RwLock::new(vec![Theme::default()]));
+static REGISTRY: LazyLock<RwLock<Vec<Theme>>> =
+    LazyLock::new(|| RwLock::new(vec![Theme::default()]));
 
 /// Replace the active theme. Re-run `setup_custom_style` afterwards so the
 /// changes that feed egui's `Visuals` (backgrounds, selection) also update.
@@ -188,7 +194,10 @@ pub fn init() -> String {
 /// still exists (otherwise activate the default). Returns the active name.
 pub fn reload(current: &str) -> String {
     let themes = discover();
-    let pick = themes.iter().find(|t| t.display_name() == current).unwrap_or(&themes[0]);
+    let pick = themes
+        .iter()
+        .find(|t| t.display_name() == current)
+        .unwrap_or(&themes[0]);
     let name = pick.display_name();
     set_active(pick.clone());
     *REGISTRY.write().expect("theme lock poisoned") = themes;
@@ -197,7 +206,12 @@ pub fn reload(current: &str) -> String {
 
 /// Display names of all registered themes, in order.
 pub fn names() -> Vec<String> {
-    REGISTRY.read().expect("theme lock poisoned").iter().map(Theme::display_name).collect()
+    REGISTRY
+        .read()
+        .expect("theme lock poisoned")
+        .iter()
+        .map(Theme::display_name)
+        .collect()
 }
 
 /// Activate the registered theme with this display name, if present.
@@ -221,14 +235,33 @@ macro_rules! accessors {
 }
 
 accessors!(
-    bg_base, card_bg, card_bg_alt, surface, row_stripe,
+    bg_base,
+    card_bg,
+    card_bg_alt,
+    surface,
+    row_stripe,
     border,
-    text, text_dim, text_muted, text_faint,
-    accent, accent_mid, accent_strong, accent_alt, on_accent,
-    success, success_border, success_bg,
-    warning, warning_border, warning_bg,
-    danger, danger_border, danger_bg,
-    info, info_border, info_bg,
+    text,
+    text_dim,
+    text_muted,
+    text_faint,
+    accent,
+    accent_mid,
+    accent_strong,
+    accent_alt,
+    on_accent,
+    success,
+    success_border,
+    success_bg,
+    warning,
+    warning_border,
+    warning_bg,
+    danger,
+    danger_border,
+    danger_bg,
+    info,
+    info_border,
+    info_bg,
     rose,
 );
 
@@ -250,7 +283,11 @@ pub fn cell_colors_from_rgb(rgb: [u8; 3]) -> (Color32, Color32) {
 pub fn contrast_text(bg: Color32) -> Color32 {
     let [r, g, b, _] = bg.to_array();
     let lum = (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0;
-    if lum > 0.55 { Color32::from_rgb(24, 24, 27) } else { Color32::WHITE }
+    if lum > 0.55 {
+        Color32::from_rgb(24, 24, 27)
+    } else {
+        Color32::WHITE
+    }
 }
 
 /// (background, border) for the Nth uncoloured division, cycling the active
@@ -268,9 +305,13 @@ pub fn division_cell_colors(index: usize) -> (Color32, Color32) {
 /// Parse a theme from a JSON file, naming it after the file if it has no `name`.
 pub fn load_file(path: &Path) -> Result<Theme, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut theme: Theme = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut theme: Theme =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     if theme.name.is_none() {
-        theme.name = path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string());
+        theme.name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string());
     }
     Ok(theme)
 }
@@ -280,9 +321,10 @@ pub fn load_file(path: &Path) -> Result<Theme, String> {
 fn theme_dirs() -> Vec<PathBuf> {
     let mut dirs = vec![PathBuf::from("themes")];
     if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent() {
-            dirs.push(dir.join("themes"));
-        }
+        && let Some(dir) = exe.parent()
+    {
+        dirs.push(dir.join("themes"));
+    }
     dirs
 }
 
@@ -294,7 +336,9 @@ pub fn discover() -> Vec<Theme> {
     seen.insert(themes[0].display_name());
 
     for dir in theme_dirs() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         let mut paths: Vec<PathBuf> = entries
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.extension().is_some_and(|x| x == "json"))

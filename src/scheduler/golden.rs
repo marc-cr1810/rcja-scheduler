@@ -29,9 +29,9 @@
 
 #![cfg(test)]
 
+use super::conflicts::{ConflictKind, distinct_hard_conflicts};
+use super::{SolverParams, generate_activities};
 use crate::model::{Activity, FieldKind, Schedule, TournamentConfig};
-use super::conflicts::{distinct_hard_conflicts, ConflictKind};
-use super::{generate_activities, SolverParams};
 use std::collections::BTreeMap;
 
 /// The real tournament config, embedded at compile time so the harness is
@@ -112,7 +112,9 @@ pub(crate) fn hard_conflict_total(
     schedule: &Schedule,
     params: &SolverParams,
 ) -> usize {
-    hard_conflicts_by_kind(config, schedule, params).values().sum()
+    hard_conflicts_by_kind(config, schedule, params)
+        .values()
+        .sum()
 }
 
 /// Round-robin dispersion — the coefficient of variation (std / mean) of the
@@ -136,23 +138,46 @@ pub(crate) fn dispersion(config: &TournamentConfig, schedule: &Schedule) -> f64 
     let mut day_order: BTreeMap<String, usize> = BTreeMap::new();
     for dc in &config.day_configs {
         let d = dc.day.to_lowercase();
-        if !day_order.contains_key(&d) { let i = day_order.len(); day_order.insert(d, i); }
+        if !day_order.contains_key(&d) {
+            let i = day_order.len();
+            day_order.insert(d, i);
+        }
     }
     for s in &config.time_slots {
         let d = s.day.to_lowercase();
-        if !day_order.contains_key(&d) { let i = day_order.len(); day_order.insert(d, i); }
+        if !day_order.contains_key(&d) {
+            let i = day_order.len();
+            day_order.insert(d, i);
+        }
     }
-    let band_key = |day: &str, start: &str| (day_order.get(&day.to_lowercase()).copied().unwrap_or(99), start.to_string());
-    let mut comp_bands: Vec<(usize, String)> = config.time_slots.iter()
+    let band_key = |day: &str, start: &str| {
+        (
+            day_order.get(&day.to_lowercase()).copied().unwrap_or(99),
+            start.to_string(),
+        )
+    };
+    let mut comp_bands: Vec<(usize, String)> = config
+        .time_slots
+        .iter()
         .filter(|s| s.kind == FieldKind::Competition)
         .map(|s| band_key(&s.day, &s.start_time))
         .collect();
     comp_bands.sort();
     comp_bands.dedup();
-    let band_index: BTreeMap<(usize, String), usize> =
-        comp_bands.iter().cloned().enumerate().map(|(i, b)| (b, i)).collect();
-    let slot_band: BTreeMap<&str, usize> = config.time_slots.iter()
-        .filter_map(|s| band_index.get(&band_key(&s.day, &s.start_time)).map(|&i| (s.id.as_str(), i)))
+    let band_index: BTreeMap<(usize, String), usize> = comp_bands
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(i, b)| (b, i))
+        .collect();
+    let slot_band: BTreeMap<&str, usize> = config
+        .time_slots
+        .iter()
+        .filter_map(|s| {
+            band_index
+                .get(&band_key(&s.day, &s.start_time))
+                .map(|&i| (s.id.as_str(), i))
+        })
         .collect();
 
     let mut counts = vec![0.0f64; cutoff];
@@ -196,25 +221,44 @@ pub(crate) fn finals_profile(config: &TournamentConfig, schedule: &Schedule) -> 
     let mut day_order: BTreeMap<String, usize> = BTreeMap::new();
     for dc in &config.day_configs {
         let d = dc.day.to_lowercase();
-        if !day_order.contains_key(&d) { let i = day_order.len(); day_order.insert(d, i); }
+        if !day_order.contains_key(&d) {
+            let i = day_order.len();
+            day_order.insert(d, i);
+        }
     }
     for s in &config.time_slots {
         let d = s.day.to_lowercase();
-        if !day_order.contains_key(&d) { let i = day_order.len(); day_order.insert(d, i); }
+        if !day_order.contains_key(&d) {
+            let i = day_order.len();
+            day_order.insert(d, i);
+        }
     }
-    let band_key = |day: &str, start: &str| (day_order.get(&day.to_lowercase()).copied().unwrap_or(99), start.to_string());
+    let band_key = |day: &str, start: &str| {
+        (
+            day_order.get(&day.to_lowercase()).copied().unwrap_or(99),
+            start.to_string(),
+        )
+    };
 
     // Chronological competition bands.
-    let mut comp_bands: Vec<(usize, String)> = config.time_slots.iter()
+    let mut comp_bands: Vec<(usize, String)> = config
+        .time_slots
+        .iter()
         .filter(|s| s.kind == FieldKind::Competition)
         .map(|s| band_key(&s.day, &s.start_time))
         .collect();
     comp_bands.sort();
     comp_bands.dedup();
-    let band_index: BTreeMap<(usize, String), usize> =
-        comp_bands.iter().cloned().enumerate().map(|(i, b)| (b, i)).collect();
+    let band_index: BTreeMap<(usize, String), usize> = comp_bands
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(i, b)| (b, i))
+        .collect();
 
-    let slot_key: BTreeMap<&str, (usize, String)> = config.time_slots.iter()
+    let slot_key: BTreeMap<&str, (usize, String)> = config
+        .time_slots
+        .iter()
         .map(|s| (s.id.as_str(), band_key(&s.day, &s.start_time)))
         .collect();
 
@@ -235,7 +279,9 @@ pub(crate) fn finals_profile(config: &TournamentConfig, schedule: &Schedule) -> 
     }
     if let Some(f) = first {
         for a in &schedule.assignments {
-            if matches!(a.activity, Activity::Interview { .. }) || a.activity.is_final() { continue; }
+            if matches!(a.activity, Activity::Interview { .. }) || a.activity.is_final() {
+                continue;
+            }
             if let Some(k) = slot_key.get(a.time_slot_id.as_str())
                 && let Some(&bi) = band_index.get(k)
                 && bi >= f
@@ -295,9 +341,9 @@ pub(crate) fn params_from_config(
 
 #[cfg(test)]
 mod tests {
+    use super::super::solve_schedule;
     use super::*;
     use crate::model::{Activity, FieldKind, SchedulingMode};
-    use super::super::solve_schedule;
 
     /// Fixed seed + the real config's own iteration budget (50k×5) so the
     /// baseline reflects what the user actually sees, deterministically.
@@ -341,12 +387,32 @@ mod tests {
         );
         for a in &schedule.assignments {
             let field_id = a.field_id.as_ref().expect("every activity gets a field");
-            let field = config.fields.iter().find(|f| &f.id == field_id).expect("field exists");
-            let slot = config.time_slots.iter().find(|s| s.id == a.time_slot_id).expect("slot exists");
+            let field = config
+                .fields
+                .iter()
+                .find(|f| &f.id == field_id)
+                .expect("field exists");
+            let slot = config
+                .time_slots
+                .iter()
+                .find(|s| s.id == a.time_slot_id)
+                .expect("slot exists");
             let is_interview = matches!(a.activity, Activity::Interview { .. });
-            let want = if is_interview { FieldKind::Interview } else { FieldKind::Competition };
-            assert_eq!(field.kind, want, "activity placed on wrong field kind: {:?}", a.activity);
-            assert_eq!(slot.kind, want, "activity placed in wrong slot kind: {:?}", a.activity);
+            let want = if is_interview {
+                FieldKind::Interview
+            } else {
+                FieldKind::Competition
+            };
+            assert_eq!(
+                field.kind, want,
+                "activity placed on wrong field kind: {:?}",
+                a.activity
+            );
+            assert_eq!(
+                slot.kind, want,
+                "activity placed in wrong slot kind: {:?}",
+                a.activity
+            );
         }
 
         // --- Baseline metrics ---
@@ -399,22 +465,41 @@ mod tests {
 
         // Finals (with 3rd-place playoff) must be present.
         assert!(
-            c.divisions.iter().any(|d| d.finals_enabled && d.finals_third_place_playoff),
+            c.divisions
+                .iter()
+                .any(|d| d.finals_enabled && d.finals_third_place_playoff),
             "fixture must cover finals + 3rd-place playoff"
         );
         // Mixed interview / no-interview divisions.
-        assert!(c.divisions.iter().any(|d| d.interviews_enabled), "needs an interview division");
-        assert!(c.divisions.iter().any(|d| !d.interviews_enabled), "needs a no-interview division");
+        assert!(
+            c.divisions.iter().any(|d| d.interviews_enabled),
+            "needs an interview division"
+        );
+        assert!(
+            c.divisions.iter().any(|d| !d.interviews_enabled),
+            "needs a no-interview division"
+        );
 
         // Field kinds: both competition fields and interview tables.
         assert!(c.fields.iter().any(|f| f.kind == FieldKind::Competition));
         assert!(c.fields.iter().any(|f| f.kind == FieldKind::Interview));
         // Division-restricted fields exercise the allowed_divisions path.
-        assert!(c.fields.iter().any(|f| f.allowed_divisions.is_some()), "needs a restricted field");
+        assert!(
+            c.fields.iter().any(|f| f.allowed_divisions.is_some()),
+            "needs a restricted field"
+        );
 
         // Volunteer constraint surfaces.
-        assert!(c.volunteers.iter().any(|v| v.capabilities.is_some()), "needs capability limits");
-        assert!(c.volunteers.iter().any(|v| !v.conflict_organizations.is_empty()), "needs a conflict of interest");
+        assert!(
+            c.volunteers.iter().any(|v| v.capabilities.is_some()),
+            "needs capability limits"
+        );
+        assert!(
+            c.volunteers
+                .iter()
+                .any(|v| !v.conflict_organizations.is_empty()),
+            "needs a conflict of interest"
+        );
 
         // Two days, both with slots.
         assert!(c.day_configs.len() >= 2, "needs a multi-day event");
@@ -423,7 +508,10 @@ mod tests {
         assert!(days.len() >= 2, "slots must span both days");
 
         // All four divisions head-to-head here; just confirm the mode resolves.
-        assert!(c.divisions.iter().all(|d| matches!(d.mode, SchedulingMode::HeadToHead | SchedulingMode::IndividualRun)));
+        assert!(c.divisions.iter().all(|d| matches!(
+            d.mode,
+            SchedulingMode::HeadToHead | SchedulingMode::IndividualRun
+        )));
     }
 
     /// The problem compiles and generates a sane activity set: finals matches,
@@ -435,8 +523,22 @@ mod tests {
         assert!(!acts.is_empty());
 
         let finals = acts.iter().filter(|a| a.is_final()).count();
-        let interviews = acts.iter().filter(|a| matches!(a, Activity::Interview { .. })).count();
-        let rr = acts.iter().filter(|a| matches!(a, Activity::Match { stage: crate::model::MatchStage::RoundRobin { .. }, .. })).count();
+        let interviews = acts
+            .iter()
+            .filter(|a| matches!(a, Activity::Interview { .. }))
+            .count();
+        let rr = acts
+            .iter()
+            .filter(|a| {
+                matches!(
+                    a,
+                    Activity::Match {
+                        stage: crate::model::MatchStage::RoundRobin { .. },
+                        ..
+                    }
+                )
+            })
+            .count();
 
         assert!(finals > 0, "expected finals matches");
         assert!(interviews > 0, "expected interview activities");
@@ -451,27 +553,58 @@ mod tests {
     /// spread scores higher. Guards the metric itself before we optimise against it.
     #[test]
     fn dispersion_metric_rewards_even_spread() {
-        use crate::model::{Field, ScheduleAssignment, TimeSlot, MatchStage};
+        use crate::model::{Field, MatchStage, ScheduleAssignment, TimeSlot};
         let mut c = TournamentConfig::default();
         c.fields = vec![
-            Field { id: "f1".into(), name: "F1".into(), kind: FieldKind::Competition, allowed_divisions: None },
-            Field { id: "f2".into(), name: "F2".into(), kind: FieldKind::Competition, allowed_divisions: None },
+            Field {
+                id: "f1".into(),
+                name: "F1".into(),
+                kind: FieldKind::Competition,
+                allowed_divisions: None,
+            },
+            Field {
+                id: "f2".into(),
+                name: "F2".into(),
+                kind: FieldKind::Competition,
+                allowed_divisions: None,
+            },
         ];
         // Four competition bands at 09:00, 09:20, 09:40, 10:00.
-        c.time_slots = (0..4).map(|i| {
-            let m = 9 * 60 + i * 20;
-            TimeSlot { id: format!("s{i}"), day: "Sat".into(), start_time: format!("{:02}:{:02}", m / 60, m % 60), end_time: format!("{:02}:{:02}", (m + 20) / 60, (m + 20) % 60), kind: FieldKind::Competition }
-        }).collect();
+        c.time_slots = (0..4)
+            .map(|i| {
+                let m = 9 * 60 + i * 20;
+                TimeSlot {
+                    id: format!("s{i}"),
+                    day: "Sat".into(),
+                    start_time: format!("{:02}:{:02}", m / 60, m % 60),
+                    end_time: format!("{:02}:{:02}", (m + 20) / 60, (m + 20) % 60),
+                    kind: FieldKind::Competition,
+                }
+            })
+            .collect();
 
         let mk = |slot: &str| ScheduleAssignment {
-            activity: Activity::Match { id: slot.into(), team_a: "a".into(), team_b: "b".into(), division_id: "d".into(), duration_minutes: 20, stage: MatchStage::RoundRobin { cycle: 0, round: 0 } },
-            time_slot_id: slot.into(), field_id: Some("f1".into()), volunteer_ids: vec![],
+            activity: Activity::Match {
+                id: slot.into(),
+                team_a: "a".into(),
+                team_b: "b".into(),
+                division_id: "d".into(),
+                duration_minutes: 20,
+                stage: MatchStage::RoundRobin { cycle: 0, round: 0 },
+            },
+            time_slot_id: slot.into(),
+            field_id: Some("f1".into()),
+            volunteer_ids: vec![],
         };
 
         // Even: one activity in each of the four bands.
-        let even = Schedule { assignments: (0..4).map(|i| mk(&format!("s{i}"))).collect() };
+        let even = Schedule {
+            assignments: (0..4).map(|i| mk(&format!("s{i}"))).collect(),
+        };
         // Clustered: all four in the first band, last three empty.
-        let clustered = Schedule { assignments: (0..4).map(|_| mk("s0")).collect() };
+        let clustered = Schedule {
+            assignments: (0..4).map(|_| mk("s0")).collect(),
+        };
 
         let d_even = dispersion(&c, &even);
         let d_clustered = dispersion(&c, &clustered);

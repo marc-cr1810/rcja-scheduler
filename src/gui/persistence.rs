@@ -1,9 +1,9 @@
+use super::{AppState, ExportMessage};
+use crate::model::{Schedule, ScheduleAssignment, Team, TournamentConfig};
+use genpdf::{Element, elements, style};
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::Write;
-use std::collections::HashSet;
-use crate::model::{Team, ScheduleAssignment, Schedule, TournamentConfig};
-use super::{AppState, ExportMessage};
-use genpdf::{elements, style, Element};
 
 /// Wire format for a saved project file. The tournament `config` fields are
 /// flattened to the top level so files written before schedule-bundling — which
@@ -196,8 +196,12 @@ impl AppState {
 
     pub fn export_to_csv(&mut self) {
         if let Some(ref schedule) = self.schedule {
-            let csv = generate_csv_content_internal(&self.config, &schedule.assignments, self.export_options.time_12h);
-            
+            let csv = generate_csv_content_internal(
+                &self.config,
+                &schedule.assignments,
+                self.export_options.time_12h,
+            );
+
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("CSV", &["csv"])
                 .set_title("Export Schedule As")
@@ -219,37 +223,66 @@ impl AppState {
     pub fn export_volunteer_rosters_to_csv(&mut self) {
         if let Some(ref schedule) = self.schedule {
             let mut csv = String::from("Volunteer,Time,Day,Field,Activity,Division\n");
-            
+
             let mut volunteers = self.config.volunteers.clone();
             volunteers.sort_by_key(|v| v.name.clone());
 
             for vol in volunteers {
-                let mut vol_assigns: Vec<_> = schedule.assignments.iter()
+                let mut vol_assigns: Vec<_> = schedule
+                    .assignments
+                    .iter()
                     .filter(|a| a.volunteer_ids.contains(&vol.id))
                     .collect();
-                
+
                 vol_assigns.sort_by_key(|a| {
-                    let slot = self.config.time_slots.iter().find(|s| s.id == a.time_slot_id);
-                    slot.map(|s| (s.day.clone(), crate::gui::helpers::parse_time_to_minutes(&s.start_time)))
+                    let slot = self
+                        .config
+                        .time_slots
+                        .iter()
+                        .find(|s| s.id == a.time_slot_id);
+                    slot.map(|s| {
+                        (
+                            s.day.clone(),
+                            crate::gui::helpers::parse_time_to_minutes(&s.start_time),
+                        )
+                    })
                 });
 
                 for assign in vol_assigns {
-                    let slot = match self.config.time_slots.iter().find(|s| s.id == assign.time_slot_id) {
+                    let slot = match self
+                        .config
+                        .time_slots
+                        .iter()
+                        .find(|s| s.id == assign.time_slot_id)
+                    {
                         Some(s) => s,
                         None => continue,
                     };
-                    let field = assign.field_id.as_ref().and_then(|fid| self.config.fields.iter().find(|f| f.id == *fid));
-                    let div = self.config.divisions.iter().find(|d| d.id == assign.activity.division_id());
+                    let field = assign
+                        .field_id
+                        .as_ref()
+                        .and_then(|fid| self.config.fields.iter().find(|f| f.id == *fid));
+                    let div = self
+                        .config
+                        .divisions
+                        .iter()
+                        .find(|d| d.id == assign.activity.division_id());
 
                     csv.push_str(&format!(
                         "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
-                        csv_field(&vol.name), csv_field(&format_time_str(&slot.start_time, self.export_options.time_12h)), csv_field(&slot.day),
-                        csv_field(field.map_or("", |f| &f.name)), csv_field(&assign.activity.export_label()),
+                        csv_field(&vol.name),
+                        csv_field(&format_time_str(
+                            &slot.start_time,
+                            self.export_options.time_12h
+                        )),
+                        csv_field(&slot.day),
+                        csv_field(field.map_or("", |f| &f.name)),
+                        csv_field(&assign.activity.export_label()),
                         csv_field(div.map_or("", |d| &d.name))
                     ));
                 }
             }
-            
+
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("CSV", &["csv"])
                 .set_title("Export Volunteer Rosters As")
@@ -257,7 +290,8 @@ impl AppState {
             {
                 if let Ok(mut file) = File::create(&path) {
                     if file.write_all(csv.as_bytes()).is_ok() {
-                        self.status_message = format!("Volunteer rosters exported to '{}'", path.display());
+                        self.status_message =
+                            format!("Volunteer rosters exported to '{}'", path.display());
                     } else {
                         self.status_message = "Failed to write CSV".to_string();
                     }
@@ -282,7 +316,7 @@ impl AppState {
             self.export_rx = Some(rx);
             self.is_exporting = true;
             self.export_progress = 0.0;
-            
+
             let config = self.config.clone();
             let schedule = self.schedule.clone().unwrap();
             let opts = self.export_options;
@@ -291,15 +325,22 @@ impl AppState {
 
             std::thread::spawn(move || {
                 if let Err(e) = fs::create_dir_all(&root) {
-                    let _ = tx.send(ExportMessage::Error(format!("Failed to create directory: {}", e)));
+                    let _ = tx.send(ExportMessage::Error(format!(
+                        "Failed to create directory: {}",
+                        e
+                    )));
                     return;
                 }
 
                 // Top-level format folders (only those the user asked for).
                 let csv_root = root.join("csv");
                 let pdf_root = root.join("pdf");
-                if opts.csv { let _ = fs::create_dir_all(&csv_root); }
-                if opts.pdf { let _ = fs::create_dir_all(&pdf_root); }
+                if opts.csv {
+                    let _ = fs::create_dir_all(&csv_root);
+                }
+                if opts.pdf {
+                    let _ = fs::create_dir_all(&pdf_root);
+                }
 
                 // Subdirectories within format folders, created on demand by the
                 // selected report categories.
@@ -310,16 +351,28 @@ impl AppState {
                 let pdf_team = pdf_root.join("Teams");
                 let pdf_vol = pdf_root.join("Volunteers");
                 if opts.divisions {
-                    if opts.csv { let _ = fs::create_dir_all(&csv_div); }
-                    if opts.pdf { let _ = fs::create_dir_all(&pdf_div); }
+                    if opts.csv {
+                        let _ = fs::create_dir_all(&csv_div);
+                    }
+                    if opts.pdf {
+                        let _ = fs::create_dir_all(&pdf_div);
+                    }
                 }
                 if opts.teams {
-                    if opts.csv { let _ = fs::create_dir_all(&csv_team); }
-                    if opts.pdf { let _ = fs::create_dir_all(&pdf_team); }
+                    if opts.csv {
+                        let _ = fs::create_dir_all(&csv_team);
+                    }
+                    if opts.pdf {
+                        let _ = fs::create_dir_all(&pdf_team);
+                    }
                 }
                 if opts.volunteers {
-                    if opts.csv { let _ = fs::create_dir_all(&csv_vol); }
-                    if opts.pdf { let _ = fs::create_dir_all(&pdf_vol); }
+                    if opts.csv {
+                        let _ = fs::create_dir_all(&csv_vol);
+                    }
+                    if opts.pdf {
+                        let _ = fs::create_dir_all(&pdf_vol);
+                    }
                 }
 
                 let divisions = config.divisions.clone();
@@ -341,60 +394,101 @@ impl AppState {
 
                 // 1. Master Schedule
                 if opts.master {
-                    writer.write_export_files(&csv_root, &pdf_root, "Master_Schedule", &schedule.assignments, ReportType::Master);
+                    writer.write_export_files(
+                        &csv_root,
+                        &pdf_root,
+                        "Master_Schedule",
+                        &schedule.assignments,
+                        ReportType::Master,
+                    );
                     current_step += 1;
-                    let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
+                    let _ = tx.send(ExportMessage::Progress(
+                        current_step as f32 / total_steps as f32,
+                    ));
                 }
 
                 // 2. Division Schedules
                 if opts.divisions {
                     for div in &divisions {
-                        let div_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
+                        let div_assigns: Vec<ScheduleAssignment> = schedule
+                            .assignments
+                            .iter()
                             .filter(|a| a.activity.division_id() == div.id)
                             .cloned()
                             .collect();
                         if !div_assigns.is_empty() {
                             let div_safe_name = clean_filename(&div.name);
-                            writer.write_export_files(&csv_div, &pdf_div, &div_safe_name, &div_assigns, ReportType::Division);
+                            writer.write_export_files(
+                                &csv_div,
+                                &pdf_div,
+                                &div_safe_name,
+                                &div_assigns,
+                                ReportType::Division,
+                            );
                         }
                         current_step += 1;
-                        let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
+                        let _ = tx.send(ExportMessage::Progress(
+                            current_step as f32 / total_steps as f32,
+                        ));
                     }
                 }
 
                 // 3. Team Schedules
                 if opts.teams {
                     for team in &teams {
-                        let team_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
+                        let team_assigns: Vec<ScheduleAssignment> = schedule
+                            .assignments
+                            .iter()
                             .filter(|a| a.activity.teams().contains(&team.name.as_str()))
                             .cloned()
                             .collect();
                         if !team_assigns.is_empty() {
                             let team_safe_name = clean_filename(&team.name);
-                            writer.write_export_files(&csv_team, &pdf_team, &team_safe_name, &team_assigns, ReportType::Team);
+                            writer.write_export_files(
+                                &csv_team,
+                                &pdf_team,
+                                &team_safe_name,
+                                &team_assigns,
+                                ReportType::Team,
+                            );
                         }
                         current_step += 1;
-                        let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
+                        let _ = tx.send(ExportMessage::Progress(
+                            current_step as f32 / total_steps as f32,
+                        ));
                     }
                 }
 
                 // 4. Volunteer Schedules
                 if opts.volunteers {
                     for vol in &volunteers {
-                        let vol_assigns: Vec<ScheduleAssignment> = schedule.assignments.iter()
+                        let vol_assigns: Vec<ScheduleAssignment> = schedule
+                            .assignments
+                            .iter()
                             .filter(|a| a.volunteer_ids.contains(&vol.id))
                             .cloned()
                             .collect();
                         if !vol_assigns.is_empty() {
                             let vol_safe_name = clean_filename(&vol.name);
-                            writer.write_export_files(&csv_vol, &pdf_vol, &vol_safe_name, &vol_assigns, ReportType::Volunteer);
+                            writer.write_export_files(
+                                &csv_vol,
+                                &pdf_vol,
+                                &vol_safe_name,
+                                &vol_assigns,
+                                ReportType::Volunteer,
+                            );
                         }
                         current_step += 1;
-                        let _ = tx.send(ExportMessage::Progress(current_step as f32 / total_steps as f32));
+                        let _ = tx.send(ExportMessage::Progress(
+                            current_step as f32 / total_steps as f32,
+                        ));
                     }
                 }
 
-                let _ = tx.send(ExportMessage::Done(format!("Export completed to '{}'", root.display())));
+                let _ = tx.send(ExportMessage::Done(format!(
+                    "Export completed to '{}'",
+                    root.display()
+                )));
             });
         }
     }
@@ -408,16 +502,30 @@ struct ExportWriter {
 }
 
 impl ExportWriter {
-    fn write_export_files(&self, csv_dir: &std::path::Path, pdf_dir: &std::path::Path, name: &str, assignments: &[ScheduleAssignment], report_type: ReportType) {
+    fn write_export_files(
+        &self,
+        csv_dir: &std::path::Path,
+        pdf_dir: &std::path::Path,
+        name: &str,
+        assignments: &[ScheduleAssignment],
+        report_type: ReportType,
+    ) {
         if self.csv {
-            let csv_content = generate_csv_content_internal(&self.config, assignments, self.time_12h);
+            let csv_content =
+                generate_csv_content_internal(&self.config, assignments, self.time_12h);
             let csv_path = csv_dir.join(format!("{}.csv", name));
             let _ = fs::write(csv_path, csv_content);
         }
 
         if self.pdf {
             let pdf_path = pdf_dir.join(format!("{}.pdf", name));
-            match generate_pdf_document_internal(&self.config, name, assignments, report_type, self.time_12h) {
+            match generate_pdf_document_internal(
+                &self.config,
+                name,
+                assignments,
+                report_type,
+                self.time_12h,
+            ) {
                 Some(doc) => {
                     if let Err(e) = doc.render_to_file(&pdf_path) {
                         eprintln!("Failed to render PDF {}: {}", pdf_path.display(), e);
@@ -431,9 +539,14 @@ impl ExportWriter {
     }
 }
 
-fn generate_csv_content_internal(config: &crate::model::TournamentConfig, assignments: &[ScheduleAssignment], time_12h: bool) -> String {
-    let mut csv = String::from("Field,Time,Division,Activity,Team A,Org A,Team B,Org B,Volunteers\n");
-    
+fn generate_csv_content_internal(
+    config: &crate::model::TournamentConfig,
+    assignments: &[ScheduleAssignment],
+    time_12h: bool,
+) -> String {
+    let mut csv =
+        String::from("Field,Time,Division,Activity,Team A,Org A,Team B,Org B,Volunteers\n");
+
     let mut sorted_assigns = assignments.to_vec();
     sorted_assigns.sort_by_key(|a| {
         let slot = config.time_slots.iter().find(|s| s.id == a.time_slot_id);
@@ -441,49 +554,112 @@ fn generate_csv_content_internal(config: &crate::model::TournamentConfig, assign
     });
 
     for assign in sorted_assigns {
-        let slot = config.time_slots.iter().find(|s| s.id == assign.time_slot_id);
-        let field = assign.field_id.as_ref().and_then(|fid| config.fields.iter().find(|f| f.id == *fid));
-        let division = config.divisions.iter().find(|d| d.id == assign.activity.division_id());
-        
-        let time_str = slot.map_or("".to_string(), |s| format!("{} {}", day_abbr(&s.day), format_time_str(&s.start_time, time_12h)));
+        let slot = config
+            .time_slots
+            .iter()
+            .find(|s| s.id == assign.time_slot_id);
+        let field = assign
+            .field_id
+            .as_ref()
+            .and_then(|fid| config.fields.iter().find(|f| f.id == *fid));
+        let division = config
+            .divisions
+            .iter()
+            .find(|d| d.id == assign.activity.division_id());
+
+        let time_str = slot.map_or("".to_string(), |s| {
+            format!(
+                "{} {}",
+                day_abbr(&s.day),
+                format_time_str(&s.start_time, time_12h)
+            )
+        });
         let div_name = division.map_or("", |d| &d.name);
         let field_name = field.map_or("", |f| &f.name);
-        
+
         let (team_a, org_a, team_b, org_b) = match &assign.activity {
             crate::model::Activity::Match { team_a, team_b, .. } => {
-                let o_a = config.teams.iter().find(|t| &t.name == team_a).map(|t| t.organization.as_str()).unwrap_or("");
-                let o_b = config.teams.iter().find(|t| &t.name == team_b).map(|t| t.organization.as_str()).unwrap_or("");
+                let o_a = config
+                    .teams
+                    .iter()
+                    .find(|t| &t.name == team_a)
+                    .map(|t| t.organization.as_str())
+                    .unwrap_or("");
+                let o_b = config
+                    .teams
+                    .iter()
+                    .find(|t| &t.name == team_b)
+                    .map(|t| t.organization.as_str())
+                    .unwrap_or("");
                 (team_a.as_str(), o_a, team_b.as_str(), o_b)
             }
-            crate::model::Activity::Run { team, .. } | crate::model::Activity::Interview { team, .. } => {
-                let o = config.teams.iter().find(|t| &t.name == team).map(|t| t.organization.as_str()).unwrap_or("");
+            crate::model::Activity::Run { team, .. }
+            | crate::model::Activity::Interview { team, .. } => {
+                let o = config
+                    .teams
+                    .iter()
+                    .find(|t| &t.name == team)
+                    .map(|t| t.organization.as_str())
+                    .unwrap_or("");
                 (team.as_str(), o, "", "")
             }
         };
 
-        let vols: Vec<String> = assign.volunteer_ids.iter()
-            .map(|vid| config.volunteers.iter().find(|v| v.id == *vid).map_or(vid.clone(), |v| v.name.clone()))
+        let vols: Vec<String> = assign
+            .volunteer_ids
+            .iter()
+            .map(|vid| {
+                config
+                    .volunteers
+                    .iter()
+                    .find(|v| v.id == *vid)
+                    .map_or(vid.clone(), |v| v.name.clone())
+            })
             .collect();
         let vol_names = vols.join("; ");
 
         csv.push_str(&format!(
             "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
-            csv_field(field_name), csv_field(&time_str), csv_field(div_name),
-            csv_field(&assign.activity.export_label()), csv_field(team_a), csv_field(org_a),
-            csv_field(team_b), csv_field(org_b), csv_field(&vol_names)
+            csv_field(field_name),
+            csv_field(&time_str),
+            csv_field(div_name),
+            csv_field(&assign.activity.export_label()),
+            csv_field(team_a),
+            csv_field(org_a),
+            csv_field(team_b),
+            csv_field(org_b),
+            csv_field(&vol_names)
         ));
     }
     csv
 }
 
-fn get_activity_metadata(config: &crate::model::TournamentConfig, activity: &crate::model::Activity) -> String {
+fn get_activity_metadata(
+    config: &crate::model::TournamentConfig,
+    activity: &crate::model::Activity,
+) -> String {
     let div_id = activity.division_id();
-    let div_name = config.divisions.iter().find(|d| d.id == div_id).map(|d| d.name.as_str()).unwrap_or(div_id);
-    
+    let div_name = config
+        .divisions
+        .iter()
+        .find(|d| d.id == div_id)
+        .map(|d| d.name.as_str())
+        .unwrap_or(div_id);
+
     match activity {
         crate::model::Activity::Match { team_a, team_b, .. } => {
-            let org_a = config.teams.iter().find(|t| &t.name == team_a).map(|t| t.organization.as_str()).unwrap_or("");
-            let org_b = config.teams.iter().find(|t| &t.name == team_b).map(|t| t.organization.as_str()).unwrap_or("");
+            let org_a = config
+                .teams
+                .iter()
+                .find(|t| &t.name == team_a)
+                .map(|t| t.organization.as_str())
+                .unwrap_or("");
+            let org_b = config
+                .teams
+                .iter()
+                .find(|t| &t.name == team_b)
+                .map(|t| t.organization.as_str())
+                .unwrap_or("");
             if org_a == org_b && !org_a.is_empty() {
                 format!("{} - {}", div_name, org_a)
             } else if !org_a.is_empty() && !org_b.is_empty() {
@@ -496,8 +672,14 @@ fn get_activity_metadata(config: &crate::model::TournamentConfig, activity: &cra
                 div_name.to_string()
             }
         }
-        crate::model::Activity::Run { team, .. } | crate::model::Activity::Interview { team, .. } => {
-            let org = config.teams.iter().find(|t| &t.name == team).map(|t| t.organization.as_str()).unwrap_or("");
+        crate::model::Activity::Run { team, .. }
+        | crate::model::Activity::Interview { team, .. } => {
+            let org = config
+                .teams
+                .iter()
+                .find(|t| &t.name == team)
+                .map(|t| t.organization.as_str())
+                .unwrap_or("");
             if !org.is_empty() {
                 format!("{} - {}", div_name, org)
             } else {
@@ -588,7 +770,14 @@ struct RuleDecorator {
 }
 
 impl genpdf::elements::CellDecorator for RuleDecorator {
-    fn decorate_cell(&mut self, _column: usize, _row: usize, _has_more: bool, area: genpdf::render::Area<'_>, _style: style::Style) {
+    fn decorate_cell(
+        &mut self,
+        _column: usize,
+        _row: usize,
+        _has_more: bool,
+        area: genpdf::render::Area<'_>,
+        _style: style::Style,
+    ) {
         let h = area.size().height;
         draw_hline(&area, h * 0.5, self.color);
         if self.strong {
@@ -606,7 +795,14 @@ struct BottomRuleDecorator {
 }
 
 impl genpdf::elements::CellDecorator for BottomRuleDecorator {
-    fn decorate_cell(&mut self, _column: usize, _row: usize, _has_more: bool, area: genpdf::render::Area<'_>, _style: style::Style) {
+    fn decorate_cell(
+        &mut self,
+        _column: usize,
+        _row: usize,
+        _has_more: bool,
+        area: genpdf::render::Area<'_>,
+        _style: style::Style,
+    ) {
         let h = area.size().height;
         draw_hline(&area, h, self.color);
         if self.strong {
@@ -649,14 +845,23 @@ struct RepeatingScheduleTable {
 }
 
 fn section_title_style() -> style::Style {
-    style::Style::new().bold().with_font_size(FS_SECTION).with_color(C_PRIMARY)
+    style::Style::new()
+        .bold()
+        .with_font_size(FS_SECTION)
+        .with_color(C_PRIMARY)
 }
 
 impl RepeatingScheduleTable {
     fn build_header() -> elements::TableLayout {
         let mut header = elements::TableLayout::new(SCHEDULE_WEIGHTS.to_vec());
-        header.set_cell_decorator(BottomRuleDecorator { color: C_PRIMARY, strong: true });
-        let th = style::Style::new().bold().with_font_size(FS_TH).with_color(C_PRIMARY);
+        header.set_cell_decorator(BottomRuleDecorator {
+            color: C_PRIMARY,
+            strong: true,
+        });
+        let th = style::Style::new()
+            .bold()
+            .with_font_size(FS_TH)
+            .with_color(C_PRIMARY);
         let mut row = header.row();
         for label in SCHEDULE_COLUMNS {
             row.push_element(elements::Paragraph::new(label).styled(th).padded(PAD));
@@ -667,10 +872,17 @@ impl RepeatingScheduleTable {
 
     fn build_row(row: &ScheduleRow) -> elements::TableLayout {
         let mut table = elements::TableLayout::new(SCHEDULE_WEIGHTS.to_vec());
-        table.set_cell_decorator(BottomRuleDecorator { color: C_RULE, strong: false });
+        table.set_cell_decorator(BottomRuleDecorator {
+            color: C_RULE,
+            strong: false,
+        });
         let mut r = table.row();
         for (text, st) in &row.cells {
-            r.push_element(elements::Paragraph::new(text.clone()).styled(*st).padded(PAD));
+            r.push_element(
+                elements::Paragraph::new(text.clone())
+                    .styled(*st)
+                    .padded(PAD),
+            );
         }
         r.push().ok();
         table
@@ -679,7 +891,11 @@ impl RepeatingScheduleTable {
     /// Conservative height of `row` when laid out at `table_width`, mirroring
     /// genpdf's greedy word wrapping. A one-line safety margin is added so a
     /// slight estimate miss can never cause a mid-row page split.
-    fn row_height(context: &genpdf::Context, table_width: genpdf::Mm, row: &ScheduleRow) -> genpdf::Mm {
+    fn row_height(
+        context: &genpdf::Context,
+        table_width: genpdf::Mm,
+        row: &ScheduleRow,
+    ) -> genpdf::Mm {
         let weight_sum: usize = SCHEDULE_WEIGHTS.iter().sum();
         let pad = genpdf::Mm::from(PAD);
         let mut max_h = genpdf::Mm::from(0u8);
@@ -696,7 +912,12 @@ impl RepeatingScheduleTable {
 
 /// Greedy first-fit word-wrap line count for `text` at width `avail`, using the
 /// same glyph metrics genpdf uses when it renders the paragraph.
-fn wrapped_line_count(context: &genpdf::Context, st: &style::Style, text: &str, avail: genpdf::Mm) -> usize {
+fn wrapped_line_count(
+    context: &genpdf::Context,
+    st: &style::Style,
+    text: &str,
+    avail: genpdf::Mm,
+) -> usize {
     let zero = genpdf::Mm::from(0u8);
     let space = st.str_width(&context.font_cache, " ");
     let mut lines = 1usize;
@@ -734,14 +955,18 @@ impl Element for RepeatingScheduleTable {
             let title_h = section_title_style().line_height(&context.font_cache)
                 + style.line_height(&context.font_cache) * 0.4 // the 0.4 break below the title
                 + genpdf::Mm::from(PAD) * 2.0; // header padding
-            let header_h = style::Style::new().bold().with_font_size(FS_TH).line_height(&context.font_cache);
+            let header_h = style::Style::new()
+                .bold()
+                .with_font_size(FS_TH)
+                .line_height(&context.font_cache);
             let first_row_h = Self::row_height(context, area.size().width, &self.rows[0]);
             if !self.deferred && title_h + header_h + first_row_h > area.size().height {
                 self.deferred = true;
                 result.has_more = true;
                 return Ok(result);
             }
-            let mut title = elements::Paragraph::new(self.title.clone()).styled(section_title_style());
+            let mut title =
+                elements::Paragraph::new(self.title.clone()).styled(section_title_style());
             let title_result = title.render(context, area.clone(), style)?;
             area.add_offset(genpdf::Position::new(0, title_result.size.height));
             result.size = result.size.stack_vertical(title_result.size);
@@ -780,8 +1005,16 @@ impl Element for RepeatingScheduleTable {
     }
 }
 
-fn render_schedule_section(doc: &mut genpdf::Document, config: &crate::model::TournamentConfig, section_title: &str, assignments: &[&ScheduleAssignment], time_12h: bool) {
-    if assignments.is_empty() { return; }
+fn render_schedule_section(
+    doc: &mut genpdf::Document,
+    config: &crate::model::TournamentConfig,
+    section_title: &str,
+    assignments: &[&ScheduleAssignment],
+    time_12h: bool,
+) {
+    if assignments.is_empty() {
+        return;
+    }
 
     // One row per assignment, sorted by day / time / field. Rows are collected
     // as data so RepeatingScheduleTable can keep each row whole across page
@@ -791,47 +1024,86 @@ fn render_schedule_section(doc: &mut genpdf::Document, config: &crate::model::To
     sorted.sort_by_key(|a| {
         let slot = config.time_slots.iter().find(|s| s.id == a.time_slot_id);
         (
-            slot.map(|s| (s.day.clone(), crate::gui::helpers::parse_time_to_minutes(&s.start_time))),
+            slot.map(|s| {
+                (
+                    s.day.clone(),
+                    crate::gui::helpers::parse_time_to_minutes(&s.start_time),
+                )
+            }),
             a.field_id.clone(),
         )
     });
 
     let time_style = style::Style::new().bold().with_font_size(FS_BODY);
-    let round_style = style::Style::new().with_font_size(FS_BODY).with_color(C_MUTED);
+    let round_style = style::Style::new()
+        .with_font_size(FS_BODY)
+        .with_color(C_MUTED);
     let field_style = style::Style::new().with_font_size(FS_BODY);
     let activity_style = style::Style::new().bold().with_font_size(FS_BODY);
-    let division_style = style::Style::new().with_font_size(FS_META).with_color(C_MUTED);
+    let division_style = style::Style::new()
+        .with_font_size(FS_META)
+        .with_color(C_MUTED);
 
     let mut rows = Vec::new();
     for assign in sorted {
-        let slot = match config.time_slots.iter().find(|s| s.id == assign.time_slot_id) {
+        let slot = match config
+            .time_slots
+            .iter()
+            .find(|s| s.id == assign.time_slot_id)
+        {
             Some(s) => s,
             None => continue,
         };
-        let field_name = assign.field_id.as_ref()
+        let field_name = assign
+            .field_id
+            .as_ref()
             .and_then(|fid| config.fields.iter().find(|f| f.id == *fid))
             .map_or_else(|| "-".to_string(), |f| clean_text(&f.name));
 
         rows.push(ScheduleRow {
             cells: vec![
-                (format!("{} {}", day_abbr(&slot.day), format_time_str(&slot.start_time, time_12h)), time_style),
+                (
+                    format!(
+                        "{} {}",
+                        day_abbr(&slot.day),
+                        format_time_str(&slot.start_time, time_12h)
+                    ),
+                    time_style,
+                ),
                 (assign.activity.round_label(), round_style),
                 (field_name, field_style),
                 (clean_text(&assign.activity.export_label()), activity_style),
-                (clean_text(&get_activity_metadata(config, &assign.activity)), division_style),
+                (
+                    clean_text(&get_activity_metadata(config, &assign.activity)),
+                    division_style,
+                ),
             ],
         });
     }
 
-    doc.push(RepeatingScheduleTable { title: section_title.to_string(), rows, next: 0, deferred: false });
+    doc.push(RepeatingScheduleTable {
+        title: section_title.to_string(),
+        rows,
+        next: 0,
+        deferred: false,
+    });
     doc.push(elements::Break::new(1.0));
 }
 
 // Column widths for the per-activity rows inside a team card.
 const TEAM_WEIGHTS: [usize; 3] = [4, 8, 5];
 
-fn team_name_style() -> style::Style { style::Style::new().bold().with_font_size(FS_BODY + 1).with_color(C_PRIMARY) }
-fn team_org_style() -> style::Style { style::Style::new().with_font_size(FS_META).with_color(C_MUTED) }
+fn team_name_style() -> style::Style {
+    style::Style::new()
+        .bold()
+        .with_font_size(FS_BODY + 1)
+        .with_color(C_PRIMARY)
+}
+fn team_org_style() -> style::Style {
+    style::Style::new()
+        .with_font_size(FS_META)
+        .with_color(C_MUTED)
+}
 
 /// A single team's personal schedule, pre-extracted as plain data so the grid
 /// can both measure and build each card during rendering.
@@ -842,22 +1114,39 @@ struct TeamCard {
 }
 
 /// Collects and sorts one team's assignments into a printable [`TeamCard`].
-fn prepare_team_card(config: &crate::model::TournamentConfig, team: &Team, assignments: &[ScheduleAssignment], time_12h: bool) -> TeamCard {
-    let mut team_assigns: Vec<_> = assignments.iter()
+fn prepare_team_card(
+    config: &crate::model::TournamentConfig,
+    team: &Team,
+    assignments: &[ScheduleAssignment],
+    time_12h: bool,
+) -> TeamCard {
+    let mut team_assigns: Vec<_> = assignments
+        .iter()
         .filter(|a| a.activity.teams().contains(&team.name.as_str()))
         .collect();
     team_assigns.sort_by_key(|a| {
         let slot = config.time_slots.iter().find(|s| s.id == a.time_slot_id);
-        slot.map(|s| (s.day.clone(), crate::gui::helpers::parse_time_to_minutes(&s.start_time)))
+        slot.map(|s| {
+            (
+                s.day.clone(),
+                crate::gui::helpers::parse_time_to_minutes(&s.start_time),
+            )
+        })
     });
 
     let mut rows = Vec::new();
     for assign in team_assigns {
-        let slot = match config.time_slots.iter().find(|s| s.id == assign.time_slot_id) {
+        let slot = match config
+            .time_slots
+            .iter()
+            .find(|s| s.id == assign.time_slot_id)
+        {
             Some(s) => s,
             None => continue,
         };
-        let field_name = assign.field_id.as_ref()
+        let field_name = assign
+            .field_id
+            .as_ref()
             .and_then(|fid| config.fields.iter().find(|f| f.id == *fid))
             .map_or_else(|| "-".to_string(), |f| clean_text(&f.name));
         let detail = match &assign.activity {
@@ -868,12 +1157,24 @@ fn prepare_team_card(config: &crate::model::TournamentConfig, team: &Team, assig
             crate::model::Activity::Run { run_number, .. } => format!("Run #{}", run_number),
             crate::model::Activity::Interview { .. } => "Interview".to_string(),
         };
-        rows.push((format!("{} {}", day_abbr(&slot.day), format_time_str(&slot.start_time, time_12h)), detail, field_name));
+        rows.push((
+            format!(
+                "{} {}",
+                day_abbr(&slot.day),
+                format_time_str(&slot.start_time, time_12h)
+            ),
+            detail,
+            field_name,
+        ));
     }
 
     TeamCard {
         name: clean_text(&team.name),
-        org: if team.organization.trim().is_empty() { String::new() } else { clean_text(&team.organization) },
+        org: if team.organization.trim().is_empty() {
+            String::new()
+        } else {
+            clean_text(&team.organization)
+        },
         rows,
     }
 }
@@ -891,21 +1192,37 @@ fn build_team_card(card: &TeamCard) -> elements::LinearLayout {
     c.push(elements::Break::new(0.2));
 
     if card.rows.is_empty() {
-        c.push(elements::Paragraph::new("No scheduled activities")
-            .styled(style::Style::new().italic().with_font_size(FS_META).with_color(C_MUTED)));
+        c.push(
+            elements::Paragraph::new("No scheduled activities").styled(
+                style::Style::new()
+                    .italic()
+                    .with_font_size(FS_META)
+                    .with_color(C_MUTED),
+            ),
+        );
         return c;
     }
 
     let mut table = elements::TableLayout::new(TEAM_WEIGHTS.to_vec());
     for (time, detail, field) in &card.rows {
         let mut row = table.row();
-        row.push_element(elements::Paragraph::new(time.clone())
-            .styled(style::Style::new().bold().with_font_size(FS_META)));
-        row.push_element(elements::Paragraph::new(detail.clone())
-            .styled(style::Style::new().with_font_size(FS_META)));
-        row.push_element(elements::Paragraph::new(field.clone())
-            .aligned(genpdf::Alignment::Right)
-            .styled(style::Style::new().with_font_size(FS_META).with_color(C_MUTED)));
+        row.push_element(
+            elements::Paragraph::new(time.clone())
+                .styled(style::Style::new().bold().with_font_size(FS_META)),
+        );
+        row.push_element(
+            elements::Paragraph::new(detail.clone())
+                .styled(style::Style::new().with_font_size(FS_META)),
+        );
+        row.push_element(
+            elements::Paragraph::new(field.clone())
+                .aligned(genpdf::Alignment::Right)
+                .styled(
+                    style::Style::new()
+                        .with_font_size(FS_META)
+                        .with_color(C_MUTED),
+                ),
+        );
         row.push().ok();
     }
     c.push(table);
@@ -914,17 +1231,26 @@ fn build_team_card(card: &TeamCard) -> elements::LinearLayout {
 
 /// Conservative rendered height of a card at the given content width, mirroring
 /// the components built in [`build_team_card`] so the grid can keep a card whole.
-fn card_height(context: &genpdf::Context, content_w: genpdf::Mm, card: &TeamCard, base_style: style::Style) -> genpdf::Mm {
+fn card_height(
+    context: &genpdf::Context,
+    content_w: genpdf::Mm,
+    card: &TeamCard,
+    base_style: style::Style,
+) -> genpdf::Mm {
     let name_lh = team_name_style().line_height(&context.font_cache);
     let meta_lh = team_org_style().line_height(&context.font_cache);
     let base_lh = base_style.line_height(&context.font_cache);
 
-    let mut h = name_lh * wrapped_line_count(context, &team_name_style(), &card.name, content_w) as f64;
+    let mut h =
+        name_lh * wrapped_line_count(context, &team_name_style(), &card.name, content_w) as f64;
     if !card.org.is_empty() {
         h += meta_lh * wrapped_line_count(context, &team_org_style(), &card.org, content_w) as f64;
     }
     // The two 0.2-line breaks around the divider, plus the divider rule itself.
-    h += base_lh * 0.4 + style::Style::new().with_font_size(1).line_height(&context.font_cache);
+    h += base_lh * 0.4
+        + style::Style::new()
+            .with_font_size(1)
+            .line_height(&context.font_cache);
 
     if card.rows.is_empty() {
         h += meta_lh;
@@ -932,9 +1258,24 @@ fn card_height(context: &genpdf::Context, content_w: genpdf::Mm, card: &TeamCard
         let weight_sum: usize = TEAM_WEIGHTS.iter().sum();
         let st = style::Style::new().with_font_size(FS_META);
         for (time, detail, field) in &card.rows {
-            let lt = wrapped_line_count(context, &st, time, content_w * (TEAM_WEIGHTS[0] as f64 / weight_sum as f64));
-            let ld = wrapped_line_count(context, &st, detail, content_w * (TEAM_WEIGHTS[1] as f64 / weight_sum as f64));
-            let lf = wrapped_line_count(context, &st, field, content_w * (TEAM_WEIGHTS[2] as f64 / weight_sum as f64));
+            let lt = wrapped_line_count(
+                context,
+                &st,
+                time,
+                content_w * (TEAM_WEIGHTS[0] as f64 / weight_sum as f64),
+            );
+            let ld = wrapped_line_count(
+                context,
+                &st,
+                detail,
+                content_w * (TEAM_WEIGHTS[1] as f64 / weight_sum as f64),
+            );
+            let lf = wrapped_line_count(
+                context,
+                &st,
+                field,
+                content_w * (TEAM_WEIGHTS[2] as f64 / weight_sum as f64),
+            );
             h += meta_lh * lt.max(ld).max(lf) as f64;
         }
     }
@@ -973,14 +1314,18 @@ impl Element for TeamGrid {
         if self.next == 0 {
             let title_h = section_title_style().line_height(&context.font_cache)
                 + style.line_height(&context.font_cache) * 0.6;
-            let first_pair_h = card_height(context, content_w, &self.cards[0], style)
-                .max(self.cards.get(1).map_or(genpdf::Mm::from(0u8), |r| card_height(context, content_w, r, style)));
+            let first_pair_h = card_height(context, content_w, &self.cards[0], style).max(
+                self.cards.get(1).map_or(genpdf::Mm::from(0u8), |r| {
+                    card_height(context, content_w, r, style)
+                }),
+            );
             if !self.deferred && title_h + first_pair_h > area.size().height {
                 self.deferred = true;
                 result.has_more = true;
                 return Ok(result);
             }
-            let mut title = elements::Paragraph::new(self.title.clone()).styled(section_title_style());
+            let mut title =
+                elements::Paragraph::new(self.title.clone()).styled(section_title_style());
             let title_result = title.render(context, area.clone(), style)?;
             area.add_offset(genpdf::Position::new(0, title_result.size.height));
             result.size = result.size.stack_vertical(title_result.size);
@@ -994,8 +1339,11 @@ impl Element for TeamGrid {
         while self.next < self.cards.len() {
             let left = &self.cards[self.next];
             let right = self.cards.get(self.next + 1);
-            let pair_h = card_height(context, content_w, left, style)
-                .max(right.map_or(genpdf::Mm::from(0u8), |r| card_height(context, content_w, r, style)));
+            let pair_h = card_height(context, content_w, left, style).max(
+                right.map_or(genpdf::Mm::from(0u8), |r| {
+                    card_height(context, content_w, r, style)
+                }),
+            );
             if pair_h > area.size().height && placed_any {
                 break;
             }
@@ -1005,7 +1353,9 @@ impl Element for TeamGrid {
             row.push_element(build_team_card(left).padded(4));
             match right {
                 Some(r) => row.push_element(build_team_card(r).padded(4)),
-                None => { row.push_element(elements::Paragraph::new("")); }
+                None => {
+                    row.push_element(elements::Paragraph::new(""));
+                }
             }
             row.push().ok();
 
@@ -1027,7 +1377,13 @@ impl Element for TeamGrid {
     }
 }
 
-fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title: &str, assignments: &[ScheduleAssignment], report_type: ReportType, time_12h: bool) -> Option<genpdf::Document> {
+fn generate_pdf_document_internal(
+    config: &crate::model::TournamentConfig,
+    title: &str,
+    assignments: &[ScheduleAssignment],
+    report_type: ReportType,
+    time_12h: bool,
+) -> Option<genpdf::Document> {
     let font_family = load_embedded_font()?;
 
     let mut doc = genpdf::Document::new(font_family);
@@ -1043,24 +1399,50 @@ fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title
     let mut header_row = header_table.row();
 
     let mut left_header = elements::LinearLayout::vertical();
-    left_header.push(elements::Paragraph::new(clean_text(&config.competition_name))
-        .styled(style::Style::new().bold().with_font_size(FS_TITLE).with_color(C_PRIMARY)));
-    left_header.push(elements::Paragraph::new(clean_text(&title.replace('_', " ")))
-        .styled(style::Style::new().bold().with_font_size(FS_SUBTITLE).with_color(C_ACCENT)));
+    left_header.push(
+        elements::Paragraph::new(clean_text(&config.competition_name)).styled(
+            style::Style::new()
+                .bold()
+                .with_font_size(FS_TITLE)
+                .with_color(C_PRIMARY),
+        ),
+    );
+    left_header.push(
+        elements::Paragraph::new(clean_text(&title.replace('_', " "))).styled(
+            style::Style::new()
+                .bold()
+                .with_font_size(FS_SUBTITLE)
+                .with_color(C_ACCENT),
+        ),
+    );
     header_row.push_element(left_header);
 
     let total_matches = assignments.len();
-    let total_rounds = assignments.iter().map(|a| a.activity.round_index()).collect::<HashSet<_>>().len();
-    let total_fields = assignments.iter().filter_map(|a| a.field_id.as_ref()).collect::<HashSet<_>>().len();
+    let total_rounds = assignments
+        .iter()
+        .map(|a| a.activity.round_index())
+        .collect::<HashSet<_>>()
+        .len();
+    let total_fields = assignments
+        .iter()
+        .filter_map(|a| a.field_id.as_ref())
+        .collect::<HashSet<_>>()
+        .len();
 
-    let stat_style = style::Style::new().with_font_size(FS_META).with_color(C_MUTED);
+    let stat_style = style::Style::new()
+        .with_font_size(FS_META)
+        .with_color(C_MUTED);
     let mut right_header = elements::LinearLayout::vertical();
     for stat in [
         format!("{} rounds", total_rounds),
         format!("{} fields", total_fields),
         format!("{} activities", total_matches),
     ] {
-        right_header.push(elements::Paragraph::new(stat).aligned(genpdf::Alignment::Right).styled(stat_style));
+        right_header.push(
+            elements::Paragraph::new(stat)
+                .aligned(genpdf::Alignment::Right)
+                .styled(stat_style),
+        );
     }
     header_row.push_element(right_header);
     header_row.push().ok();
@@ -1073,30 +1455,65 @@ fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title
     // --- Schedule tables: the chronological list of activities. For master and
     //     division reports this is the full schedule; for a single team or
     //     volunteer it is just their own games, which is the whole report. ---
-    let comp_assigns: Vec<_> = assignments.iter().filter(|a| !matches!(a.activity, crate::model::Activity::Interview { .. })).collect();
-    let int_assigns: Vec<_> = assignments.iter().filter(|a| matches!(a.activity, crate::model::Activity::Interview { .. })).collect();
+    let comp_assigns: Vec<_> = assignments
+        .iter()
+        .filter(|a| !matches!(a.activity, crate::model::Activity::Interview { .. }))
+        .collect();
+    let int_assigns: Vec<_> = assignments
+        .iter()
+        .filter(|a| matches!(a.activity, crate::model::Activity::Interview { .. }))
+        .collect();
 
-    render_schedule_section(&mut doc, config, "Competition Schedule", &comp_assigns, time_12h);
-    render_schedule_section(&mut doc, config, "Interview Schedule", &int_assigns, time_12h);
+    render_schedule_section(
+        &mut doc,
+        config,
+        "Competition Schedule",
+        &comp_assigns,
+        time_12h,
+    );
+    render_schedule_section(
+        &mut doc,
+        config,
+        "Interview Schedule",
+        &int_assigns,
+        time_12h,
+    );
 
     // --- Per-team grid: only for the broad master / division reports. ---
     if matches!(report_type, ReportType::Master | ReportType::Division) {
         let teams_to_show: Vec<&Team> = if matches!(report_type, ReportType::Division) {
             let div_id = assignments.first().map(|a| a.activity.division_id());
-            config.teams.iter().filter(|t| Some(t.division_id.as_str()) == div_id).collect()
+            config
+                .teams
+                .iter()
+                .filter(|t| Some(t.division_id.as_str()) == div_id)
+                .collect()
         } else {
-            let team_names: HashSet<_> = assignments.iter().flat_map(|a| a.activity.teams()).collect();
-            let mut teams: Vec<_> = config.teams.iter().filter(|t| team_names.contains(t.name.as_str())).collect();
+            let team_names: HashSet<_> = assignments
+                .iter()
+                .flat_map(|a| a.activity.teams())
+                .collect();
+            let mut teams: Vec<_> = config
+                .teams
+                .iter()
+                .filter(|t| team_names.contains(t.name.as_str()))
+                .collect();
             teams.sort_by_key(|t| &t.name);
             teams
         };
 
-        let cards: Vec<TeamCard> = teams_to_show.iter()
+        let cards: Vec<TeamCard> = teams_to_show
+            .iter()
             .map(|team| prepare_team_card(config, team, assignments, time_12h))
             .collect();
         if !cards.is_empty() {
             doc.push(elements::Break::new(1.0));
-            doc.push(TeamGrid { title: "Per-Team Schedule".to_string(), cards, next: 0, deferred: false });
+            doc.push(TeamGrid {
+                title: "Per-Team Schedule".to_string(),
+                cards,
+                next: 0,
+                deferred: false,
+            });
         }
     }
 
@@ -1104,9 +1521,18 @@ fn generate_pdf_document_internal(config: &crate::model::TournamentConfig, title
     doc.push(elements::Break::new(1.0));
     doc.push(rule_element(C_RULE, false));
     doc.push(elements::Break::new(0.3));
-    doc.push(elements::Paragraph::new(format!("Generated {}", chrono::Local::now().format("%Y-%m-%d %H:%M")))
+    doc.push(
+        elements::Paragraph::new(format!(
+            "Generated {}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M")
+        ))
         .aligned(genpdf::Alignment::Right)
-        .styled(style::Style::new().with_font_size(FS_FOOTER).with_color(C_FOOTER)));
+        .styled(
+            style::Style::new()
+                .with_font_size(FS_FOOTER)
+                .with_color(C_FOOTER),
+        ),
+    );
 
     Some(doc)
 }
@@ -1131,7 +1557,9 @@ impl AppState {
             let parts = split_csv_line(line);
             // Match finalize_csv_import's requirement so divisions only appear in
             // the picker for rows that will actually be importable.
-            if parts.len() < 11 { continue; }
+            if parts.len() < 11 {
+                continue;
+            }
             let div_name = parts[6].trim();
             if !div_name.is_empty() {
                 divisions_found.insert(div_name.to_string());
@@ -1159,17 +1587,25 @@ impl AppState {
 
         let mut count = 0;
         for line in lines {
-            if line.trim().is_empty() { continue; }
+            if line.trim().is_empty() {
+                continue;
+            }
             let parts = split_csv_line(line);
-            if parts.len() < 11 { continue; }
+            if parts.len() < 11 {
+                continue;
+            }
 
             let name = parts[3].trim();
             let withdrawn = parts[4].trim().to_lowercase() == "true";
             let division_name = parts[6].trim();
             let school = parts[10].trim();
 
-            if withdrawn || name.is_empty() { continue; }
-            if !import_data.selected_divisions.contains(division_name) { continue; }
+            if withdrawn || name.is_empty() {
+                continue;
+            }
+            if !import_data.selected_divisions.contains(division_name) {
+                continue;
+            }
 
             let div_id = self.get_or_create_division_from_name(division_name);
 
@@ -1187,8 +1623,8 @@ impl AppState {
     }
 
     fn get_or_create_division_from_name(&mut self, name: &str) -> String {
-        use crate::scheduler::sanitize_name;
         use crate::model::{Division, SchedulingMode};
+        use crate::scheduler::sanitize_name;
 
         // Check if exists
         for div in &self.config.divisions {
@@ -1198,7 +1634,8 @@ impl AppState {
         }
 
         // Create new
-        let existing_ids: Vec<String> = self.config.divisions.iter().map(|d| d.id.clone()).collect();
+        let existing_ids: Vec<String> =
+            self.config.divisions.iter().map(|d| d.id.clone()).collect();
         let id = crate::scheduler::unique_id(&sanitize_name(name), &existing_ids);
         let mode = if name.to_lowercase().contains("soccer") {
             SchedulingMode::HeadToHead
@@ -1219,17 +1656,26 @@ impl AppState {
             name: name.to_string(),
             mode,
             games_per_team: 3,
-            volunteers_required: if mode == SchedulingMode::HeadToHead { 2 } else { 1 },
+            volunteers_required: if mode == SchedulingMode::HeadToHead {
+                2
+            } else {
+                1
+            },
             duration_minutes: 20,
             allowed_fields: None,
             interviews_enabled: true,
-            interview_volunteers_required: if mode == SchedulingMode::HeadToHead { 2 } else { 1 },
+            interview_volunteers_required: if mode == SchedulingMode::HeadToHead {
+                2
+            } else {
+                1
+            },
             interview_duration_minutes: 15,
             finals_enabled: false,
             finals_rounds: None,
             finals_duration_minutes: None,
             finals_third_place_playoff: false,
-            color: Some(random_color), min_match_break_minutes: None,
+            color: Some(random_color),
+            min_match_break_minutes: None,
         });
         id
     }
@@ -1281,7 +1727,10 @@ fn format_time_str(time: &str, twelve_hour: bool) -> String {
         _ => return time.to_string(),
     };
     let suffix = if h < 12 { "AM" } else { "PM" };
-    let h12 = match h % 12 { 0 => 12, x => x };
+    let h12 = match h % 12 {
+        0 => 12,
+        x => x,
+    };
     format!("{}:{:02} {}", h12, m, suffix)
 }
 
@@ -1373,20 +1822,23 @@ mod time_fmt_test {
     fn generate_schedule_csv_test() {
         use std::fs::File;
         use std::io::Write;
-        
+
         let config_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("rcja_config.json");
         let file = File::open(config_path).unwrap();
         let config: crate::model::TournamentConfig = serde_json::from_reader(file).unwrap();
-        
+
         let mut app_state = AppState::default();
         app_state.config = config;
         app_state.sync_solver_settings_from_config();
-        
+
         let params = app_state.get_solver_params();
-        
-        let sched = crate::scheduler::solve_schedule(&app_state.config, &params, |_, _, _, _, _, _| {}).expect("solved schedule");
-        
-        let conflicts = crate::scheduler::get_schedule_conflicts(&app_state.config, &sched, &params);
+
+        let sched =
+            crate::scheduler::solve_schedule(&app_state.config, &params, |_, _, _, _, _, _| {})
+                .expect("solved schedule");
+
+        let conflicts =
+            crate::scheduler::get_schedule_conflicts(&app_state.config, &sched, &params);
         println!("TOTAL HARD CONFLICTS FOUND: {}", conflicts.len());
         for conflict in &conflicts {
             println!("HARD CONFLICT: {}", conflict);
@@ -1400,16 +1852,23 @@ mod time_fmt_test {
                     for (i, ass) in sched.assignments.iter().enumerate() {
                         let act = &sched.assignments[i].activity;
                         let teams = match act {
-                            crate::model::Activity::Match { team_a, team_b, .. } => vec![team_a.clone(), team_b.clone()],
+                            crate::model::Activity::Match { team_a, team_b, .. } => {
+                                vec![team_a.clone(), team_b.clone()]
+                            }
                             _ => vec![],
                         };
                         if teams.contains(&team_name.to_string()) {
-                            let s_idx = app_state.config.time_slots.iter().position(|s| s.id == ass.time_slot_id).unwrap_or(0);
+                            let s_idx = app_state
+                                .config
+                                .time_slots
+                                .iter()
+                                .position(|s| s.id == ass.time_slot_id)
+                                .unwrap_or(0);
                             let slot_time = &app_state.config.time_slots[s_idx];
                             team_assignments.push((
                                 s_idx,
                                 format!("{} {}", slot_time.day, slot_time.start_time),
-                                format!("{:?}", act)
+                                format!("{:?}", act),
                             ));
                         }
                     }
@@ -1420,10 +1879,10 @@ mod time_fmt_test {
                 }
             }
         }
-        
+
         let csv = generate_csv_content_internal(&app_state.config, &sched.assignments, false);
         assert!(!csv.is_empty());
-        
+
         let out_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("schedule.csv");
         struct CleanupGuard<'a>(&'a std::path::Path);
         impl<'a> Drop for CleanupGuard<'a> {
@@ -1432,10 +1891,10 @@ mod time_fmt_test {
             }
         }
         let _cleanup = CleanupGuard(&out_path);
-        
+
         let mut out_file = File::create(&out_path).unwrap();
         out_file.write_all(csv.as_bytes()).unwrap();
-        
+
         println!("SUCCESSFULLY GENERATED schedule.csv");
     }
 }

@@ -1,19 +1,19 @@
+use super::SolverParams;
+use super::cells::{CellGrid, FieldOccupancy};
+use super::conflicts::distinct_hard_conflicts;
+use super::fast_evaluator::FastEvaluator;
+use super::internal::{InternalAssignment, InternalSchedule, InternalTournamentConfig};
 use crate::model::{
-    Activity, FairnessMode, Schedule, ScheduleAssignment, TournamentConfig, FieldKind,
+    Activity, FairnessMode, FieldKind, Schedule, ScheduleAssignment, TournamentConfig,
 };
-use rand::seq::SliceRandom;
 use rand::Rng;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
-use super::internal::{InternalTournamentConfig, InternalSchedule, InternalAssignment};
-use super::fast_evaluator::FastEvaluator;
-use super::conflicts::distinct_hard_conflicts;
-use super::cells::{CellGrid, FieldOccupancy};
-use super::SolverParams;
+use rand::seq::SliceRandom;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub fn solve_schedule(
     config: &TournamentConfig,
@@ -34,9 +34,10 @@ pub fn solve_schedule(
         .filter_map(|restart_idx| {
             // Check for cancellation
             if let Some(ref flag) = params.cancel_flag
-                && flag.load(Ordering::Relaxed) {
-                    return None;
-                }
+                && flag.load(Ordering::Relaxed)
+            {
+                return None;
+            }
 
             // Seed per restart so a `Some(seed)` run is fully reproducible while
             // each restart still explores a distinct random stream. With no seed,
@@ -46,7 +47,8 @@ pub fn solve_schedule(
                 Some(s) => StdRng::seed_from_u64(s.wrapping_add(restart_idx as u64)),
                 None => StdRng::from_entropy(),
             };
-            let mut current_schedule = construct_seed_schedule(&internal_config, params.fairness_mode, &mut rng);
+            let mut current_schedule =
+                construct_seed_schedule(&internal_config, params.fairness_mode, &mut rng);
             let mut evaluator = FastEvaluator::new(&internal_config, params);
             evaluator.inc_init(&current_schedule);
             let mut current_cost = evaluator.inc_total();
@@ -82,13 +84,25 @@ pub fn solve_schedule(
                     // scan that rebuilds shared state for `best_local_schedule`,
                     // which would corrupt `evaluator`'s incremental state for the
                     // (different) current schedule.
-                    let best_hard = distinct_hard_conflicts(&FastEvaluator::new(&internal_config, params).collect_conflicts(&best_local_schedule)).len() as f64;
-                    (progress_callback)(restart_idx, params.num_restarts, iter, params.max_iterations, best_hard, best_local_cost.1);
+                    let best_hard = distinct_hard_conflicts(
+                        &FastEvaluator::new(&internal_config, params)
+                            .collect_conflicts(&best_local_schedule),
+                    )
+                    .len() as f64;
+                    (progress_callback)(
+                        restart_idx,
+                        params.num_restarts,
+                        iter,
+                        params.max_iterations,
+                        best_hard,
+                        best_local_cost.1,
+                    );
 
                     if let Some(ref flag) = params.cancel_flag
-                        && flag.load(Ordering::Relaxed) {
-                            return None;
-                        }
+                        && flag.load(Ordering::Relaxed)
+                    {
+                        return None;
+                    }
                 }
 
                 if current_cost.0 == 0.0 && current_cost.1 == 0.0 {
@@ -135,7 +149,12 @@ pub fn solve_schedule(
                             .into_iter()
                             .map(|i| (i, current_schedule.assignments[i].clone()))
                             .collect();
-                        revert_mutation(&internal_config, &mut current_schedule, &mut occ, mutation);
+                        revert_mutation(
+                            &internal_config,
+                            &mut current_schedule,
+                            &mut occ,
+                            mutation,
+                        );
                         evaluator.apply_change(&current_schedule, &news);
                     }
                 }
@@ -144,8 +163,17 @@ pub fn solve_schedule(
             }
 
             restarts_completed.fetch_add(1, Ordering::Relaxed);
-            let best_hard = distinct_hard_conflicts(&evaluator.collect_conflicts(&best_local_schedule)).len() as f64;
-            (progress_callback)(restart_idx, params.num_restarts, params.max_iterations, params.max_iterations, best_hard, best_local_cost.1);
+            let best_hard =
+                distinct_hard_conflicts(&evaluator.collect_conflicts(&best_local_schedule)).len()
+                    as f64;
+            (progress_callback)(
+                restart_idx,
+                params.num_restarts,
+                params.max_iterations,
+                params.max_iterations,
+                best_hard,
+                best_local_cost.1,
+            );
 
             // Structural invariant (cell model): a feasible seed must yield an
             // overlap-free schedule — relocate/swap only ever target free cells,
@@ -156,7 +184,8 @@ pub fn solve_schedule(
             // output*.)
             debug_assert!(
                 !seed_overlap_free
-                    || !FieldOccupancy::from_schedule(&internal_config, &best_local_schedule).has_overlap(),
+                    || !FieldOccupancy::from_schedule(&internal_config, &best_local_schedule)
+                        .has_overlap(),
                 "cell-model invariant violated: feasible seed produced a field double-booking"
             );
 
@@ -171,7 +200,9 @@ pub fn solve_schedule(
             if (t1, a.0) <= (t2, b.0) { a } else { b }
         });
 
-    best_result.map(|(_, internal_schedule, _)| decompile_schedule(config, &internal_config, &activities, internal_schedule))
+    best_result.map(|(_, internal_schedule, _)| {
+        decompile_schedule(config, &internal_config, &activities, internal_schedule)
+    })
 }
 
 /// The original random constructor. Superseded as the live seed by
@@ -192,8 +223,8 @@ fn construct_initial_internal_schedule(
             let range = if activity.is_interview {
                 (0..config.slots.len())
                     .filter(|&i| {
-                        config.slots[i].kind == FieldKind::Interview && 
-                        config.day_interviews_enabled[config.slots[i].day_idx]
+                        config.slots[i].kind == FieldKind::Interview
+                            && config.day_interviews_enabled[config.slots[i].day_idx]
                     })
                     .collect::<Vec<_>>()
             } else {
@@ -213,10 +244,17 @@ fn construct_initial_internal_schedule(
         let suitable_fields: Vec<usize> = (0..config.fields.len())
             .filter(|&f_idx| {
                 let f = &config.fields[f_idx];
-                if f.kind == FieldKind::Competition && activity.is_interview { return false; }
-                if f.kind == FieldKind::Interview && !activity.is_interview { return false; }
+                if f.kind == FieldKind::Competition && activity.is_interview {
+                    return false;
+                }
+                if f.kind == FieldKind::Interview && !activity.is_interview {
+                    return false;
+                }
                 if let Some(ref allowed) = f.allowed_division_indices
-                    && !allowed.contains(&activity.division_idx) { return false; }
+                    && !allowed.contains(&activity.division_idx)
+                {
+                    return false;
+                }
                 true
             })
             .collect();
@@ -229,14 +267,18 @@ fn construct_initial_internal_schedule(
                 // Respect a field lock: a pinned volunteer is only eligible for an
                 // activity currently placed on one of their allowed fields.
                 if let Some(ref locked) = v.locked_field_indices
-                    && !field_idx.is_some_and(|f| locked.contains(&f)) {
+                    && !field_idx.is_some_and(|f| locked.contains(&f))
+                {
                     return false;
                 }
-                if activity.is_interview
-                    && config.can_interview[v_idx] { return true; }
+                if activity.is_interview && config.can_interview[v_idx] {
+                    return true;
+                }
 
                 if let Some(ref caps) = v.capability_indices {
-                    if caps.contains(&activity.division_idx) { return true; }
+                    if caps.contains(&activity.division_idx) {
+                        return true;
+                    }
                     return false;
                 }
 
@@ -245,12 +287,17 @@ fn construct_initial_internal_schedule(
             .collect();
 
         // Try to pick available volunteers for the selected slot
-        let available_qualified = qualified_volunteers.iter()
+        let available_qualified = qualified_volunteers
+            .iter()
             .filter(|&&v_idx| config.volunteers[v_idx].availability_slots[slot_idx])
             .copied()
             .collect::<Vec<_>>();
-        
-        let pool = if !available_qualified.is_empty() { &available_qualified } else { &qualified_volunteers };
+
+        let pool = if !available_qualified.is_empty() {
+            &available_qualified
+        } else {
+            &qualified_volunteers
+        };
 
         let req_volunteers = if activity.is_interview {
             config.divisions[activity.division_idx].interview_volunteers_required
@@ -375,8 +422,11 @@ fn construct_seed_schedule(
 
     // Position of each competition slot in the chronological list, for the
     // per-team "earliest next" cursor.
-    let comp_pos: BTreeMap<usize, usize> =
-        comp_slots.iter().enumerate().map(|(p, &s)| (s, p)).collect();
+    let comp_pos: BTreeMap<usize, usize> = comp_slots
+        .iter()
+        .enumerate()
+        .map(|(p, &s)| (s, p))
+        .collect();
 
     // Reserve a compact finals block at the very end of the event: one band per
     // stage level (GF and 3rd-place share the last band, then SF, then QF, then
@@ -393,7 +443,9 @@ fn construct_seed_schedule(
             _ => 0,
         }
     };
-    let finals_depth = config.activities.iter()
+    let finals_depth = config
+        .activities
+        .iter()
         .filter(|a| a.is_final && !a.is_interview)
         .map(|a| stage_offset(a.stage) + 1)
         .max()
@@ -410,9 +462,17 @@ fn construct_seed_schedule(
     // (e.g. one sharing only two fields with another) claims its cells before a
     // field-rich division floods them, so shared fields don't end up carrying two
     // divisions' worth of matches while dedicated fields sit lighter.
-    let comp_field_count = |div_idx: usize| comp_fields.iter()
-        .filter(|&&f| config.fields[f].allowed_division_indices.as_ref().map_or(true, |a| a.contains(&div_idx)))
-        .count();
+    let comp_field_count = |div_idx: usize| {
+        comp_fields
+            .iter()
+            .filter(|&&f| {
+                config.fields[f]
+                    .allowed_division_indices
+                    .as_ref()
+                    .map_or(true, |a| a.contains(&div_idx))
+            })
+            .count()
+    };
     let mut div_order: Vec<usize> = (0..config.divisions.len()).collect();
     div_order.sort_by_key(|&d| comp_field_count(d));
 
@@ -437,7 +497,8 @@ fn construct_seed_schedule(
         let mut cursor = 0usize;
         for (i, r) in rounds.iter().enumerate() {
             win_start[i] = cursor.min(nslots.saturating_sub(1));
-            let share = ((by_round[r].len() as f64 / total as f64) * nslots as f64).round() as usize;
+            let share =
+                ((by_round[r].len() as f64 / total as f64) * nslots as f64).round() as usize;
             cursor = (cursor + share.max(1)).min(nslots);
         }
 
@@ -467,8 +528,12 @@ fn construct_seed_schedule(
                 // Prefer this round's window in the pre-finals region; spill forward
                 // there; then anywhere free (incl. the finals tail) as a last resort.
                 let placed = find_free_cell(config, &grid, &occ, ai, rr_slots, from, &field_order)
-                    .or_else(|| find_free_cell(config, &grid, &occ, ai, rr_slots, min_pos, &field_order))
-                    .or_else(|| find_free_cell(config, &grid, &occ, ai, &comp_slots, 0, &field_order))
+                    .or_else(|| {
+                        find_free_cell(config, &grid, &occ, ai, rr_slots, min_pos, &field_order)
+                    })
+                    .or_else(|| {
+                        find_free_cell(config, &grid, &occ, ai, &comp_slots, 0, &field_order)
+                    })
                     .or_else(|| any_usable_cell(config, &grid, ai, &comp_slots, &field_order));
                 if let Some((slot, f)) = placed {
                     slot_of[ai] = slot;
@@ -497,9 +562,17 @@ fn construct_seed_schedule(
         // division grabs them. Without this, e.g. a 2-field division that shares
         // fields with a 6-field one gets scattered out of the finals block.
         let div_field_count: Vec<usize> = (0..config.divisions.len())
-            .map(|d| comp_fields.iter().filter(|&&f| {
-                config.fields[f].allowed_division_indices.as_ref().is_none_or(|a| a.contains(&d))
-            }).count())
+            .map(|d| {
+                comp_fields
+                    .iter()
+                    .filter(|&&f| {
+                        config.fields[f]
+                            .allowed_division_indices
+                            .as_ref()
+                            .is_none_or(|a| a.contains(&d))
+                    })
+                    .count()
+            })
             .collect();
         let mut finals: Vec<usize> = (0..n)
             .filter(|&i| config.activities[i].is_final && !config.activities[i].is_interview)
@@ -519,7 +592,9 @@ fn construct_seed_schedule(
             while p >= 0 {
                 let slot = comp_slots[p as usize];
                 for &f in &field_order {
-                    if grid.activity_can_use(config, ai, f, slot) && occ.is_free(config, f, slot, dc) {
+                    if grid.activity_can_use(config, ai, f, slot)
+                        && occ.is_free(config, f, slot, dc)
+                    {
                         placed = Some((slot, f));
                         break;
                     }
@@ -529,7 +604,8 @@ fn construct_seed_schedule(
                 }
                 p -= 1;
             }
-            let placed = placed.or_else(|| any_usable_cell(config, &grid, ai, &comp_slots, &field_order));
+            let placed =
+                placed.or_else(|| any_usable_cell(config, &grid, ai, &comp_slots, &field_order));
             if let Some((slot, f)) = placed {
                 slot_of[ai] = slot;
                 field_of[ai] = Some(f);
@@ -545,8 +621,9 @@ fn construct_seed_schedule(
     {
         let mut field_order = int_fields.clone();
         field_order.shuffle(rng);
-        let mut int_acts: Vec<usize> =
-            (0..n).filter(|&i| config.activities[i].is_interview).collect();
+        let mut int_acts: Vec<usize> = (0..n)
+            .filter(|&i| config.activities[i].is_interview)
+            .collect();
         int_acts.shuffle(rng);
         for ai in int_acts {
             let placed = find_free_cell(config, &grid, &occ, ai, &int_slots, 0, &field_order)
@@ -602,7 +679,11 @@ fn construct_seed_schedule(
             .copied()
             .filter(|&v| config.volunteers[v].availability_slots[slot])
             .collect();
-        let pool = if !avail.is_empty() { &avail } else { &qualified };
+        let pool = if !avail.is_empty() {
+            &avail
+        } else {
+            &qualified
+        };
         let picked =
             pick_volunteers_biased_internal(config, pool, req, &vol_counts, fairness_mode, rng);
         for &v in &picked {
@@ -651,10 +732,14 @@ fn pick_volunteers_biased_internal(
                     (v_idx, utilisation + jitter)
                 })
                 .collect();
-            
+
             if fairness_mode == FairnessMode::Strict {
                 indexed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-                indexed.into_iter().take(count).map(|(idx, _)| idx).collect()
+                indexed
+                    .into_iter()
+                    .take(count)
+                    .map(|(idx, _)| idx)
+                    .collect()
             } else {
                 // Balanced: weighted random
                 let mut result = Vec::new();
@@ -662,11 +747,20 @@ fn pick_volunteers_biased_internal(
                 let weights: Vec<f64> = indexed.iter().map(|(_, u)| 1.0 / (1.0 + u)).collect();
 
                 for _ in 0..count.min(candidates.len()) {
-                    let total: f64 = weights.iter().zip(used.iter()).filter(|&(_, &u)| !u).map(|(w, _)| w).sum();
-                    if total <= 0.0 { break; }
+                    let total: f64 = weights
+                        .iter()
+                        .zip(used.iter())
+                        .filter(|&(_, &u)| !u)
+                        .map(|(w, _)| w)
+                        .sum();
+                    if total <= 0.0 {
+                        break;
+                    }
                     let mut pick = rng.gen_range(0.0..total);
                     for (i, (&w, &u)) in weights.iter().zip(used.iter()).enumerate() {
-                        if u { continue; }
+                        if u {
+                            continue;
+                        }
                         pick -= w;
                         if pick <= 0.0 {
                             used[i] = true;
@@ -694,15 +788,33 @@ struct MoveCtx {
 
 impl MoveCtx {
     fn build(config: &InternalTournamentConfig) -> Self {
-        let comp_slots = (0..config.slots.len()).filter(|&s| config.slots[s].kind == FieldKind::Competition).collect();
-        let int_slots = (0..config.slots.len()).filter(|&s| config.slots[s].kind == FieldKind::Interview).collect();
-        let comp_fields = (0..config.fields.len()).filter(|&f| config.fields[f].kind == FieldKind::Competition).collect();
-        let int_fields = (0..config.fields.len()).filter(|&f| config.fields[f].kind == FieldKind::Interview).collect();
-        Self { grid: CellGrid::build(config), comp_slots, int_slots, comp_fields, int_fields }
+        let comp_slots = (0..config.slots.len())
+            .filter(|&s| config.slots[s].kind == FieldKind::Competition)
+            .collect();
+        let int_slots = (0..config.slots.len())
+            .filter(|&s| config.slots[s].kind == FieldKind::Interview)
+            .collect();
+        let comp_fields = (0..config.fields.len())
+            .filter(|&f| config.fields[f].kind == FieldKind::Competition)
+            .collect();
+        let int_fields = (0..config.fields.len())
+            .filter(|&f| config.fields[f].kind == FieldKind::Interview)
+            .collect();
+        Self {
+            grid: CellGrid::build(config),
+            comp_slots,
+            int_slots,
+            comp_fields,
+            int_fields,
+        }
     }
 
     fn slots_fields_for(&self, is_interview: bool) -> (&[usize], &[usize]) {
-        if is_interview { (&self.int_slots, &self.int_fields) } else { (&self.comp_slots, &self.comp_fields) }
+        if is_interview {
+            (&self.int_slots, &self.int_fields)
+        } else {
+            (&self.comp_slots, &self.comp_fields)
+        }
     }
 
     /// A free, usable cell for `activity_idx`: random sampling first, then a
@@ -720,10 +832,13 @@ impl MoveCtx {
     ) -> Option<(usize, usize)> {
         let act = &config.activities[activity_idx];
         let (slots, fields) = self.slots_fields_for(act.is_interview);
-        if slots.is_empty() || fields.is_empty() { return None; }
+        if slots.is_empty() || fields.is_empty() {
+            return None;
+        }
         let dc = act.duration_class;
         let usable_free = |slot: usize, field: usize| {
-            self.grid.activity_can_use(config, activity_idx, field, slot)
+            self.grid
+                .activity_can_use(config, activity_idx, field, slot)
                 && occ.is_free(config, field, slot, dc)
         };
         // Pick a random time, then the least-loaded eligible field free at that
@@ -735,21 +850,27 @@ impl MoveCtx {
             let mut best: Option<usize> = None;
             let mut best_load = u32::MAX;
             for &field in fields {
-                if !usable_free(slot, field) { continue; }
+                if !usable_free(slot, field) {
+                    continue;
+                }
                 let load = field_load.get(field).copied().unwrap_or(0);
                 if load < best_load || (load == best_load && rng.gen_bool(0.5)) {
                     best_load = load;
                     best = Some(field);
                 }
             }
-            if let Some(field) = best { return Some((slot, field)); }
+            if let Some(field) = best {
+                return Some((slot, field));
+            }
         }
         let n = slots.len();
         let off = rng.gen_range(0..n);
         for k in 0..n {
             let slot = slots[(off + k) % n];
             for &field in fields {
-                if usable_free(slot, field) { return Some((slot, field)); }
+                if usable_free(slot, field) {
+                    return Some((slot, field));
+                }
             }
         }
         None
@@ -762,11 +883,22 @@ impl MoveCtx {
 /// whose old cell equals the current one (a no-op for both the evaluator and the
 /// occupancy revert).
 pub enum Mutation {
-    Relocate { idx: usize, old_slot: usize, old_field: Option<usize> },
-    Volunteers { idx: usize, old_vols: Vec<usize> },
+    Relocate {
+        idx: usize,
+        old_slot: usize,
+        old_field: Option<usize>,
+    },
+    Volunteers {
+        idx: usize,
+        old_vols: Vec<usize>,
+    },
     Swap {
-        idx1: usize, old_s1: usize, old_f1: Option<usize>,
-        idx2: usize, old_s2: usize, old_f2: Option<usize>
+        idx1: usize,
+        old_s1: usize,
+        old_f1: Option<usize>,
+        idx2: usize,
+        old_s2: usize,
+        old_f2: Option<usize>,
     },
 }
 
@@ -785,7 +917,11 @@ impl Mutation {
     /// `(idx, prior_assignment)` pairs ready for [`FastEvaluator::apply_change`].
     fn old_assignments(&self, schedule: &InternalSchedule) -> Vec<(usize, InternalAssignment)> {
         match self {
-            Mutation::Relocate { idx, old_slot, old_field } => {
+            Mutation::Relocate {
+                idx,
+                old_slot,
+                old_field,
+            } => {
                 let mut a = schedule.assignments[*idx].clone();
                 a.slot_idx = *old_slot;
                 a.field_idx = *old_field;
@@ -796,11 +932,20 @@ impl Mutation {
                 a.volunteer_indices = old_vols.clone();
                 vec![(*idx, a)]
             }
-            Mutation::Swap { idx1, old_s1, old_f1, idx2, old_s2, old_f2 } => {
+            Mutation::Swap {
+                idx1,
+                old_s1,
+                old_f1,
+                idx2,
+                old_s2,
+                old_f2,
+            } => {
                 let mut a1 = schedule.assignments[*idx1].clone();
-                a1.slot_idx = *old_s1; a1.field_idx = *old_f1;
+                a1.slot_idx = *old_s1;
+                a1.field_idx = *old_f1;
                 let mut a2 = schedule.assignments[*idx2].clone();
-                a2.slot_idx = *old_s2; a2.field_idx = *old_f2;
+                a2.slot_idx = *old_s2;
+                a2.field_idx = *old_f2;
                 vec![(*idx1, a1), (*idx2, a2)]
             }
         }
@@ -852,19 +997,31 @@ fn mutate_internal_schedule_in_place(
             let old_slot = schedule.assignments[idx].slot_idx;
             let old_field = schedule.assignments[idx].field_idx;
             let dc = config.activities[idx].duration_class;
-            if let Some(f) = old_field { occ.remove(config, f, old_slot, dc); }
+            if let Some(f) = old_field {
+                occ.remove(config, f, old_slot, dc);
+            }
 
             match ctx.random_free_cell(config, occ, idx, evaluator.field_total_loads(), rng) {
                 Some((slot, field)) => {
                     schedule.assignments[idx].slot_idx = slot;
                     schedule.assignments[idx].field_idx = Some(field);
                     occ.place(config, field, slot, dc);
-                    Mutation::Relocate { idx, old_slot, old_field }
+                    Mutation::Relocate {
+                        idx,
+                        old_slot,
+                        old_field,
+                    }
                 }
                 None => {
                     // Boxed in: restore and do nothing.
-                    if let Some(f) = old_field { occ.place(config, f, old_slot, dc); }
-                    Mutation::Relocate { idx, old_slot, old_field }
+                    if let Some(f) = old_field {
+                        occ.place(config, f, old_slot, dc);
+                    }
+                    Mutation::Relocate {
+                        idx,
+                        old_slot,
+                        old_field,
+                    }
                 }
             }
         }
@@ -883,10 +1040,13 @@ fn mutate_internal_schedule_in_place(
                     .filter(|&v_idx| {
                         let v = &config.volunteers[v_idx];
                         if let Some(ref locked) = v.locked_field_indices
-                            && !field_idx.is_some_and(|f| locked.contains(&f)) {
+                            && !field_idx.is_some_and(|f| locked.contains(&f))
+                        {
                             return false;
                         }
-                        if activity.is_interview && config.can_interview[v_idx] { return true; }
+                        if activity.is_interview && config.can_interview[v_idx] {
+                            return true;
+                        }
                         if let Some(ref caps) = v.capability_indices {
                             return caps.contains(&activity.division_idx);
                         }
@@ -897,17 +1057,31 @@ fn mutate_internal_schedule_in_place(
                 if !qualified.is_empty() {
                     let mut vol_counts = vec![0usize; config.volunteers.len()];
                     for (i, a) in schedule.assignments.iter().enumerate() {
-                        if i == idx { continue; }
-                        for &v_idx in &a.volunteer_indices { vol_counts[v_idx] += 1; }
+                        if i == idx {
+                            continue;
+                        }
+                        for &v_idx in &a.volunteer_indices {
+                            vol_counts[v_idx] += 1;
+                        }
                     }
                     let slot_idx = schedule.assignments[idx].slot_idx;
-                    let available: Vec<usize> = qualified.iter()
+                    let available: Vec<usize> = qualified
+                        .iter()
                         .filter(|&&v_idx| config.volunteers[v_idx].availability_slots[slot_idx])
                         .copied()
                         .collect();
-                    let pool = if !available.is_empty() { &available } else { &qualified };
+                    let pool = if !available.is_empty() {
+                        &available
+                    } else {
+                        &qualified
+                    };
                     schedule.assignments[idx].volunteer_indices = pick_volunteers_biased_internal(
-                        config, pool, req, &vol_counts, params.fairness_mode, rng,
+                        config,
+                        pool,
+                        req,
+                        &vol_counts,
+                        params.fairness_mode,
+                        rng,
                     );
                 }
             }
@@ -919,7 +1093,9 @@ fn mutate_internal_schedule_in_place(
             // placements might collide, so we remove both and re-check each cell is
             // free (sequentially, to catch same-field swaps) before committing.
             let idx2 = pick_biased_index(schedule, evaluator, rng, 0.5);
-            if idx == idx2 { return noop(schedule); }
+            if idx == idx2 {
+                return noop(schedule);
+            }
 
             let s1 = schedule.assignments[idx].slot_idx;
             let f1 = schedule.assignments[idx].field_idx;
@@ -928,10 +1104,13 @@ fn mutate_internal_schedule_in_place(
             let dc1 = config.activities[idx].duration_class;
             let dc2 = config.activities[idx2].duration_class;
 
-            let (Some(f1u), Some(f2u)) = (f1, f2) else { return noop(schedule); };
+            let (Some(f1u), Some(f2u)) = (f1, f2) else {
+                return noop(schedule);
+            };
             // Each activity must be allowed on the other's cell (kind/division/day).
             if !ctx.grid.activity_can_use(config, idx, f2u, s2)
-                || !ctx.grid.activity_can_use(config, idx2, f1u, s1) {
+                || !ctx.grid.activity_can_use(config, idx2, f1u, s1)
+            {
                 return noop(schedule);
             }
 
@@ -946,7 +1125,14 @@ fn mutate_internal_schedule_in_place(
                     schedule.assignments[idx].field_idx = f2;
                     schedule.assignments[idx2].slot_idx = s1;
                     schedule.assignments[idx2].field_idx = f1;
-                    return Mutation::Swap { idx1: idx, old_s1: s1, old_f1: f1, idx2, old_s2: s2, old_f2: f2 };
+                    return Mutation::Swap {
+                        idx1: idx,
+                        old_s1: s1,
+                        old_f1: f1,
+                        idx2,
+                        old_s2: s2,
+                        old_f2: f2,
+                    };
                 }
                 occ.remove(config, f2u, s2, dc1); // undo tentative place
             }
@@ -966,34 +1152,65 @@ fn revert_mutation(
     mutation: Mutation,
 ) {
     match mutation {
-        Mutation::Relocate { idx, old_slot, old_field } => {
+        Mutation::Relocate {
+            idx,
+            old_slot,
+            old_field,
+        } => {
             let cur_slot = schedule.assignments[idx].slot_idx;
             let cur_field = schedule.assignments[idx].field_idx;
-            if cur_slot == old_slot && cur_field == old_field { return; }
+            if cur_slot == old_slot && cur_field == old_field {
+                return;
+            }
             let dc = config.activities[idx].duration_class;
-            if let Some(f) = cur_field { occ.remove(config, f, cur_slot, dc); }
+            if let Some(f) = cur_field {
+                occ.remove(config, f, cur_slot, dc);
+            }
             schedule.assignments[idx].slot_idx = old_slot;
             schedule.assignments[idx].field_idx = old_field;
-            if let Some(f) = old_field { occ.place(config, f, old_slot, dc); }
+            if let Some(f) = old_field {
+                occ.place(config, f, old_slot, dc);
+            }
         }
         Mutation::Volunteers { idx, old_vols } => {
             schedule.assignments[idx].volunteer_indices = old_vols;
         }
-        Mutation::Swap { idx1, old_s1, old_f1, idx2, old_s2, old_f2 } => {
+        Mutation::Swap {
+            idx1,
+            old_s1,
+            old_f1,
+            idx2,
+            old_s2,
+            old_f2,
+        } => {
             let dc1 = config.activities[idx1].duration_class;
             let dc2 = config.activities[idx2].duration_class;
             // Remove both current placements before restoring, so a same-field
             // swap doesn't transiently double-count a bucket.
-            let (c1s, c1f) = (schedule.assignments[idx1].slot_idx, schedule.assignments[idx1].field_idx);
-            let (c2s, c2f) = (schedule.assignments[idx2].slot_idx, schedule.assignments[idx2].field_idx);
-            if let Some(f) = c1f { occ.remove(config, f, c1s, dc1); }
-            if let Some(f) = c2f { occ.remove(config, f, c2s, dc2); }
+            let (c1s, c1f) = (
+                schedule.assignments[idx1].slot_idx,
+                schedule.assignments[idx1].field_idx,
+            );
+            let (c2s, c2f) = (
+                schedule.assignments[idx2].slot_idx,
+                schedule.assignments[idx2].field_idx,
+            );
+            if let Some(f) = c1f {
+                occ.remove(config, f, c1s, dc1);
+            }
+            if let Some(f) = c2f {
+                occ.remove(config, f, c2s, dc2);
+            }
             schedule.assignments[idx1].slot_idx = old_s1;
             schedule.assignments[idx1].field_idx = old_f1;
             schedule.assignments[idx2].slot_idx = old_s2;
             schedule.assignments[idx2].field_idx = old_f2;
-            if let Some(f) = old_f1 { occ.place(config, f, old_s1, dc1); }
-            if let Some(f) = old_f2 { occ.place(config, f, old_s2, dc2); }
+            if let Some(f) = old_f1 {
+                occ.place(config, f, old_s1, dc1);
+            }
+            if let Some(f) = old_f2 {
+                occ.place(config, f, old_s2, dc2);
+            }
         }
     }
 }
@@ -1004,14 +1221,21 @@ fn decompile_schedule(
     activities: &[Activity],
     internal: InternalSchedule,
 ) -> Schedule {
-    let assignments = internal.assignments.into_iter().enumerate().map(|(i, a)| {
-        ScheduleAssignment {
+    let assignments = internal
+        .assignments
+        .into_iter()
+        .enumerate()
+        .map(|(i, a)| ScheduleAssignment {
             activity: activities[i].clone(),
             time_slot_id: internal_config.slots[a.slot_idx].id.clone(),
             field_id: a.field_idx.map(|f_idx| config.fields[f_idx].id.clone()),
-            volunteer_ids: a.volunteer_indices.iter().map(|&v_idx| config.volunteers[v_idx].id.clone()).collect(),
-        }
-    }).collect();
+            volunteer_ids: a
+                .volunteer_indices
+                .iter()
+                .map(|&v_idx| config.volunteers[v_idx].id.clone())
+                .collect(),
+        })
+        .collect();
     Schedule { assignments }
 }
 
@@ -1036,20 +1260,50 @@ mod tests {
     fn small_config() -> TournamentConfig {
         let mut config = TournamentConfig::default();
         config.divisions.push(Division {
-            id: "d1".into(), name: "Div 1".into(), mode: SchedulingMode::HeadToHead,
-            games_per_team: 2, volunteers_required: 0, duration_minutes: 20,
-            allowed_fields: None, interviews_enabled: false, interview_volunteers_required: 0,
-            interview_duration_minutes: 0, finals_enabled: false, finals_rounds: None,
-            finals_duration_minutes: None, finals_third_place_playoff: false, color: None, min_match_break_minutes: None,
+            id: "d1".into(),
+            name: "Div 1".into(),
+            mode: SchedulingMode::HeadToHead,
+            games_per_team: 2,
+            volunteers_required: 0,
+            duration_minutes: 20,
+            allowed_fields: None,
+            interviews_enabled: false,
+            interview_volunteers_required: 0,
+            interview_duration_minutes: 0,
+            finals_enabled: false,
+            finals_rounds: None,
+            finals_duration_minutes: None,
+            finals_third_place_playoff: false,
+            color: None,
+            min_match_break_minutes: None,
         });
         for t in ["A", "B", "C", "D"] {
-            config.teams.push(Team { name: t.into(), division_id: "d1".into(), organization: t.into() });
+            config.teams.push(Team {
+                name: t.into(),
+                division_id: "d1".into(),
+                organization: t.into(),
+            });
         }
-        config.fields.push(Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: None });
-        config.fields.push(Field { id: "f2".into(), name: "Field 2".into(), kind: FieldKind::Competition, allowed_divisions: None });
+        config.fields.push(Field {
+            id: "f1".into(),
+            name: "Field 1".into(),
+            kind: FieldKind::Competition,
+            allowed_divisions: None,
+        });
+        config.fields.push(Field {
+            id: "f2".into(),
+            name: "Field 2".into(),
+            kind: FieldKind::Competition,
+            allowed_divisions: None,
+        });
         // 10 competition slots, 09:00 .. in 20-minute steps.
-        config.time_slots = (0..10).map(|i| slot(&format!("s{i}"), 9 * 60 + i * 20)).collect();
-        config.day_configs.push(DayGenConfig { day: "Saturday".into(), ..Default::default() });
+        config.time_slots = (0..10)
+            .map(|i| slot(&format!("s{i}"), 9 * 60 + i * 20))
+            .collect();
+        config.day_configs.push(DayGenConfig {
+            day: "Saturday".into(),
+            ..Default::default()
+        });
         config
     }
 
@@ -1059,7 +1313,11 @@ mod tests {
         let activities = super::super::generate_activities(&config);
         assert!(!activities.is_empty());
 
-        let params = SolverParams { max_iterations: 30_000, num_restarts: 3, ..SolverParams::default() };
+        let params = SolverParams {
+            max_iterations: 30_000,
+            num_restarts: 3,
+            ..SolverParams::default()
+        };
         let schedule = solve_schedule(&config, &params, |_, _, _, _, _, _| {})
             .expect("solver returned a schedule");
 
@@ -1109,9 +1367,27 @@ mod tests {
         // only that the seeding path is wired through, exercised alongside the
         // reproducibility guarantee above.)
         let config = small_config();
-        let base = SolverParams { max_iterations: 2_000, num_restarts: 2, ..SolverParams::default() };
-        let s1 = solve_schedule(&config, &SolverParams { seed: Some(1), ..base.clone() }, |_, _, _, _, _, _| {});
-        let s2 = solve_schedule(&config, &SolverParams { seed: Some(2), ..base }, |_, _, _, _, _, _| {});
+        let base = SolverParams {
+            max_iterations: 2_000,
+            num_restarts: 2,
+            ..SolverParams::default()
+        };
+        let s1 = solve_schedule(
+            &config,
+            &SolverParams {
+                seed: Some(1),
+                ..base.clone()
+            },
+            |_, _, _, _, _, _| {},
+        );
+        let s2 = solve_schedule(
+            &config,
+            &SolverParams {
+                seed: Some(2),
+                ..base
+            },
+            |_, _, _, _, _, _| {},
+        );
         assert!(s1.is_some() && s2.is_some());
     }
 
@@ -1123,45 +1399,120 @@ mod tests {
         use crate::model::{SpecialistMode, Volunteer};
         let mut config = TournamentConfig::default();
         let div = |id: &str, mode, games, interviews| Division {
-            id: id.into(), name: id.into(), mode,
-            games_per_team: games, volunteers_required: 1, duration_minutes: 20,
-            allowed_fields: None, interviews_enabled: interviews,
-            interview_volunteers_required: 1, interview_duration_minutes: 10,
-            finals_enabled: false, finals_rounds: None, finals_duration_minutes: None,
-            finals_third_place_playoff: false, color: None, min_match_break_minutes: None,
+            id: id.into(),
+            name: id.into(),
+            mode,
+            games_per_team: games,
+            volunteers_required: 1,
+            duration_minutes: 20,
+            allowed_fields: None,
+            interviews_enabled: interviews,
+            interview_volunteers_required: 1,
+            interview_duration_minutes: 10,
+            finals_enabled: false,
+            finals_rounds: None,
+            finals_duration_minutes: None,
+            finals_third_place_playoff: false,
+            color: None,
+            min_match_break_minutes: None,
         };
         config.divisions = vec![
             div("d1", SchedulingMode::HeadToHead, 3, true),
             div("d2", SchedulingMode::HeadToHead, 2, false),
             div("d3", SchedulingMode::IndividualRun, 2, false),
         ];
-        for (d, names) in [("d1", &["A", "B", "C", "D"][..]), ("d2", &["E", "F", "G", "H"][..]), ("d3", &["I", "J", "K", "L"][..])] {
+        for (d, names) in [
+            ("d1", &["A", "B", "C", "D"][..]),
+            ("d2", &["E", "F", "G", "H"][..]),
+            ("d3", &["I", "J", "K", "L"][..]),
+        ] {
             for t in names {
-                config.teams.push(Team { name: (*t).into(), division_id: d.into(), organization: format!("org{t}") });
+                config.teams.push(Team {
+                    name: (*t).into(),
+                    division_id: d.into(),
+                    organization: format!("org{t}"),
+                });
             }
         }
         config.fields = vec![
-            Field { id: "c1".into(), name: "Court 1".into(), kind: FieldKind::Competition, allowed_divisions: None },
-            Field { id: "c2".into(), name: "Court 2".into(), kind: FieldKind::Competition, allowed_divisions: Some(vec!["d1".into()]) },
-            Field { id: "c3".into(), name: "Court 3".into(), kind: FieldKind::Competition, allowed_divisions: None },
-            Field { id: "iv".into(), name: "Interview".into(), kind: FieldKind::Interview, allowed_divisions: None },
+            Field {
+                id: "c1".into(),
+                name: "Court 1".into(),
+                kind: FieldKind::Competition,
+                allowed_divisions: None,
+            },
+            Field {
+                id: "c2".into(),
+                name: "Court 2".into(),
+                kind: FieldKind::Competition,
+                allowed_divisions: Some(vec!["d1".into()]),
+            },
+            Field {
+                id: "c3".into(),
+                name: "Court 3".into(),
+                kind: FieldKind::Competition,
+                allowed_divisions: None,
+            },
+            Field {
+                id: "iv".into(),
+                name: "Interview".into(),
+                kind: FieldKind::Interview,
+                allowed_divisions: None,
+            },
         ];
         let fmt = |m: u32| format!("{:02}:{:02}", m / 60, m % 60);
         let mut slots = Vec::new();
         for (di, day) in ["Saturday", "Sunday"].iter().enumerate() {
             for i in 0..10u32 {
                 let start = 9 * 60 + i * 20;
-                let kind = if i % 5 == 4 { FieldKind::Interview } else { FieldKind::Competition };
-                slots.push(TimeSlot { id: format!("{day}_s{i}"), day: (*day).into(), start_time: fmt(start), end_time: fmt(start + 20), kind });
+                let kind = if i % 5 == 4 {
+                    FieldKind::Interview
+                } else {
+                    FieldKind::Competition
+                };
+                slots.push(TimeSlot {
+                    id: format!("{day}_s{i}"),
+                    day: (*day).into(),
+                    start_time: fmt(start),
+                    end_time: fmt(start + 20),
+                    kind,
+                });
             }
-            config.day_configs.push(DayGenConfig { day: (*day).into(), ..Default::default() });
+            config.day_configs.push(DayGenConfig {
+                day: (*day).into(),
+                ..Default::default()
+            });
             let _ = di;
         }
         config.time_slots = slots;
         config.volunteers = vec![
-            Volunteer { id: "v1".into(), name: "V1".into(), availabilities: vec![], capabilities: None, conflict_organizations: vec![], attendance_status: Default::default(), locked_field_ids: Some(vec!["c1".into()]) },
-            Volunteer { id: "v2".into(), name: "V2".into(), availabilities: vec!["Saturday_s0".into(), "Saturday_s1".into()], capabilities: Some(vec!["d1".into()]), conflict_organizations: vec!["orgA".into()], attendance_status: Default::default(), locked_field_ids: None },
-            Volunteer { id: "v3".into(), name: "V3".into(), availabilities: vec![], capabilities: Some(vec!["d2".into(), "d3".into()]), conflict_organizations: vec!["orgE".into()], attendance_status: Default::default(), locked_field_ids: None },
+            Volunteer {
+                id: "v1".into(),
+                name: "V1".into(),
+                availabilities: vec![],
+                capabilities: None,
+                conflict_organizations: vec![],
+                attendance_status: Default::default(),
+                locked_field_ids: Some(vec!["c1".into()]),
+            },
+            Volunteer {
+                id: "v2".into(),
+                name: "V2".into(),
+                availabilities: vec!["Saturday_s0".into(), "Saturday_s1".into()],
+                capabilities: Some(vec!["d1".into()]),
+                conflict_organizations: vec!["orgA".into()],
+                attendance_status: Default::default(),
+                locked_field_ids: None,
+            },
+            Volunteer {
+                id: "v3".into(),
+                name: "V3".into(),
+                availabilities: vec![],
+                capabilities: Some(vec!["d2".into(), "d3".into()]),
+                conflict_organizations: vec!["orgE".into()],
+                attendance_status: Default::default(),
+                locked_field_ids: None,
+            },
         ];
         let _ = SpecialistMode::Strict;
         config
@@ -1175,9 +1526,9 @@ mod tests {
     /// guardrail behind the whole delta-evaluation path.
     #[test]
     fn incremental_matches_full_recompute() {
-        use rand::{SeedableRng, rngs::StdRng, Rng};
-        use crate::model::SpecialistMode;
         use super::super::fast_evaluator::FastEvaluator;
+        use crate::model::SpecialistMode;
+        use rand::{Rng, SeedableRng, rngs::StdRng};
 
         let config = guardrail_config();
         let activities = super::super::generate_activities(&config);
@@ -1201,7 +1552,8 @@ mod tests {
         let mut ev = FastEvaluator::new(&ic, &params);
         ev.inc_init(&schedule);
 
-        let close = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6;
+        let close =
+            |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6;
         let full = |sched: &InternalSchedule| {
             let mut e = FastEvaluator::new(&ic, &params);
             e.calculate_total_cost(sched)
@@ -1210,13 +1562,27 @@ mod tests {
         for step in 0..5000 {
             let inc = ev.inc_total();
             let f = full(&schedule);
-            assert!(close(inc, f), "step {step} pre-mutate: inc {inc:?} != full {f:?}");
+            assert!(
+                close(inc, f),
+                "step {step} pre-mutate: inc {inc:?} != full {f:?}"
+            );
 
-            let mutation = mutate_internal_schedule_in_place(&ic, &ctx, &mut schedule, &mut occ, &mut ev, &params, &mut rng);
+            let mutation = mutate_internal_schedule_in_place(
+                &ic,
+                &ctx,
+                &mut schedule,
+                &mut occ,
+                &mut ev,
+                &params,
+                &mut rng,
+            );
             let olds = mutation.old_assignments(&schedule);
             let inc_after = ev.apply_change(&schedule, &olds);
             let f_after = full(&schedule);
-            assert!(close(inc_after, f_after), "step {step} post-apply: inc {inc_after:?} != full {f_after:?}");
+            assert!(
+                close(inc_after, f_after),
+                "step {step} post-apply: inc {inc_after:?} != full {f_after:?}"
+            );
 
             if rng.gen_bool(0.5) {
                 let news: Vec<(usize, InternalAssignment)> = mutation
@@ -1227,7 +1593,10 @@ mod tests {
                 revert_mutation(&ic, &mut schedule, &mut occ, mutation);
                 let inc_rev = ev.apply_change(&schedule, &news);
                 let f_rev = full(&schedule);
-                assert!(close(inc_rev, f_rev), "step {step} post-revert: inc {inc_rev:?} != full {f_rev:?}");
+                assert!(
+                    close(inc_rev, f_rev),
+                    "step {step} post-revert: inc {inc_rev:?} != full {f_rev:?}"
+                );
             }
         }
     }
@@ -1238,33 +1607,51 @@ mod tests {
     /// invariants the move set must then preserve.
     #[test]
     fn seed_is_conflict_free_by_construction() {
-        use super::super::fast_evaluator::FastEvaluator;
-        use super::super::conflicts::ConflictKind;
         use super::super::cells::FieldOccupancy;
+        use super::super::conflicts::ConflictKind;
+        use super::super::fast_evaluator::FastEvaluator;
         use rand::{SeedableRng, rngs::StdRng};
 
         let config = guardrail_config();
         let activities = super::super::generate_activities(&config);
         let ic = super::super::internal::InternalTournamentConfig::compile(&config, &activities);
-        let params = SolverParams { team_match_min_break_minutes: 20, ..SolverParams::default() };
+        let params = SolverParams {
+            team_match_min_break_minutes: 20,
+            ..SolverParams::default()
+        };
 
         let mut rng = StdRng::seed_from_u64(0x5EED5);
         let seed = construct_seed_schedule(&ic, params.fairness_mode, &mut rng);
 
         // Every activity placed exactly once, each on some field.
         assert_eq!(seed.assignments.len(), activities.len());
-        assert!(seed.assignments.iter().all(|a| a.field_idx.is_some()), "every activity gets a field");
+        assert!(
+            seed.assignments.iter().all(|a| a.field_idx.is_some()),
+            "every activity gets a field"
+        );
 
         // Field occupancy gate => no field double-booking.
-        assert!(!FieldOccupancy::from_schedule(&ic, &seed).has_overlap(), "seed must have no field overlap");
+        assert!(
+            !FieldOccupancy::from_schedule(&ic, &seed).has_overlap(),
+            "seed must have no field overlap"
+        );
 
         // No FieldDoubleBooked / TeamRoundOrder in the evaluator either.
         let mut ev = FastEvaluator::new(&ic, &params);
         let conflicts = ev.collect_conflicts(&seed);
-        let field_db = conflicts.iter().filter(|c| matches!(c.kind, ConflictKind::FieldDoubleBooked { .. })).count();
-        let round_order = conflicts.iter().filter(|c| matches!(c.kind, ConflictKind::TeamRoundOrder { .. })).count();
+        let field_db = conflicts
+            .iter()
+            .filter(|c| matches!(c.kind, ConflictKind::FieldDoubleBooked { .. }))
+            .count();
+        let round_order = conflicts
+            .iter()
+            .filter(|c| matches!(c.kind, ConflictKind::TeamRoundOrder { .. }))
+            .count();
         assert_eq!(field_db, 0, "seed must have zero field double-bookings");
-        assert_eq!(round_order, 0, "seed must have zero per-team round-order violations");
+        assert_eq!(
+            round_order, 0,
+            "seed must have zero per-team round-order violations"
+        );
     }
 
     /// The structural guarantee of the cell model: starting from the clean seed,
@@ -1273,14 +1660,17 @@ mod tests {
     /// across apply and revert).
     #[test]
     fn moves_never_create_field_overlap() {
-        use super::super::fast_evaluator::FastEvaluator;
         use super::super::cells::FieldOccupancy;
-        use rand::{SeedableRng, rngs::StdRng, Rng};
+        use super::super::fast_evaluator::FastEvaluator;
+        use rand::{Rng, SeedableRng, rngs::StdRng};
 
         let config = guardrail_config();
         let activities = super::super::generate_activities(&config);
         let ic = super::super::internal::InternalTournamentConfig::compile(&config, &activities);
-        let params = SolverParams { team_match_min_break_minutes: 20, ..SolverParams::default() };
+        let params = SolverParams {
+            team_match_min_break_minutes: 20,
+            ..SolverParams::default()
+        };
 
         let mut rng = StdRng::seed_from_u64(0xA11CE);
         let mut schedule = construct_seed_schedule(&ic, params.fairness_mode, &mut rng);
@@ -1291,7 +1681,15 @@ mod tests {
         assert!(!occ.has_overlap(), "seed must start overlap-free");
 
         for step in 0..3000 {
-            let mutation = mutate_internal_schedule_in_place(&ic, &ctx, &mut schedule, &mut occ, &mut ev, &params, &mut rng);
+            let mutation = mutate_internal_schedule_in_place(
+                &ic,
+                &ctx,
+                &mut schedule,
+                &mut occ,
+                &mut ev,
+                &params,
+                &mut rng,
+            );
             let olds = mutation.old_assignments(&schedule);
             ev.apply_change(&schedule, &olds);
 
@@ -1307,7 +1705,10 @@ mod tests {
                 ev.apply_change(&schedule, &news);
             }
 
-            assert!(!occ.has_overlap(), "step {step}: a move created a field double-booking");
+            assert!(
+                !occ.has_overlap(),
+                "step {step}: a move created a field double-booking"
+            );
             assert!(
                 occ.same_as(&FieldOccupancy::from_schedule(&ic, &schedule)),
                 "step {step}: live occupancy drifted from the schedule"
@@ -1319,7 +1720,8 @@ mod tests {
     fn empty_config_yields_empty_schedule() {
         let config = TournamentConfig::default();
         let params = SolverParams::default();
-        let schedule = solve_schedule(&config, &params, |_, _, _, _, _, _| {}).expect("some schedule");
+        let schedule =
+            solve_schedule(&config, &params, |_, _, _, _, _, _| {}).expect("some schedule");
         assert!(schedule.assignments.is_empty());
     }
 }

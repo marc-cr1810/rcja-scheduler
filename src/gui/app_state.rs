@@ -1,13 +1,13 @@
+use super::{ScheduleViewTab, SolverMessage, Tab};
 use crate::model::{
     Division, Field, FieldKind, Schedule, SchedulingMode, Team, TimeSlot, TournamentConfig,
     Volunteer,
 };
-use crate::validator::{validate_config, validate_schedule, DiagnosticMessage};
 use crate::scheduler::AssignmentConflict;
-use super::{Tab, ScheduleViewTab, SolverMessage};
-use std::collections::{HashMap, HashSet};
-use rand::Rng;
+use crate::validator::{DiagnosticMessage, validate_config, validate_schedule};
 use eframe::egui;
+use rand::Rng;
+use std::collections::{HashMap, HashSet};
 
 pub struct CsvImportData {
     pub raw_content: String,
@@ -75,7 +75,7 @@ pub struct AppState {
     pub active_tab: Tab,
     pub diagnostics: Vec<DiagnosticMessage>,
     pub solver_rx: Option<std::sync::mpsc::Receiver<SolverMessage>>,
-    
+
     // CSV Import state
     pub csv_import: Option<CsvImportData>,
 
@@ -150,7 +150,7 @@ pub struct AppState {
     pub solver_current_restart_idx: usize,
     pub solver_restarts_progress: Vec<usize>,
     pub solver_cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    
+
     pub status_message: String,
     pub active_vol_day: String,
     /// Open availability range editor, if any (volunteer + working range list).
@@ -295,7 +295,12 @@ impl Default for AppState {
             export_options: ExportOptions::default(),
             timeline_zoom: 3.5,
             timeline_filter_divisions: HashSet::new(),
-            timeline_filter_field_kinds: [crate::model::FieldKind::Competition, crate::model::FieldKind::Interview].into_iter().collect(),
+            timeline_filter_field_kinds: [
+                crate::model::FieldKind::Competition,
+                crate::model::FieldKind::Interview,
+            ]
+            .into_iter()
+            .collect(),
 
             vol_roster_search: String::new(),
             vol_roster_sort_by: VolRosterSort::Name,
@@ -325,7 +330,7 @@ impl AppState {
             let params = self.get_solver_params();
             diagnostics.extend(validate_schedule(&self.config, sched, &params));
         }
-        
+
         // Re-sort: Error > Warning > Info
         diagnostics.sort_by_key(|d| match d.severity {
             crate::validator::DiagnosticSeverity::Error => 0,
@@ -339,27 +344,29 @@ impl AppState {
     pub fn re_evaluate_schedule(&mut self) {
         if let Some(ref sched) = self.schedule {
             let params = self.get_solver_params();
-            let (_hard, soft) = crate::scheduler::evaluate_schedule_cost(&self.config, sched, &params);
+            let (_hard, soft) =
+                crate::scheduler::evaluate_schedule_cost(&self.config, sched, &params);
             let conflicts = crate::scheduler::get_schedule_conflicts(&self.config, sched, &params);
-            let assignment_conflicts = crate::scheduler::get_assignment_conflicts(&self.config, sched, &params);
+            let assignment_conflicts =
+                crate::scheduler::get_assignment_conflicts(&self.config, sched, &params);
             let division_rounds = crate::scheduler::get_division_rounds(&self.config, sched);
             let conflicts_count = conflicts.len();
-            
+
             self.assignment_conflicts = assignment_conflicts;
             self.schedule_conflicts = conflicts;
             self.division_rounds = division_rounds;
-            
+
             self.solve_status = if conflicts_count == 0 {
                 "Solved (No Conflicts)".to_string()
             } else {
                 format!("Solved ({} Conflicts remaining)", conflicts_count)
             };
-            
+
             self.solve_message = format!(
                 "Schedule manually adjusted. Hard Conflicts: {}, Soft Penalties: {}",
                 conflicts_count, soft
             );
-            
+
             self.update_diagnostics();
         }
     }
@@ -368,17 +375,15 @@ impl AppState {
         self.current_file_path = None;
         self.config = TournamentConfig::default();
         self.config.competition_name = "RoboCup Jr Soccer Workspace".to_string();
-        self.config.day_configs = vec![
-            crate::model::DayGenConfig {
-                day: "Saturday".to_string(),
-                start_time: "09:00".to_string(),
-                end_time: "17:00".to_string(),
-                lunch_enabled: true,
-                lunch_start: "12:00".to_string(),
-                lunch_duration: 60,
-                interviews_enabled: true,
-            }
-        ];
+        self.config.day_configs = vec![crate::model::DayGenConfig {
+            day: "Saturday".to_string(),
+            start_time: "09:00".to_string(),
+            end_time: "17:00".to_string(),
+            lunch_enabled: true,
+            lunch_start: "12:00".to_string(),
+            lunch_duration: 60,
+            interviews_enabled: true,
+        }];
 
         // 1. Divisions
         self.config.divisions.push(Division {
@@ -396,7 +401,8 @@ impl AppState {
             finals_rounds: Some(crate::model::FinalsRounds::Grand),
             finals_duration_minutes: Some(25),
             finals_third_place_playoff: false,
-            color: Some([129, 140, 248]), min_match_break_minutes: None,
+            color: Some([129, 140, 248]),
+            min_match_break_minutes: None,
         });
 
         self.config.divisions.push(Division {
@@ -414,7 +420,8 @@ impl AppState {
             finals_rounds: None,
             finals_duration_minutes: None,
             finals_third_place_playoff: false,
-            color: Some([52, 211, 153]), min_match_break_minutes: None,
+            color: Some([52, 211, 153]),
+            min_match_break_minutes: None,
         });
 
         // Set default division id for selections
@@ -510,7 +517,6 @@ impl AppState {
             attendance_status: std::collections::HashMap::new(),
             locked_field_ids: None,
         });
-
 
         self.config.volunteers.push(Volunteer {
             id: "v_sarah".to_string(),

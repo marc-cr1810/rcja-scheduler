@@ -1,6 +1,4 @@
-use crate::model::{
-    Activity, FieldKind, SchedulingMode, TournamentConfig,
-};
+use crate::model::{Activity, FieldKind, SchedulingMode, TournamentConfig};
 use std::collections::{BTreeMap, HashMap};
 
 #[allow(dead_code)]
@@ -80,7 +78,7 @@ pub struct InternalTournamentConfig {
     pub organizations: Vec<String>,
     pub days: Vec<String>,
     pub day_interviews_enabled: Vec<bool>,
-    
+
     // [slot_idx][duration_class] -> list of global 5-minute bucket indices
     pub activity_buckets: Vec<Vec<Vec<usize>>>,
     // [slot_idx][duration_class] -> list of other slot indices that overlap
@@ -129,7 +127,7 @@ impl InternalTournamentConfig {
         let mut day_names = Vec::new();
         let mut day_to_idx = HashMap::new();
         let mut day_interviews_enabled = Vec::new();
-        
+
         for dc in &config.day_configs {
             let day = dc.day.to_lowercase();
             if !day_to_idx.contains_key(&day) {
@@ -138,7 +136,7 @@ impl InternalTournamentConfig {
                 day_interviews_enabled.push(dc.interviews_enabled);
             }
         }
-        
+
         for slot in &config.time_slots {
             let day = slot.day.to_lowercase();
             if !day_to_idx.contains_key(&day) {
@@ -148,17 +146,25 @@ impl InternalTournamentConfig {
             }
         }
 
-        let get_day_idx = |day: &str| {
-            *day_to_idx.get(&day.to_lowercase()).unwrap_or(&99)
-        };
+        let get_day_idx = |day: &str| *day_to_idx.get(&day.to_lowercase()).unwrap_or(&99);
 
         let mut sorted_slots = config.time_slots.clone();
         sorted_slots.sort_by_key(|s| (get_day_idx(&s.day), s.start_minutes()));
 
-        let div_map: HashMap<String, usize> = config.divisions.iter().enumerate().map(|(i, d)| (d.id.clone(), i)).collect();
+        let div_map: HashMap<String, usize> = config
+            .divisions
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (d.id.clone(), i))
+            .collect();
         // Internal field indices match the order of `config.fields`, so this map
         // resolves a volunteer's locked field IDs to those indices.
-        let field_map: HashMap<String, usize> = config.fields.iter().enumerate().map(|(i, f)| (f.id.clone(), i)).collect();
+        let field_map: HashMap<String, usize> = config
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.id.clone(), i))
+            .collect();
 
         // Include ALL team names from activities, including finals placeholders
         let mut all_team_names: Vec<String> = config.teams.iter().map(|t| t.name.clone()).collect();
@@ -174,9 +180,11 @@ impl InternalTournamentConfig {
         let mut team_map = HashMap::new();
         for (i, name) in all_team_names.iter().enumerate() {
             team_map.insert(name.clone(), i);
-            
+
             // If it's a real team, use its org, otherwise use a dummy "placeholder" org
-            let org_idx = config.teams.iter()
+            let org_idx = config
+                .teams
+                .iter()
                 .find(|t| &t.name == name)
                 .and_then(|t| org_map.get(&t.organization))
                 .copied()
@@ -188,65 +196,104 @@ impl InternalTournamentConfig {
             });
         }
 
-        let slot_id_to_internal_idx: HashMap<String, usize> = sorted_slots.iter().enumerate().map(|(i, s)| (s.id.clone(), i)).collect();
+        let slot_id_to_internal_idx: HashMap<String, usize> = sorted_slots
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.id.clone(), i))
+            .collect();
 
-        let internal_slots: Vec<InternalSlot> = sorted_slots.iter().map(|s| InternalSlot {
-            id: s.id.clone(),
-            day_idx: get_day_idx(&s.day),
-            start_minutes: s.start_minutes(),
-            duration_minutes: s.duration_minutes(),
-            kind: s.kind,
-        }).collect();
+        let internal_slots: Vec<InternalSlot> = sorted_slots
+            .iter()
+            .map(|s| InternalSlot {
+                id: s.id.clone(),
+                day_idx: get_day_idx(&s.day),
+                start_minutes: s.start_minutes(),
+                duration_minutes: s.duration_minutes(),
+                kind: s.kind,
+            })
+            .collect();
 
-        let internal_volunteers: Vec<InternalVolunteer> = config.volunteers.iter().map(|v| {
-            let mut avail = vec![false; sorted_slots.len()];
-            for s_id in &v.availabilities {
-                if let Some(&idx) = slot_id_to_internal_idx.get(s_id) {
-                    avail[idx] = true;
+        let internal_volunteers: Vec<InternalVolunteer> = config
+            .volunteers
+            .iter()
+            .map(|v| {
+                let mut avail = vec![false; sorted_slots.len()];
+                for s_id in &v.availabilities {
+                    if let Some(&idx) = slot_id_to_internal_idx.get(s_id) {
+                        avail[idx] = true;
+                    }
                 }
-            }
-            // A volunteer marked as a no-show for a day is treated as unavailable
-            // for every slot that day, so the solver and the diagnostics agree on
-            // availability (a no-show used to be flagged only in the UI).
-            for slot in &config.time_slots {
-                if matches!(v.status_for_day(&slot.day), crate::model::AttendanceStatus::NoShow)
-                    && let Some(&idx) = slot_id_to_internal_idx.get(&slot.id) {
-                    avail[idx] = false;
+                // A volunteer marked as a no-show for a day is treated as unavailable
+                // for every slot that day, so the solver and the diagnostics agree on
+                // availability (a no-show used to be flagged only in the UI).
+                for slot in &config.time_slots {
+                    if matches!(
+                        v.status_for_day(&slot.day),
+                        crate::model::AttendanceStatus::NoShow
+                    ) && let Some(&idx) = slot_id_to_internal_idx.get(&slot.id)
+                    {
+                        avail[idx] = false;
+                    }
                 }
-            }
-            InternalVolunteer {
-                id: v.id.clone(),
-                availability_slots: avail,
-                capability_indices: v.capabilities.as_ref().map(|caps| {
-                    caps.iter().filter_map(|c| div_map.get(c).copied()).collect()
+                InternalVolunteer {
+                    id: v.id.clone(),
+                    availability_slots: avail,
+                    capability_indices: v.capabilities.as_ref().map(|caps| {
+                        caps.iter()
+                            .filter_map(|c| div_map.get(c).copied())
+                            .collect()
+                    }),
+                    conflict_org_indices: v
+                        .conflict_organizations
+                        .iter()
+                        .filter_map(|o| org_map.get(o).copied())
+                        .collect(),
+                    locked_field_indices: v.locked_field_ids.as_ref().and_then(|ids| {
+                        let idxs: Vec<usize> = ids
+                            .iter()
+                            .filter_map(|f| field_map.get(f).copied())
+                            .collect();
+                        if idxs.is_empty() { None } else { Some(idxs) }
+                    }),
+                }
+            })
+            .collect();
+
+        let can_interview: Vec<bool> = config
+            .volunteers
+            .iter()
+            .map(|v| {
+                v.capabilities
+                    .as_ref()
+                    .is_none_or(|caps| caps.contains(&"Interview".to_string()))
+            })
+            .collect();
+
+        let internal_fields: Vec<InternalField> = config
+            .fields
+            .iter()
+            .map(|f| InternalField {
+                id: f.id.clone(),
+                kind: f.kind,
+                allowed_division_indices: f.allowed_divisions.as_ref().map(|divs| {
+                    divs.iter()
+                        .filter_map(|d| div_map.get(d).copied())
+                        .collect()
                 }),
-                conflict_org_indices: v.conflict_organizations.iter().filter_map(|o| org_map.get(o).copied()).collect(),
-                locked_field_indices: v.locked_field_ids.as_ref().and_then(|ids| {
-                    let idxs: Vec<usize> = ids.iter().filter_map(|f| field_map.get(f).copied()).collect();
-                    if idxs.is_empty() { None } else { Some(idxs) }
-                }),
-            }
-        }).collect();
+            })
+            .collect();
 
-        let can_interview: Vec<bool> = config.volunteers.iter().map(|v| {
-            v.capabilities.as_ref().is_none_or(|caps| caps.contains(&"Interview".to_string()))
-        }).collect();
-
-        let internal_fields: Vec<InternalField> = config.fields.iter().map(|f| InternalField {
-            id: f.id.clone(),
-            kind: f.kind,
-            allowed_division_indices: f.allowed_divisions.as_ref().map(|divs| {
-                divs.iter().filter_map(|d| div_map.get(d).copied()).collect()
-            }),
-        }).collect();
-
-        let internal_divisions: Vec<InternalDivision> = config.divisions.iter().map(|d| InternalDivision {
-            id: d.id.clone(),
-            mode: d.mode,
-            volunteers_required: d.volunteers_required,
-            interview_volunteers_required: d.interview_volunteers_required,
-            min_match_break_minutes: d.min_match_break_minutes,
-        }).collect();
+        let internal_divisions: Vec<InternalDivision> = config
+            .divisions
+            .iter()
+            .map(|d| InternalDivision {
+                id: d.id.clone(),
+                mode: d.mode,
+                volunteers_required: d.volunteers_required,
+                interview_volunteers_required: d.interview_volunteers_required,
+                min_match_break_minutes: d.min_match_break_minutes,
+            })
+            .collect();
 
         // Distinct activity durations. Each gets a "class" index so the solver
         // can look up precomputed bucket/overlap data by plain Vec indexing
@@ -254,19 +301,27 @@ impl InternalTournamentConfig {
         let mut durations: Vec<u32> = activities.iter().map(|a| a.duration_minutes()).collect();
         durations.sort_unstable();
         durations.dedup();
-        let dur_class: HashMap<u32, usize> = durations.iter().enumerate().map(|(i, &d)| (d, i)).collect();
+        let dur_class: HashMap<u32, usize> =
+            durations.iter().enumerate().map(|(i, &d)| (d, i)).collect();
 
-        let internal_activities: Vec<InternalActivity> = activities.iter().map(|a| InternalActivity {
-            id: a.id().to_string(),
-            team_indices: a.teams().iter().filter_map(|t| team_map.get(*t).copied()).collect(),
-            division_idx: *div_map.get(a.division_id()).unwrap(),
-            duration_minutes: a.duration_minutes(),
-            duration_class: dur_class[&a.duration_minutes()],
-            stage: a.stage(),
-            round_index: a.round_index(),
-            is_final: a.is_final(),
-            is_interview: matches!(a, Activity::Interview { .. }),
-        }).collect();
+        let internal_activities: Vec<InternalActivity> = activities
+            .iter()
+            .map(|a| InternalActivity {
+                id: a.id().to_string(),
+                team_indices: a
+                    .teams()
+                    .iter()
+                    .filter_map(|t| team_map.get(*t).copied())
+                    .collect(),
+                division_idx: *div_map.get(a.division_id()).unwrap(),
+                duration_minutes: a.duration_minutes(),
+                duration_class: dur_class[&a.duration_minutes()],
+                stage: a.stage(),
+                round_index: a.round_index(),
+                is_final: a.is_final(),
+                is_interview: matches!(a, Activity::Interview { .. }),
+            })
+            .collect();
 
         let bucket_size = 5u32;
         let day_span_minutes = 24 * 60;
@@ -377,7 +432,9 @@ fn compute_field_balance_groups(fields: &[InternalField]) -> Vec<Vec<usize>> {
             continue;
         }
         for j in 0..i {
-            if fields[j].kind == FieldKind::Competition && fields_share_division(&fields[i], &fields[j]) {
+            if fields[j].kind == FieldKind::Competition
+                && fields_share_division(&fields[i], &fields[j])
+            {
                 union(&mut parent, i, j);
             }
         }

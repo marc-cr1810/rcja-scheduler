@@ -1,6 +1,6 @@
-use crate::model::{TournamentConfig, ScheduleAssignment};
-use crate::scheduler::{AssignmentConflict, ConflictSeverity};
 use super::theme;
+use crate::model::{ScheduleAssignment, TournamentConfig};
+use crate::scheduler::{AssignmentConflict, ConflictSeverity};
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, TextStyle};
 
 pub(crate) fn setup_custom_style(ctx: &egui::Context) {
@@ -12,7 +12,10 @@ pub(crate) fn setup_custom_style(ctx: &egui::Context) {
     // Lato family registered in `main`.
     use FontFamily::{Monospace, Proportional};
     style.text_styles = [
-        (TextStyle::Heading, FontId::new(19.0, FontFamily::Name("Heading".into()))),
+        (
+            TextStyle::Heading,
+            FontId::new(19.0, FontFamily::Name("Heading".into())),
+        ),
         (TextStyle::Body, FontId::new(14.0, Proportional)),
         (TextStyle::Button, FontId::new(14.0, Proportional)),
         (TextStyle::Small, FontId::new(11.0, Proportional)),
@@ -34,7 +37,11 @@ pub(crate) fn setup_custom_style(ctx: &egui::Context) {
     let bg = theme::bg_base();
     let is_light = relative_luminance(bg) > 0.5;
     let visuals = &mut style.visuals;
-    *visuals = if is_light { egui::Visuals::light() } else { egui::Visuals::dark() };
+    *visuals = if is_light {
+        egui::Visuals::light()
+    } else {
+        egui::Visuals::dark()
+    };
 
     visuals.panel_fill = bg;
     visuals.window_fill = theme::card_bg();
@@ -78,11 +85,22 @@ fn relative_luminance(c: Color32) -> f32 {
     (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0
 }
 
-pub(crate) fn draw_stat_card(ui: &mut egui::Ui, icon: &str, title: &str, value: &str, color: Color32) {
+pub(crate) fn draw_stat_card(
+    ui: &mut egui::Ui,
+    icon: &str,
+    title: &str,
+    value: &str,
+    color: Color32,
+) {
     egui::Frame::none()
         .fill(theme::card_bg())
         .rounding(8.0)
-        .inner_margin(egui::Margin { left: 14.0, right: 16.0, top: 10.0, bottom: 14.0 })
+        .inner_margin(egui::Margin {
+            left: 14.0,
+            right: 16.0,
+            top: 10.0,
+            bottom: 14.0,
+        })
         .show(ui, |ui| {
             let card_width = 140.0;
             ui.set_min_size(egui::vec2(card_width, 78.0));
@@ -90,12 +108,18 @@ pub(crate) fn draw_stat_card(ui: &mut egui::Ui, icon: &str, title: &str, value: 
                 // Thin accent bar in the value's colour across the top of the card.
                 let (bar_rect, _) =
                     ui.allocate_exact_size(egui::vec2(card_width, 3.0), egui::Sense::hover());
-                ui.painter().rect_filled(bar_rect, egui::Rounding::same(2.0), color);
+                ui.painter()
+                    .rect_filled(bar_rect, egui::Rounding::same(2.0), color);
                 ui.add_space(8.0);
 
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(icon).size(13.0).color(color));
-                    ui.label(RichText::new(title).size(10.5).color(theme::text_muted()).strong());
+                    ui.label(
+                        RichText::new(title)
+                            .size(10.5)
+                            .color(theme::text_muted())
+                            .strong(),
+                    );
                 });
                 ui.add_space(2.0);
                 ui.label(RichText::new(value).size(22.0).strong().color(color));
@@ -104,7 +128,16 @@ pub(crate) fn draw_stat_card(ui: &mut egui::Ui, icon: &str, title: &str, value: 
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment, config: &TournamentConfig, current_slot_id: &str, w: f32, h: f32, conflicts: &[AssignmentConflict], assign_idx: usize) -> Option<usize> {
+pub(crate) fn draw_schedule_cell(
+    ui: &mut egui::Ui,
+    assign: &ScheduleAssignment,
+    config: &TournamentConfig,
+    current_slot_id: &str,
+    w: f32,
+    h: f32,
+    conflicts: &[AssignmentConflict],
+    assign_idx: usize,
+) -> Option<usize> {
     let mut substitution_requested = None;
     let div_id = assign.activity.division_id();
     let (base_bg, base_border) = get_competition_colors(div_id, config);
@@ -122,11 +155,13 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
     };
 
     // Conflicts that should grab attention get a pulsing red outline.
-    let is_error_cell = conflicts.iter().any(|c| {
-        matches!(c.severity, ConflictSeverity::Error) || c.message.contains("NO-SHOW")
-    });
+    let is_error_cell = conflicts
+        .iter()
+        .any(|c| matches!(c.severity, ConflictSeverity::Error) || c.message.contains("NO-SHOW"));
 
-    let start_time_str = config.time_slots.iter()
+    let start_time_str = config
+        .time_slots
+        .iter()
         .find(|s| s.id == assign.time_slot_id)
         .map(|s| s.start_time.clone())
         .unwrap_or_else(|| "09:00".to_string());
@@ -159,7 +194,12 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
     };
     ui.painter().rect_filled(
         stripe,
-        egui::Rounding { nw: 6.0, sw: 6.0, ne: 0.0, se: 0.0 },
+        egui::Rounding {
+            nw: 6.0,
+            sw: 6.0,
+            ne: 0.0,
+            se: 0.0,
+        },
         stripe_color,
     );
 
@@ -180,7 +220,8 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
             3.0,
         ));
     } else {
-        ui.painter().rect_stroke(rect, 6.0, Stroke::new(1.0, border_color));
+        ui.painter()
+            .rect_stroke(rect, 6.0, Stroke::new(1.0, border_color));
     }
 
     // Pulsing outline for error/no-show cells so they catch the eye.
@@ -192,14 +233,17 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
         ui.painter().rect_stroke(
             rect,
             6.0,
-            Stroke::new(2.0, Color32::from_rgba_unmultiplied(d.r(), d.g(), d.b(), alpha)),
+            Stroke::new(
+                2.0,
+                Color32::from_rgba_unmultiplied(d.r(), d.g(), d.b(), alpha),
+            ),
         );
         ui.ctx().request_repaint();
     }
 
     let inner_rect = rect.shrink2(egui::vec2(8.0, 4.0));
     let mut child_ui = ui.child_ui(inner_rect, *ui.layout());
-    
+
     let mut clip_rect = child_ui.clip_rect();
     clip_rect.max.x = clip_rect.max.x.min(inner_rect.max.x);
     clip_rect.max.y = clip_rect.max.y.min(inner_rect.max.y);
@@ -209,41 +253,74 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
     // must read as light in every theme — pick by the fill's luminance rather than
     // a fixed token (which could be dark, e.g. high-contrast's black `on_accent`).
     let cell_text = theme::contrast_text(base_bg);
-    let cell_text_dim = Color32::from_rgba_unmultiplied(cell_text.r(), cell_text.g(), cell_text.b(), 170);
+    let cell_text_dim =
+        Color32::from_rgba_unmultiplied(cell_text.r(), cell_text.g(), cell_text.b(), 170);
 
     child_ui.vertical(|ui| {
         ui.horizontal(|ui| {
             let label_text = if is_continuation {
-                RichText::new(format!("{} (cont.)", assign.activity.label())).size(11.5).color(cell_text_dim)
+                RichText::new(format!("{} (cont.)", assign.activity.label()))
+                    .size(11.5)
+                    .color(cell_text_dim)
             } else {
-                RichText::new(assign.activity.label()).strong().size(11.5).color(cell_text)
+                RichText::new(assign.activity.label())
+                    .strong()
+                    .size(11.5)
+                    .color(cell_text)
             };
-            
+
             // Use a vertical layout for the label to allow it to wrap within the available horizontal space
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true), |ui| {
-                ui.label(label_text);
-            });
+            ui.with_layout(
+                egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+                |ui| {
+                    ui.label(label_text);
+                },
+            );
 
             if !conflicts.is_empty() {
-                let has_error = conflicts.iter().any(|c| matches!(c.severity, ConflictSeverity::Error));
+                let has_error = conflicts
+                    .iter()
+                    .any(|c| matches!(c.severity, ConflictSeverity::Error));
                 let is_no_show = conflicts.iter().any(|c| c.message.contains("NO-SHOW"));
-                
-                let icon = if is_no_show { "🏃" } else if has_error { "❌" } else { "⚠" };
-                let color = if is_no_show || has_error { theme::danger() } else { theme::warning() };
-                
+
+                let icon = if is_no_show {
+                    "🏃"
+                } else if has_error {
+                    "❌"
+                } else {
+                    "⚠"
+                };
+                let color = if is_no_show || has_error {
+                    theme::danger()
+                } else {
+                    theme::warning()
+                };
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let resp = ui.add(egui::Button::new(RichText::new(icon).color(color).strong()).frame(false));
+                    let resp = ui.add(
+                        egui::Button::new(RichText::new(icon).color(color).strong()).frame(false),
+                    );
                     if resp.clicked() {
                         substitution_requested = Some(assign_idx);
                     }
                     resp.on_hover_ui(|ui| {
                         ui.vertical(|ui| {
                             for c in conflicts {
-                                let c_icon = if c.message.contains("NO-SHOW") { "🏃" } else if matches!(c.severity, ConflictSeverity::Error) { "❌" } else { "⚠" };
+                                let c_icon = if c.message.contains("NO-SHOW") {
+                                    "🏃"
+                                } else if matches!(c.severity, ConflictSeverity::Error) {
+                                    "❌"
+                                } else {
+                                    "⚠"
+                                };
                                 ui.label(format!("{} {}", c_icon, c.message));
                             }
                             ui.add_space(4.0);
-                            ui.label(RichText::new("Click to find substitute").italics().color(theme::text_muted()));
+                            ui.label(
+                                RichText::new("Click to find substitute")
+                                    .italics()
+                                    .color(theme::text_muted()),
+                            );
                         });
                     });
                 });
@@ -251,9 +328,13 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
         });
 
         if h >= 30.0 {
-            ui.label(RichText::new(format!("⏰ {} - {}", start_time_str, end_time_str)).size(9.5).color(cell_text_dim));
+            ui.label(
+                RichText::new(format!("⏰ {} - {}", start_time_str, end_time_str))
+                    .size(9.5)
+                    .color(cell_text_dim),
+            );
         }
-        
+
         let volunteer_names: Vec<String> = assign
             .volunteer_ids
             .iter()
@@ -262,86 +343,141 @@ pub(crate) fn draw_schedule_cell(ui: &mut egui::Ui, assign: &ScheduleAssignment,
                     .volunteers
                     .iter()
                     .find(|v| v.id == *v_id)
-                    .map_or(v_id.clone(), |v| v.name.split(' ').next().unwrap_or(&v.name).to_string())
+                    .map_or(v_id.clone(), |v| {
+                        v.name.split(' ').next().unwrap_or(&v.name).to_string()
+                    })
             })
             .collect();
 
         if h >= 40.0 {
             let vol_label = if matches!(assign.activity, crate::model::Activity::Interview { .. }) {
-                if assign.volunteer_ids.len() > 1 { "Judges" } else { "Interviewer" }
+                if assign.volunteer_ids.len() > 1 {
+                    "Judges"
+                } else {
+                    "Interviewer"
+                }
             } else {
                 "Refs"
             };
 
-            let names_str = if volunteer_names.is_empty() { "None".to_string() } else { volunteer_names.join(", ") };
-            let vol_text = if is_continuation {
-                RichText::new(format!("{}: {}", vol_label, names_str)).size(9.5).color(cell_text_dim)
+            let names_str = if volunteer_names.is_empty() {
+                "None".to_string()
             } else {
-                let color = if volunteer_names.is_empty() { theme::danger() } else { cell_text_dim };
-                RichText::new(format!("{}: {}", vol_label, names_str)).size(9.5).color(color)
+                volunteer_names.join(", ")
             };
-            
+            let vol_text = if is_continuation {
+                RichText::new(format!("{}: {}", vol_label, names_str))
+                    .size(9.5)
+                    .color(cell_text_dim)
+            } else {
+                let color = if volunteer_names.is_empty() {
+                    theme::danger()
+                } else {
+                    cell_text_dim
+                };
+                RichText::new(format!("{}: {}", vol_label, names_str))
+                    .size(9.5)
+                    .color(color)
+            };
+
             ui.add(egui::Label::new(vol_text).wrap(true));
         }
     });
 
     response.on_hover_ui(|ui| {
         ui.vertical(|ui| {
-                ui.heading(format!("{}{}", assign.activity.label(), if is_continuation { " (Continuation)" } else { "" }));
-                let div_name = config.divisions.iter().find(|d| d.id == div_id).map_or(div_id, |d| &d.name);
-                ui.label(format!("Division: {}", div_name));
-                
-                if let Some(stage_label) = assign.activity.stage_label() {
-                    ui.label(RichText::new(format!("Stage: {}", stage_label)).strong().color(theme::warning()));
-                }
-                
-                let round_label = assign.activity.round_label();
-                if !round_label.is_empty() {
-                    ui.label(RichText::new(round_label).strong().color(theme::accent()));
-                }
-
-                ui.label(format!("Time: {} - {} ({} min)", start_time_str, end_time_str, assign.activity.duration_minutes()));
-                
-                let volunteer_full_names: Vec<String> = assign
-                    .volunteer_ids
-                    .iter()
-                    .map(|v_id| {
-                        config
-                            .volunteers
-                            .iter()
-                            .find(|v| v.id == *v_id)
-                            .map_or(v_id.clone(), |v| v.name.clone())
-                    })
-                    .collect();
-
-                let vol_label = if matches!(assign.activity, crate::model::Activity::Interview { .. }) {
-                    if assign.volunteer_ids.len() > 1 { "Assigned Judges" } else { "Assigned Interviewer" }
+            ui.heading(format!(
+                "{}{}",
+                assign.activity.label(),
+                if is_continuation {
+                    " (Continuation)"
                 } else {
-                    "Assigned Referees"
-                };
-                ui.label(format!("{}: {}", vol_label, volunteer_full_names.join(", ")));
-
-                if !conflicts.is_empty() {
-                    ui.add_space(4.0);
-                    ui.separator();
-                    ui.label(RichText::new("Conflicts:").strong().color(theme::danger()));
-                    for c in conflicts {
-                        let icon = if matches!(c.severity, ConflictSeverity::Error) { "❌" } else { "⚠" };
-                        ui.label(format!("{} {}", icon, c.message));
-                    }
+                    ""
                 }
-            });
+            ));
+            let div_name = config
+                .divisions
+                .iter()
+                .find(|d| d.id == div_id)
+                .map_or(div_id, |d| &d.name);
+            ui.label(format!("Division: {}", div_name));
+
+            if let Some(stage_label) = assign.activity.stage_label() {
+                ui.label(
+                    RichText::new(format!("Stage: {}", stage_label))
+                        .strong()
+                        .color(theme::warning()),
+                );
+            }
+
+            let round_label = assign.activity.round_label();
+            if !round_label.is_empty() {
+                ui.label(RichText::new(round_label).strong().color(theme::accent()));
+            }
+
+            ui.label(format!(
+                "Time: {} - {} ({} min)",
+                start_time_str,
+                end_time_str,
+                assign.activity.duration_minutes()
+            ));
+
+            let volunteer_full_names: Vec<String> = assign
+                .volunteer_ids
+                .iter()
+                .map(|v_id| {
+                    config
+                        .volunteers
+                        .iter()
+                        .find(|v| v.id == *v_id)
+                        .map_or(v_id.clone(), |v| v.name.clone())
+                })
+                .collect();
+
+            let vol_label = if matches!(assign.activity, crate::model::Activity::Interview { .. }) {
+                if assign.volunteer_ids.len() > 1 {
+                    "Assigned Judges"
+                } else {
+                    "Assigned Interviewer"
+                }
+            } else {
+                "Assigned Referees"
+            };
+            ui.label(format!(
+                "{}: {}",
+                vol_label,
+                volunteer_full_names.join(", ")
+            ));
+
+            if !conflicts.is_empty() {
+                ui.add_space(4.0);
+                ui.separator();
+                ui.label(RichText::new("Conflicts:").strong().color(theme::danger()));
+                for c in conflicts {
+                    let icon = if matches!(c.severity, ConflictSeverity::Error) {
+                        "❌"
+                    } else {
+                        "⚠"
+                    };
+                    ui.label(format!("{} {}", icon, c.message));
+                }
+            }
         });
+    });
 
     substitution_requested
 }
 
-pub(crate) fn get_competition_colors(div_id: &str, config: &TournamentConfig) -> (Color32, Color32) {
+pub(crate) fn get_competition_colors(
+    div_id: &str,
+    config: &TournamentConfig,
+) -> (Color32, Color32) {
     // An explicit per-division colour always wins.
     if let Some(div) = config.divisions.iter().find(|d| d.id == div_id)
-        && let Some(rgb) = div.color {
-            return super::theme::cell_colors_from_rgb(rgb);
-        }
+        && let Some(rgb) = div.color
+    {
+        return super::theme::cell_colors_from_rgb(rgb);
+    }
 
     // Otherwise fall back to a curated categorical palette, indexed by the
     // division's position so each division gets a distinct, legible colour
@@ -393,7 +529,12 @@ pub(crate) fn parse_time_to_minutes(t: &str) -> u32 {
     }
 }
 
-pub(crate) fn draw_card<R>(ui: &mut egui::Ui, title: &str, add_space: bool, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+pub(crate) fn draw_card<R>(
+    ui: &mut egui::Ui,
+    title: &str,
+    add_space: bool,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
     egui::Frame::none()
         .fill(theme::card_bg())
         .rounding(8.0)
@@ -407,8 +548,10 @@ pub(crate) fn draw_card<R>(ui: &mut egui::Ui, title: &str, add_space: bool, add_
                     }
                 }
                 add_contents(ui)
-            }).inner
-        }).inner
+            })
+            .inner
+        })
+        .inner
 }
 
 pub(crate) fn format_minutes_to_time(min: u32) -> String {
@@ -432,7 +575,12 @@ pub(crate) fn draw_empty_state(
         ui.add_space(40.0);
         ui.label(RichText::new(icon).size(44.0).color(theme::text_faint()));
         ui.add_space(10.0);
-        ui.label(RichText::new(title).size(16.0).strong().color(theme::text_muted()));
+        ui.label(
+            RichText::new(title)
+                .size(16.0)
+                .strong()
+                .color(theme::text_muted()),
+        );
         ui.add_space(2.0);
         ui.label(RichText::new(body).color(theme::text_faint()));
         if let Some(label) = cta {

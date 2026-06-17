@@ -1,7 +1,7 @@
 use crate::gui::AppState;
+use crate::gui::helpers::draw_stat_card;
 use crate::gui::theme;
 use crate::validator::DiagnosticSeverity;
-use crate::gui::helpers::draw_stat_card;
 use eframe::egui::{self, RichText, Stroke};
 
 impl AppState {
@@ -11,27 +11,73 @@ impl AppState {
 
         ui.horizontal(|ui| {
             ui.label(RichText::new("Competition/Workspace Name:").strong());
-            if ui.text_edit_singleline(&mut self.config.competition_name).changed() {
+            if ui
+                .text_edit_singleline(&mut self.config.competition_name)
+                .changed()
+            {
                 self.update_diagnostics();
             }
         });
         ui.add_space(15.0);
 
         ui.horizontal_wrapped(|ui| {
-            draw_stat_card(ui, "🏆", "Divisions", &self.config.divisions.len().to_string(), theme::accent());
-            draw_stat_card(ui, "👥", "Teams", &self.config.teams.len().to_string(), theme::accent_alt());
-            draw_stat_card(ui, "🏟", "Fields / Arenas", &self.config.fields.len().to_string(), theme::success());
-            draw_stat_card(ui, "📅", "Time Slots", &self.config.time_slots.len().to_string(), theme::rose());
-            draw_stat_card(ui, "👤", "Volunteers", &self.config.volunteers.len().to_string(), theme::warning());
+            draw_stat_card(
+                ui,
+                "🏆",
+                "Divisions",
+                &self.config.divisions.len().to_string(),
+                theme::accent(),
+            );
+            draw_stat_card(
+                ui,
+                "👥",
+                "Teams",
+                &self.config.teams.len().to_string(),
+                theme::accent_alt(),
+            );
+            draw_stat_card(
+                ui,
+                "🏟",
+                "Fields / Arenas",
+                &self.config.fields.len().to_string(),
+                theme::success(),
+            );
+            draw_stat_card(
+                ui,
+                "📅",
+                "Time Slots",
+                &self.config.time_slots.len().to_string(),
+                theme::rose(),
+            );
+            draw_stat_card(
+                ui,
+                "👤",
+                "Volunteers",
+                &self.config.volunteers.len().to_string(),
+                theme::warning(),
+            );
         });
 
         ui.add_space(20.0);
 
-        ui.label(RichText::new("REAL-TIME DIAGNOSTICS").strong().size(12.0).color(theme::text_muted()));
+        ui.label(
+            RichText::new("REAL-TIME DIAGNOSTICS")
+                .strong()
+                .size(12.0)
+                .color(theme::text_muted()),
+        );
         ui.add_space(5.0);
 
-        let error_count = self.diagnostics.iter().filter(|d| d.severity == DiagnosticSeverity::Error).count();
-        let warn_count = self.diagnostics.iter().filter(|d| d.severity == DiagnosticSeverity::Warning).count();
+        let error_count = self
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == DiagnosticSeverity::Error)
+            .count();
+        let warn_count = self
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == DiagnosticSeverity::Warning)
+            .count();
 
         if error_count == 0 && warn_count == 0 {
             egui::Frame::none()
@@ -78,7 +124,11 @@ impl AppState {
                             });
                             if let Some(ref rec) = diag.recommendation {
                                 ui.add_space(4.0);
-                                ui.label(RichText::new(format!("💡 Recommended: {}", rec)).color(fg).size(11.5));
+                                ui.label(
+                                    RichText::new(format!("💡 Recommended: {}", rec))
+                                        .color(fg)
+                                        .size(11.5),
+                                );
                             }
                         });
                     });

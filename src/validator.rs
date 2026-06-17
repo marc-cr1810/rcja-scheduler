@@ -1,4 +1,4 @@
-use crate::model::{TournamentConfig, Activity, FieldKind};
+use crate::model::{Activity, FieldKind, TournamentConfig};
 use crate::scheduler::{generate_activities, is_field_suitable_for_activity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +44,9 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
         diagnostics.push(DiagnosticMessage {
             severity: DiagnosticSeverity::Error,
             message: "No fields or arenas defined. You must add at least one field.".to_string(),
-            recommendation: Some("Create fields/arenas under the 'Fields & Arenas' tab.".to_string()),
+            recommendation: Some(
+                "Create fields/arenas under the 'Fields & Arenas' tab.".to_string(),
+            ),
         });
     }
 
@@ -119,14 +121,18 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
             diagnostics.push(DiagnosticMessage {
                 severity: DiagnosticSeverity::Warning,
                 message: format!("Duplicate volunteer name: '{}'.", vol.name),
-                recommendation: Some("Ensure volunteers have unique names to avoid confusion.".to_string()),
+                recommendation: Some(
+                    "Ensure volunteers have unique names to avoid confusion.".to_string(),
+                ),
             });
         }
         if vol.availabilities.is_empty() {
             diagnostics.push(DiagnosticMessage {
                 severity: DiagnosticSeverity::Warning,
                 message: format!("Volunteer '{}' has no available time slots.", vol.name),
-                recommendation: Some("Select at least one time slot where this volunteer is available.".to_string()),
+                recommendation: Some(
+                    "Select at least one time slot where this volunteer is available.".to_string(),
+                ),
             });
         }
     }
@@ -137,7 +143,9 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
 
     // 2. Capacity Check per Division
     for div in &config.divisions {
-        let div_teams: Vec<&crate::model::Team> = config.teams.iter()
+        let div_teams: Vec<&crate::model::Team> = config
+            .teams
+            .iter()
             .filter(|t| t.division_id == div.id)
             .collect();
         let div_teams_count = div_teams.len();
@@ -146,7 +154,9 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
             diagnostics.push(DiagnosticMessage {
                 severity: DiagnosticSeverity::Info,
                 message: format!("Division '{}' has no teams assigned.", div.name),
-                recommendation: Some("Add teams to this division under the 'Teams' tab.".to_string()),
+                recommendation: Some(
+                    "Add teams to this division under the 'Teams' tab.".to_string(),
+                ),
             });
             continue;
         }
@@ -155,7 +165,7 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
             .iter()
             .filter(|a| a.division_id() == div.id)
             .collect();
-        
+
         let required_games = div_activities
             .iter()
             .filter(|a| matches!(a, Activity::Match { .. } | Activity::Run { .. }))
@@ -166,9 +176,22 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
             .iter()
             .filter(|f| {
                 let dummy_activity = if div.mode == crate::model::SchedulingMode::HeadToHead {
-                    Activity::Match { id: "dummy".to_string(), team_a: "A".to_string(), team_b: "B".to_string(), division_id: div.id.clone(), duration_minutes: div.duration_minutes, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }
+                    Activity::Match {
+                        id: "dummy".to_string(),
+                        team_a: "A".to_string(),
+                        team_b: "B".to_string(),
+                        division_id: div.id.clone(),
+                        duration_minutes: div.duration_minutes,
+                        stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 },
+                    }
                 } else {
-                    Activity::Run { id: "dummy".to_string(), team: "A".to_string(), division_id: div.id.clone(), run_number: 1, duration_minutes: div.duration_minutes }
+                    Activity::Run {
+                        id: "dummy".to_string(),
+                        team: "A".to_string(),
+                        division_id: div.id.clone(),
+                        run_number: 1,
+                        duration_minutes: div.duration_minutes,
+                    }
                 };
                 is_field_suitable_for_activity(config, f, &dummy_activity)
             })
@@ -218,10 +241,18 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
         }
 
         if div.interviews_enabled {
-            let interview_fields: Vec<&crate::model::Field> = fields.iter().filter(|f| {
-                let dummy_interview = Activity::Interview { id: "dummy".to_string(), team: "A".to_string(), division_id: div.id.clone(), duration_minutes: div.interview_duration_minutes };
-                is_field_suitable_for_activity(config, f, &dummy_interview)
-            }).collect();
+            let interview_fields: Vec<&crate::model::Field> = fields
+                .iter()
+                .filter(|f| {
+                    let dummy_interview = Activity::Interview {
+                        id: "dummy".to_string(),
+                        team: "A".to_string(),
+                        division_id: div.id.clone(),
+                        duration_minutes: div.interview_duration_minutes,
+                    };
+                    is_field_suitable_for_activity(config, f, &dummy_interview)
+                })
+                .collect();
 
             if interview_fields.is_empty() {
                 diagnostics.push(DiagnosticMessage {
@@ -263,11 +294,17 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
             }
 
             if !interview_fields.is_empty() && compatible_interview_slots > 0 {
-                let required_interviews = config.teams.iter().filter(|t| t.division_id == div.id).count();
-                let total_interview_slots_available = interview_fields.len() * compatible_interview_slots;
+                let required_interviews = config
+                    .teams
+                    .iter()
+                    .filter(|t| t.division_id == div.id)
+                    .count();
+                let total_interview_slots_available =
+                    interview_fields.len() * compatible_interview_slots;
                 if required_interviews > total_interview_slots_available {
                     let def = required_interviews - total_interview_slots_available;
-                    let recommended_fields = required_interviews.div_ceil(compatible_interview_slots);
+                    let recommended_fields =
+                        required_interviews.div_ceil(compatible_interview_slots);
                     let recommended_slots = required_interviews.div_ceil(interview_fields.len());
 
                     diagnostics.push(DiagnosticMessage {
@@ -312,7 +349,9 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
 
         // 3. Team Activity Count Check
         // Count maximum activities for any team in this division
-        let div_teams: Vec<&crate::model::Team> = config.teams.iter()
+        let div_teams: Vec<&crate::model::Team> = config
+            .teams
+            .iter()
             .filter(|t| t.division_id == div.id)
             .collect();
         let div_teams_count = div_teams.len();
@@ -332,7 +371,10 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
         }
 
         if div.finals_enabled {
-            let required_teams = match div.finals_rounds.unwrap_or(crate::model::FinalsRounds::Grand) {
+            let required_teams = match div
+                .finals_rounds
+                .unwrap_or(crate::model::FinalsRounds::Grand)
+            {
                 crate::model::FinalsRounds::Grand => 2,
                 crate::model::FinalsRounds::Semis => 4,
                 crate::model::FinalsRounds::Quarter => 8,
@@ -355,7 +397,10 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
         }
 
         let finals_count = if div.finals_enabled {
-            match div.finals_rounds.unwrap_or(crate::model::FinalsRounds::Grand) {
+            match div
+                .finals_rounds
+                .unwrap_or(crate::model::FinalsRounds::Grand)
+            {
                 crate::model::FinalsRounds::Grand => 1,
                 crate::model::FinalsRounds::Semis => 2,
                 crate::model::FinalsRounds::Quarter => 3,
@@ -397,11 +442,16 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
     // 4. Team Total Activity Check (Across the entire competition)
     for team in &config.teams {
         if let Some(div) = config.divisions.iter().find(|d| d.id == team.division_id) {
-            let div_teams_count = config.teams.iter()
+            let div_teams_count = config
+                .teams
+                .iter()
                 .filter(|t| t.division_id == div.id)
                 .count();
             let finals_count = if div.finals_enabled {
-                match div.finals_rounds.unwrap_or(crate::model::FinalsRounds::Grand) {
+                match div
+                    .finals_rounds
+                    .unwrap_or(crate::model::FinalsRounds::Grand)
+                {
                     crate::model::FinalsRounds::Grand => 1,
                     crate::model::FinalsRounds::Semis => 2,
                     crate::model::FinalsRounds::Quarter => 3,
@@ -454,10 +504,7 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
     }
 
     // Calculate total volunteer-slots available
-    let total_available_vol_slots: usize = volunteers
-        .iter()
-        .map(|v| v.availabilities.len())
-        .sum();
+    let total_available_vol_slots: usize = volunteers.iter().map(|v| v.availabilities.len()).sum();
 
     if required_vol_slots > total_available_vol_slots {
         diagnostics.push(DiagnosticMessage {
@@ -501,7 +548,10 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
                     "Time slot '{} ({}-{})' has ZERO volunteers available.",
                     slot.day, slot.start_time, slot.end_time
                 ),
-                recommendation: Some("Assign at least 1-2 volunteers to be available during this time slot.".to_string()),
+                recommendation: Some(
+                    "Assign at least 1-2 volunteers to be available during this time slot."
+                        .to_string(),
+                ),
             });
         }
     }
@@ -537,22 +587,28 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
         }
     }
 
-    let comp_fields_count = fields.iter().filter(|f| f.kind == FieldKind::Competition).count();
+    let comp_fields_count = fields
+        .iter()
+        .filter(|f| f.kind == FieldKind::Competition)
+        .count();
     let total_competition_field_slots = comp_fields_count * slots.len();
-    
+
     if competition_activities_count > total_competition_field_slots {
         diagnostics.push(DiagnosticMessage {
             severity: DiagnosticSeverity::Error,
             message: format!(
                 "Global competition capacity exceeded. Total required games/runs ({}) exceeds total available competition field-slots ({}) ({} fields * {} slots).",
-                competition_activities_count, total_competition_field_slots, 
+                competition_activities_count, total_competition_field_slots,
                 comp_fields_count, slots.len()
             ),
             recommendation: Some("Add more fields or time slots, or reduce the games per team.".to_string()),
         });
     }
 
-    let int_fields_count = fields.iter().filter(|f| f.kind == FieldKind::Interview).count();
+    let int_fields_count = fields
+        .iter()
+        .filter(|f| f.kind == FieldKind::Interview)
+        .count();
     let total_interview_field_slots = int_fields_count * slots.len();
 
     if interview_activities_count > total_interview_field_slots {
@@ -577,7 +633,11 @@ pub fn validate_config(config: &TournamentConfig) -> Vec<DiagnosticMessage> {
     diagnostics
 }
 
-pub fn validate_schedule(config: &TournamentConfig, schedule: &crate::model::Schedule, params: &crate::scheduler::SolverParams) -> Vec<DiagnosticMessage> {
+pub fn validate_schedule(
+    config: &TournamentConfig,
+    schedule: &crate::model::Schedule,
+    params: &crate::scheduler::SolverParams,
+) -> Vec<DiagnosticMessage> {
     let assignment_conflicts = crate::scheduler::get_assignment_conflicts(config, schedule, params);
     let mut messages = Vec::new();
     let mut seen = std::collections::HashSet::new();
