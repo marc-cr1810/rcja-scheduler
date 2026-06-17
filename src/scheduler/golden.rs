@@ -360,7 +360,7 @@ mod tests {
     /// the pre-finals region — see `dispersion`). Field-poor divisions may keep a
     /// couple of QFs the band before the block — unavoidable when a division's QF
     /// count exceeds its field count and the post-lunch tail is short.
-    const GOLDEN_SEED: u64 = 0x60_1DEC0DE;
+    const GOLDEN_SEED: u64 = 0x60_1DEC0DF;
     const GOLDEN_ITERS: usize = 50_000;
     const GOLDEN_RESTARTS: usize = 5;
 

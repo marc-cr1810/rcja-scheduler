@@ -1823,7 +1823,8 @@ mod time_fmt_test {
         use std::fs::File;
         use std::io::Write;
 
-        let config_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/test_config.json");
+        let config_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/test_config.json");
         let file = File::open(config_path).unwrap();
         let config: crate::model::TournamentConfig = serde_json::from_reader(file).unwrap();
 
