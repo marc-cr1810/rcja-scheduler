@@ -37,7 +37,7 @@ use std::collections::BTreeMap;
 /// The real tournament config, embedded at compile time so the harness is
 /// portable and CWD-independent (the old scratch test hard-coded an absolute
 /// path and wrote artifacts into the repo).
-const REAL_CONFIG_JSON: &str = include_str!("../../rcja_config.json");
+const REAL_CONFIG_JSON: &str = include_str!("../../tests/test_config.json");
 
 /// Parses the embedded real config.
 pub(crate) fn real_config() -> TournamentConfig {
