@@ -307,10 +307,13 @@ mod tests {
     /// ≈2222, dispersion CoV ≈0.255. Phase 2's constructive seeder dropped that to
     /// **0 hard conflicts**, soft ≈937, CoV ≈0.234; Phase 3's free-relocation move
     /// set took CoV to ≈0.198; Phase 5 (banding removed, `peak_period_weight`
-    /// raised to 1.0) reached 0 hard, soft ≈941. Phase 7 (global RR spread, finals
-    /// excluded from the spread metric so they compact) reaches **0 hard, soft
-    /// ≈921, RR-CoV ≈0.146, finals packed into the last ~6 bands reaching the final
-    /// slot** (RR-CoV is over the pre-finals region — see `dispersion`).
+    /// raised to 1.0) reached 0 hard, soft ≈941. Phase 7 (global RR spread + finals
+    /// excluded from the spread metric + seeder reserves a stage-banded finals tail
+    /// placed most-constrained-division-first) reaches **0 hard, soft ≈950, RR-CoV
+    /// ≈0.17, finals in the last ~4 bands reaching the final slot** (RR-CoV is over
+    /// the pre-finals region — see `dispersion`). Field-poor divisions may keep a
+    /// couple of QFs the band before the block — unavoidable when a division's QF
+    /// count exceeds its field count and the post-lunch tail is short.
     const GOLDEN_SEED: u64 = 0x60_1DEC0DE;
     const GOLDEN_ITERS: usize = 50_000;
     const GOLDEN_RESTARTS: usize = 5;

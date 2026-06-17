@@ -1060,29 +1060,33 @@ impl<'a> FastEvaluator<'a> {
     fn report_division_penalties<S: ConflictSink>(params: &SolverParams, config: &InternalTournamentConfig, schedule: &InternalSchedule, list: &[usize], sink: &mut S) {
         if list.is_empty() { return; }
 
-        // Penalise the span of the finals to encourage compacting them.
+        // Compaction: penalise the spread of a division's finals so they stay a
+        // tight block. The *placement at the end* of the event is handled
+        // structurally by the constructive seeder (it reserves the last slots for
+        // a stage-banded finals block); a soft "lateness" pull here was found to
+        // only perturb round-robin spread without tightening finals further, so it
+        // was dropped. Stage-order and recharge remain hard.
         let mut first_final_slot_idx = None;
         let mut last_final_slot_idx = None;
         for &idx in list {
             let act = &config.activities[idx];
             if act.is_final && !act.is_interview {
-                let assign = &schedule.assignments[idx];
+                let slot = schedule.assignments[idx].slot_idx;
                 if first_final_slot_idx.is_none() {
-                    first_final_slot_idx = Some(assign.slot_idx);
+                    first_final_slot_idx = Some(slot);
                 }
-                last_final_slot_idx = Some(assign.slot_idx);
+                last_final_slot_idx = Some(slot);
             }
         }
-        if let (Some(first_slot), Some(last_slot)) = (first_final_slot_idx, last_final_slot_idx) {
-            if last_slot > first_slot {
-                let span = last_slot - first_slot;
-                sink.report(
-                    CostClass::Soft,
-                    span as f64 * params.round_order_weight * 2.0,
-                    ConflictKind::RoundOrder,
-                    &[],
-                );
-            }
+        if let (Some(first_slot), Some(last_slot)) = (first_final_slot_idx, last_final_slot_idx)
+            && last_slot > first_slot {
+            let span = last_slot - first_slot;
+            sink.report(
+                CostClass::Soft,
+                span as f64 * params.round_order_weight * 2.0,
+                ConflictKind::RoundOrder,
+                &[],
+            );
         }
 
         for i in 0..list.len() {

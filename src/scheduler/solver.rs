@@ -378,11 +378,34 @@ fn construct_seed_schedule(
     let comp_pos: BTreeMap<usize, usize> =
         comp_slots.iter().enumerate().map(|(p, &s)| (s, p)).collect();
 
-    // ---- Competition: per division, round-banded across the whole timeline ----
+    // Reserve a compact finals block at the very end of the event: one band per
+    // stage level (GF and 3rd-place share the last band, then SF, then QF, then
+    // EF). All divisions' matches at the same stage land in the same band (they
+    // are independent across divisions), so finals pack into the last few slots
+    // instead of straddling earlier time / a lunch break. Round-robin then fills
+    // only the slots *before* that reserved tail.
+    let stage_offset = |stage: usize| -> usize {
+        match stage {
+            4 | 5 => 0, // 3rd place / grand final
+            3 => 1,     // semi
+            2 => 2,     // quarter
+            1 => 3,     // eighth
+            _ => 0,
+        }
+    };
+    let finals_depth = config.activities.iter()
+        .filter(|a| a.is_final && !a.is_interview)
+        .map(|a| stage_offset(a.stage) + 1)
+        .max()
+        .unwrap_or(0);
+    let rr_region = comp_slots.len().saturating_sub(finals_depth);
+    let rr_slots: &[usize] = &comp_slots[..rr_region];
+
+    // ---- Round-robin: per division, round-banded across the pre-finals region ----
     for div_idx in 0..config.divisions.len() {
         let mut by_round: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for (ai, a) in config.activities.iter().enumerate() {
-            if !a.is_interview && a.division_idx == div_idx {
+            if !a.is_interview && !a.is_final && a.division_idx == div_idx {
                 by_round.entry(a.round_index).or_default().push(ai);
             }
         }
@@ -391,10 +414,10 @@ fn construct_seed_schedule(
         }
         let rounds: Vec<usize> = by_round.keys().copied().collect();
         let total: usize = by_round.values().map(|v| v.len()).sum::<usize>().max(1);
-        let nslots = comp_slots.len();
+        let nslots = rr_slots.len().max(1);
 
         // Contiguous chronological window start per round, sized in proportion to
-        // the round's match count so the rounds tile the whole timeline.
+        // the round's match count so the rounds tile the whole pre-finals region.
         let mut win_start = vec![0usize; rounds.len()];
         let mut cursor = 0usize;
         for (i, r) in rounds.iter().enumerate() {
@@ -421,10 +444,10 @@ fn construct_seed_schedule(
                     .max()
                     .unwrap_or(0);
                 let from = win_start[i].max(min_pos);
-                // Prefer this round's window; then spill forward from the per-team
-                // floor; then anywhere free; then (over-constrained) any cell.
-                let placed = find_free_cell(config, &grid, &occ, ai, &comp_slots, from, &field_order)
-                    .or_else(|| find_free_cell(config, &grid, &occ, ai, &comp_slots, min_pos, &field_order))
+                // Prefer this round's window in the pre-finals region; spill forward
+                // there; then anywhere free (incl. the finals tail) as a last resort.
+                let placed = find_free_cell(config, &grid, &occ, ai, rr_slots, from, &field_order)
+                    .or_else(|| find_free_cell(config, &grid, &occ, ai, rr_slots, min_pos, &field_order))
                     .or_else(|| find_free_cell(config, &grid, &occ, ai, &comp_slots, 0, &field_order))
                     .or_else(|| any_usable_cell(config, &grid, ai, &comp_slots, &field_order));
                 if let Some((slot, f)) = placed {
@@ -439,6 +462,60 @@ fn construct_seed_schedule(
                     slot_of[ai] = s;
                     field_of[ai] = comp_fields.first().copied();
                 }
+            }
+        }
+    }
+
+    // ---- Finals: compact block at the very end, stage-banded across divisions ----
+    {
+        let mut field_order = comp_fields.clone();
+        field_order.shuffle(rng);
+        // Competition fields available to each division, so the placement can go
+        // most-constrained-division-first within each stage band: a division with
+        // few (often shared) fields must claim its cells before a field-rich
+        // division grabs them. Without this, e.g. a 2-field division that shares
+        // fields with a 6-field one gets scattered out of the finals block.
+        let div_field_count: Vec<usize> = (0..config.divisions.len())
+            .map(|d| comp_fields.iter().filter(|&&f| {
+                config.fields[f].allowed_division_indices.as_ref().is_none_or(|a| a.contains(&d))
+            }).count())
+            .collect();
+        let mut finals: Vec<usize> = (0..n)
+            .filter(|&i| config.activities[i].is_final && !config.activities[i].is_interview)
+            .collect();
+        finals.sort_by_key(|&i| {
+            let a = &config.activities[i];
+            (stage_offset(a.stage), div_field_count[a.division_idx])
+        });
+        for ai in finals {
+            let dc = config.activities[ai].duration_class;
+            let off = stage_offset(config.activities[ai].stage);
+            // Target the stage's reserved band; if it is full, spill toward earlier
+            // bands (only happens when a stage overflows the available fields).
+            let target = comp_slots.len().saturating_sub(1 + off);
+            let mut placed = None;
+            let mut p = target as isize;
+            while p >= 0 {
+                let slot = comp_slots[p as usize];
+                for &f in &field_order {
+                    if grid.activity_can_use(config, ai, f, slot) && occ.is_free(config, f, slot, dc) {
+                        placed = Some((slot, f));
+                        break;
+                    }
+                }
+                if placed.is_some() {
+                    break;
+                }
+                p -= 1;
+            }
+            let placed = placed.or_else(|| any_usable_cell(config, &grid, ai, &comp_slots, &field_order));
+            if let Some((slot, f)) = placed {
+                slot_of[ai] = slot;
+                field_of[ai] = Some(f);
+                occ.place(config, f, slot, dc);
+            } else if let Some(&s) = comp_slots.last() {
+                slot_of[ai] = s;
+                field_of[ai] = comp_fields.first().copied();
             }
         }
     }
