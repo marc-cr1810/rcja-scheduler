@@ -371,6 +371,31 @@ impl AppState {
                                     lock_changed = true;
                                 }
                             }
+
+                            // Surface any locks pointing at a field that no longer
+                            // exists (e.g. a deleted field in an older config) so
+                            // they can still be cleared from here.
+                            let dangling: Vec<String> = vol.locked_field_ids.as_ref()
+                                .map(|ids| ids.iter()
+                                    .filter(|fid| !fields_list.iter().any(|(id, _)| &id == fid))
+                                    .cloned()
+                                    .collect())
+                                .unwrap_or_default();
+                            if !dangling.is_empty() {
+                                ui.separator();
+                                for fid in dangling {
+                                    let mut locked = true;
+                                    if ui.checkbox(&mut locked, RichText::new(format!("⚠ {} (missing)", fid)).color(theme::warning())).changed() {
+                                        if let Some(ids) = vol.locked_field_ids.as_mut() {
+                                            ids.retain(|x| x != &fid);
+                                            if ids.is_empty() {
+                                                vol.locked_field_ids = None;
+                                            }
+                                        }
+                                        lock_changed = true;
+                                    }
+                                }
+                            }
                         });
                     if lock_changed {
                         config_changed = true;

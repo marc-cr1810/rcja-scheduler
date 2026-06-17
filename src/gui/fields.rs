@@ -153,7 +153,25 @@ impl AppState {
         }
 
         if let Some(idx) = to_remove {
+            let removed_id = self.config.fields[idx].id.clone();
             self.config.fields.remove(idx);
+            // Drop dangling references to the deleted field so nobody stays
+            // locked to (or a division restricted to) an id that no longer
+            // exists — otherwise the volunteer silently becomes unlocked and the
+            // stale id can't be cleared from the UI.
+            for vol in &mut self.config.volunteers {
+                if let Some(ids) = vol.locked_field_ids.as_mut() {
+                    ids.retain(|x| x != &removed_id);
+                    if ids.is_empty() {
+                        vol.locked_field_ids = None;
+                    }
+                }
+            }
+            for div in &mut self.config.divisions {
+                if let Some(allowed) = div.allowed_fields.as_mut() {
+                    allowed.retain(|x| x != &removed_id);
+                }
+            }
             self.clear_schedule();
             self.update_diagnostics();
             self.status_message = "Item deleted.".to_string();

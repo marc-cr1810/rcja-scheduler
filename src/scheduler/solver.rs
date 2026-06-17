@@ -406,8 +406,18 @@ fn construct_seed_schedule(
     // (below), seeding an already-balanced layout for the local search to keep.
     let mut field_load = vec![0u32; config.fields.len()];
 
+    // Seed divisions with the fewest usable fields first. A constrained division
+    // (e.g. one sharing only two fields with another) claims its cells before a
+    // field-rich division floods them, so shared fields don't end up carrying two
+    // divisions' worth of matches while dedicated fields sit lighter.
+    let comp_field_count = |div_idx: usize| comp_fields.iter()
+        .filter(|&&f| config.fields[f].allowed_division_indices.as_ref().map_or(true, |a| a.contains(&div_idx)))
+        .count();
+    let mut div_order: Vec<usize> = (0..config.divisions.len()).collect();
+    div_order.sort_by_key(|&d| comp_field_count(d));
+
     // ---- Round-robin: per division, round-banded across the pre-finals region ----
-    for div_idx in 0..config.divisions.len() {
+    for &div_idx in &div_order {
         let mut by_round: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for (ai, a) in config.activities.iter().enumerate() {
             if !a.is_interview && !a.is_final && a.division_idx == div_idx {
