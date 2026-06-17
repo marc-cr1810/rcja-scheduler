@@ -1,9 +1,30 @@
 use std::fs::{self, File};
 use std::io::Write;
 use std::collections::HashSet;
-use crate::model::{Team, ScheduleAssignment};
+use crate::model::{Team, ScheduleAssignment, Schedule, TournamentConfig};
 use super::{AppState, ExportMessage};
 use genpdf::{elements, style, Element};
+
+/// Wire format for a saved project file. The tournament `config` fields are
+/// flattened to the top level so files written before schedule-bundling — which
+/// were a bare `TournamentConfig` — still load: their fields land in `config`
+/// and `schedule` defaults to `None`. A generated/edited schedule, when present,
+/// is stored under a single `schedule` key alongside it.
+#[derive(serde::Serialize)]
+struct ProjectSave<'a> {
+    #[serde(flatten)]
+    config: &'a TournamentConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    schedule: Option<&'a Schedule>,
+}
+
+#[derive(serde::Deserialize)]
+struct ProjectLoad {
+    #[serde(flatten)]
+    config: TournamentConfig,
+    #[serde(default)]
+    schedule: Option<Schedule>,
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum ReportType {
@@ -37,7 +58,11 @@ impl AppState {
         // Sync solver/generator settings from AppState into the config before saving
         self.sync_solver_settings_to_config();
 
-        let json = match serde_json::to_string_pretty(&self.config) {
+        let project = ProjectSave {
+            config: &self.config,
+            schedule: self.schedule.as_ref(),
+        };
+        let json = match serde_json::to_string_pretty(&project) {
             Ok(json) => json,
             Err(e) => {
                 self.status_message = format!("Failed to serialize config: {}", e);
@@ -62,15 +87,23 @@ impl AppState {
             .pick_file()
         {
             if let Ok(file) = File::open(&path) {
-                if let Ok(config) = serde_json::from_reader(file) {
-                    self.config = config;
+                if let Ok(project) = serde_json::from_reader::<_, ProjectLoad>(file) {
+                    self.config = project.config;
                     self.current_file_path = Some(path.clone());
                     // Migrate legacy fairness_mode for old configs that lack solver_settings
                     self.migrate_legacy_fairness_mode();
                     // Populate AppState solver fields from the loaded config
                     self.sync_solver_settings_from_config();
+                    // Restore a bundled schedule if the file carried one, otherwise
+                    // start clean. Re-evaluating rebuilds conflicts, division rounds
+                    // and diagnostics against the just-loaded config.
                     self.clear_schedule();
-                    self.update_diagnostics();
+                    if let Some(schedule) = project.schedule {
+                        self.schedule = Some(schedule);
+                        self.re_evaluate_schedule();
+                    } else {
+                        self.update_diagnostics();
+                    }
                     self.status_message = format!("Config loaded from '{}'", path.display());
                 } else {
                     self.status_message = format!("Failed to parse '{}'", path.display());
@@ -1274,6 +1307,51 @@ fn split_csv_line(line: &str) -> Vec<String> {
     }
     result.push(current);
     result
+}
+
+#[cfg(test)]
+mod project_file_test {
+    use super::*;
+
+    /// A file written before schedule-bundling is a bare `TournamentConfig` with
+    /// no `schedule` key. It must still load, with `schedule` defaulting to None.
+    #[test]
+    fn loads_legacy_bare_config() {
+        let config = TournamentConfig::default();
+        let legacy_json = serde_json::to_string(&config).unwrap();
+        let loaded: ProjectLoad = serde_json::from_str(&legacy_json).unwrap();
+        assert!(loaded.schedule.is_none());
+        assert_eq!(loaded.config.competition_name, config.competition_name);
+    }
+
+    /// Saving with a schedule and loading it back preserves both the config and
+    /// the bundled assignments.
+    #[test]
+    fn round_trips_bundled_schedule() {
+        let config = TournamentConfig::default();
+        let schedule = Schedule {
+            assignments: vec![ScheduleAssignment {
+                activity: crate::model::Activity::Interview {
+                    id: "int1".to_string(),
+                    team: "Team A".to_string(),
+                    division_id: "div1".to_string(),
+                    duration_minutes: 15,
+                },
+                time_slot_id: "slot1".to_string(),
+                field_id: Some("field1".to_string()),
+                volunteer_ids: vec!["v1".to_string()],
+            }],
+        };
+        let json = serde_json::to_string(&ProjectSave {
+            config: &config,
+            schedule: Some(&schedule),
+        })
+        .unwrap();
+        let loaded: ProjectLoad = serde_json::from_str(&json).unwrap();
+        let loaded_schedule = loaded.schedule.expect("schedule should round-trip");
+        assert_eq!(loaded_schedule.assignments.len(), 1);
+        assert_eq!(loaded_schedule.assignments[0].time_slot_id, "slot1");
+    }
 }
 
 #[cfg(test)]
