@@ -1374,7 +1374,8 @@ mod time_fmt_test {
         use std::fs::File;
         use std::io::Write;
         
-        let file = File::open("/home/marc/programming/rust/rcja-scheduler/rcja_config.json").unwrap();
+        let config_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("rcja_config.json");
+        let file = File::open(config_path).unwrap();
         let config: crate::model::TournamentConfig = serde_json::from_reader(file).unwrap();
         
         let mut app_state = AppState::default();
@@ -1421,8 +1422,18 @@ mod time_fmt_test {
         }
         
         let csv = generate_csv_content_internal(&app_state.config, &sched.assignments, false);
+        assert!(!csv.is_empty());
         
-        let mut out_file = File::create("/home/marc/programming/rust/rcja-scheduler/schedule.csv").unwrap();
+        let out_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("schedule.csv");
+        struct CleanupGuard<'a>(&'a std::path::Path);
+        impl<'a> Drop for CleanupGuard<'a> {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(self.0);
+            }
+        }
+        let _cleanup = CleanupGuard(&out_path);
+        
+        let mut out_file = File::create(&out_path).unwrap();
         out_file.write_all(csv.as_bytes()).unwrap();
         
         println!("SUCCESSFULLY GENERATED schedule.csv");
