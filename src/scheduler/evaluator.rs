@@ -288,9 +288,13 @@ mod tests {
     #[test]
     fn test_field_balance_with_interviews() {
         let mut config = TournamentConfig::default();
+        // f1 and f2 both serve div1, so they share a balance pool; the interview
+        // table f3 sits in its own pool. Field balance is scored per pool, so this
+        // checks that competition load evens out across the shared pool while an
+        // interview field coexists without distorting the competition balance.
         config.fields = vec![
-            Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: Some(vec!["div1".into()]) },
-            Field { id: "f2".into(), name: "Field 2".into(), kind: FieldKind::Competition, allowed_divisions: Some(vec!["div2".into()]) },
+            Field { id: "f1".into(), name: "Field 1".into(), kind: FieldKind::Competition, allowed_divisions: Some(vec!["div1".into(), "div2".into()]) },
+            Field { id: "f2".into(), name: "Field 2".into(), kind: FieldKind::Competition, allowed_divisions: Some(vec!["div1".into(), "div2".into()]) },
             Field { id: "f3".into(), name: "Field 3".into(), kind: FieldKind::Interview, allowed_divisions: None },
         ];
         config.divisions = vec![
@@ -322,28 +326,30 @@ mod tests {
         // to how these toy schedules cluster in time, which would confound the check.
         let params = SolverParams { peak_period_weight: 0.0, ..SolverParams::default() };
 
+        // Schedule 1: both matches piled onto f1 (pool counts [2, 0]).
         let schedule1 = Schedule {
             assignments: vec![
-                ScheduleAssignment { 
-                    activity: Activity::Match { id: "m1".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
-                    time_slot_id: "s1".into(), field_id: Some("f3".into()), volunteer_ids: vec![] 
+                ScheduleAssignment {
+                    activity: Activity::Match { id: "m1".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } },
+                    time_slot_id: "s1".into(), field_id: Some("f1".into()), volunteer_ids: vec![]
                 },
-                ScheduleAssignment { 
-                    activity: Activity::Match { id: "m2".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div2".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
-                    time_slot_id: "s2".into(), field_id: Some("f3".into()), volunteer_ids: vec![] 
+                ScheduleAssignment {
+                    activity: Activity::Match { id: "m2".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div2".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } },
+                    time_slot_id: "s2".into(), field_id: Some("f1".into()), volunteer_ids: vec![]
                 },
             ]
         };
 
+        // Schedule 2: matches spread across the shared pool (counts [1, 1]).
         let schedule2 = Schedule {
             assignments: vec![
-                ScheduleAssignment { 
-                    activity: Activity::Match { id: "m1".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
-                    time_slot_id: "s1".into(), field_id: Some("f1".into()), volunteer_ids: vec![] 
+                ScheduleAssignment {
+                    activity: Activity::Match { id: "m1".into(), team_a: "a".into(), team_b: "b".into(), division_id: "div1".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } },
+                    time_slot_id: "s1".into(), field_id: Some("f1".into()), volunteer_ids: vec![]
                 },
-                ScheduleAssignment { 
-                    activity: Activity::Match { id: "m2".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div2".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } }, 
-                    time_slot_id: "s1".into(), field_id: Some("f2".into()), volunteer_ids: vec![] 
+                ScheduleAssignment {
+                    activity: Activity::Match { id: "m2".into(), team_a: "c".into(), team_b: "d".into(), division_id: "div2".into(), duration_minutes: 20, stage: crate::model::MatchStage::RoundRobin { cycle: 0, round: 0 } },
+                    time_slot_id: "s1".into(), field_id: Some("f2".into()), volunteer_ids: vec![]
                 },
             ]
         };

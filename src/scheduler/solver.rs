@@ -401,6 +401,11 @@ fn construct_seed_schedule(
     let rr_region = comp_slots.len().saturating_sub(finals_depth);
     let rr_slots: &[usize] = &comp_slots[..rr_region];
 
+    // Running per-field placement count, shared across divisions so shared fields
+    // reflect their combined load. Field choice prefers the least-loaded field
+    // (below), seeding an already-balanced layout for the local search to keep.
+    let mut field_load = vec![0u32; config.fields.len()];
+
     // ---- Round-robin: per division, round-banded across the pre-finals region ----
     for div_idx in 0..config.divisions.len() {
         let mut by_round: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
@@ -444,6 +449,11 @@ fn construct_seed_schedule(
                     .max()
                     .unwrap_or(0);
                 let from = win_start[i].max(min_pos);
+                // Order fields least-loaded-first (shuffled tiebreak) so the
+                // earliest free cell `find_free_cell` returns also lands on the
+                // emptiest field, balancing per-field workload from the start.
+                field_order.shuffle(rng);
+                field_order.sort_by_key(|&f| field_load[f]);
                 // Prefer this round's window in the pre-finals region; spill forward
                 // there; then anywhere free (incl. the finals tail) as a last resort.
                 let placed = find_free_cell(config, &grid, &occ, ai, rr_slots, from, &field_order)
@@ -454,6 +464,7 @@ fn construct_seed_schedule(
                     slot_of[ai] = slot;
                     field_of[ai] = Some(f);
                     occ.place(config, f, slot, act.duration_class);
+                    field_load[f] += 1;
                     let next = comp_pos.get(&slot).copied().unwrap_or(0) + 1;
                     for &t in &act.team_indices {
                         team_next.insert(t, next);
@@ -694,6 +705,7 @@ impl MoveCtx {
         config: &InternalTournamentConfig,
         occ: &FieldOccupancy,
         activity_idx: usize,
+        field_load: &[u32],
         rng: &mut impl Rng,
     ) -> Option<(usize, usize)> {
         let act = &config.activities[activity_idx];
@@ -704,10 +716,23 @@ impl MoveCtx {
             self.grid.activity_can_use(config, activity_idx, field, slot)
                 && occ.is_free(config, field, slot, dc)
         };
+        // Pick a random time, then the least-loaded eligible field free at that
+        // time (random tiebreak). Time stays freely explored while field choice
+        // actively evens out per-field workload, so balance is driven by the move
+        // set rather than left entirely to the soft balance penalty to recover.
         for _ in 0..24 {
             let slot = *slots.choose(rng).unwrap();
-            let field = *fields.choose(rng).unwrap();
-            if usable_free(slot, field) { return Some((slot, field)); }
+            let mut best: Option<usize> = None;
+            let mut best_load = u32::MAX;
+            for &field in fields {
+                if !usable_free(slot, field) { continue; }
+                let load = field_load.get(field).copied().unwrap_or(0);
+                if load < best_load || (load == best_load && rng.gen_bool(0.5)) {
+                    best_load = load;
+                    best = Some(field);
+                }
+            }
+            if let Some(field) = best { return Some((slot, field)); }
         }
         let n = slots.len();
         let off = rng.gen_range(0..n);
@@ -819,7 +844,7 @@ fn mutate_internal_schedule_in_place(
             let dc = config.activities[idx].duration_class;
             if let Some(f) = old_field { occ.remove(config, f, old_slot, dc); }
 
-            match ctx.random_free_cell(config, occ, idx, rng) {
+            match ctx.random_free_cell(config, occ, idx, evaluator.field_total_loads(), rng) {
                 Some((slot, field)) => {
                     schedule.assignments[idx].slot_idx = slot;
                     schedule.assignments[idx].field_idx = Some(field);

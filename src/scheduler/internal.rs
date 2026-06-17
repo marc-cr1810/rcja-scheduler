@@ -1,7 +1,7 @@
 use crate::model::{
     Activity, FieldKind, SchedulingMode, TournamentConfig,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -91,6 +91,16 @@ pub struct InternalTournamentConfig {
 
     // NEW: track if a volunteer has the "Interview" capability
     pub can_interview: Vec<bool>,
+
+    /// Fields grouped into balance pools: each inner Vec is a set of field
+    /// indices whose loads should be equalised against *each other*. Competition
+    /// fields are unioned transitively by shared division (so a division's
+    /// interchangeable fields land in one pool, and shared fields bridge the
+    /// divisions that use them); interview tables form their own pool. Field
+    /// balance is scored as the sum of per-pool variance, so divisions that can
+    /// never be equal to each other — different game counts over disjoint field
+    /// pools — are not wrongly traded off against one another.
+    pub field_balance_groups: Vec<Vec<usize>>,
 }
 
 #[derive(Debug, Clone)]
@@ -297,6 +307,8 @@ impl InternalTournamentConfig {
 
         let num_total_buckets = day_names.len() * buckets_per_day as usize;
 
+        let field_balance_groups = compute_field_balance_groups(&internal_fields);
+
         Self {
             activities: internal_activities,
             volunteers: internal_volunteers,
@@ -312,8 +324,71 @@ impl InternalTournamentConfig {
             num_total_buckets,
             strict_capabilities: config.strict_capabilities,
             can_interview,
+            field_balance_groups,
         }
     }
+}
+
+/// True if two competition fields can host matches from a common division. A
+/// `None` division list means "all divisions", so it shares with every other
+/// competition field.
+fn fields_share_division(a: &InternalField, b: &InternalField) -> bool {
+    match (&a.allowed_division_indices, &b.allowed_division_indices) {
+        (Some(da), Some(db)) => da.iter().any(|d| db.contains(d)),
+        _ => true,
+    }
+}
+
+/// Partitions fields into balance pools (see
+/// [`InternalTournamentConfig::field_balance_groups`]). Competition fields are
+/// union-found by shared division (transitive: shared fields bridge divisions);
+/// all interview tables form a single pool.
+fn compute_field_balance_groups(fields: &[InternalField]) -> Vec<Vec<usize>> {
+    let n = fields.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn find(parent: &mut [usize], x: usize) -> usize {
+        let mut root = x;
+        while parent[root] != root {
+            root = parent[root];
+        }
+        let mut cur = x;
+        while parent[cur] != root {
+            let next = parent[cur];
+            parent[cur] = root;
+            cur = next;
+        }
+        root
+    }
+    let union = |parent: &mut Vec<usize>, i: usize, j: usize| {
+        let ri = find(parent, i);
+        let rj = find(parent, j);
+        if ri != rj {
+            parent[ri] = rj;
+        }
+    };
+
+    let mut first_interview: Option<usize> = None;
+    for i in 0..n {
+        if fields[i].kind == FieldKind::Interview {
+            match first_interview {
+                Some(j) => union(&mut parent, i, j),
+                None => first_interview = Some(i),
+            }
+            continue;
+        }
+        for j in 0..i {
+            if fields[j].kind == FieldKind::Competition && fields_share_division(&fields[i], &fields[j]) {
+                union(&mut parent, i, j);
+            }
+        }
+    }
+
+    let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for i in 0..n {
+        let root = find(&mut parent, i);
+        groups.entry(root).or_default().push(i);
+    }
+    groups.into_values().collect()
 }
 
 // The round-window banding heuristic (and its test) was removed in Phase 5 of

@@ -627,8 +627,8 @@ impl AppState {
             return;
         }
 
-        ui.label(RichText::new("VOLUNTEER WORKLOAD HEATMAP").strong().color(theme::text_muted()));
-        ui.label("Visualization of shift density across the tournament.");
+        ui.label(RichText::new("VOLUNTEER WORKLOAD TIMELINE").strong().color(theme::text_muted()));
+        ui.label("Solid blocks show when each volunteer is actually working; gaps (lunch / idle) are shown to scale.");
         ui.add_space(10.0);
 
         let sched = self.schedule.as_ref().unwrap();
@@ -636,6 +636,12 @@ impl AppState {
         let volunteers = &self.config.volunteers;
 
         if volunteers.is_empty() || slots.is_empty() { return; }
+
+        // Fixed widths so the name column, timeline bars and totals line up into
+        // readable columns across every row.
+        const NAME_W: f32 = 150.0;
+        const TOTAL_W: f32 = 36.0;
+        const RANGES_W: f32 = 230.0;
 
         let mut unique_days = Vec::new();
         for slot in slots {
@@ -649,54 +655,116 @@ impl AppState {
             ui.label(RichText::new(&day).strong().size(14.0).color(theme::accent()));
             ui.add_space(5.0);
 
-            let day_slots: Vec<_> = slots.iter().filter(|s| s.day == day).collect();
+            let day_slots: Vec<&TimeSlot> = slots.iter().filter(|s| s.day == day).collect();
             if day_slots.is_empty() { continue; }
 
-            egui::ScrollArea::horizontal()
-                .id_source(format!("heatmap_scroll_{}", day))
-                .show(ui, |ui| {
-                    egui::Grid::new(format!("heatmap_grid_{}", day))
-                        .spacing([2.0, 2.0])
-                        .show(ui, |ui| {
-                            // Header row
-                            ui.label("");
-                            for slot in &day_slots {
-                                ui.label(RichText::new(&slot.start_time).size(9.0).strong());
-                            }
-                            ui.label(RichText::new("Total").size(9.0).strong());
-                            ui.end_row();
+            // Day span from the actual schedulable slots, so the bars cover only
+            // the working hours of the day.
+            let day_start = day_slots.iter().map(|s| slot_span(s).0).min().unwrap_or(0);
+            let day_end = day_slots.iter().map(|s| slot_span(s).1).max().unwrap_or(day_start);
 
-                            for vol in volunteers {
-                                ui.label(RichText::new(&vol.name).size(11.0));
-                                
-                                let mut day_total = 0;
-                                for slot in &day_slots {
-                                    let is_assigned = sched.assignments.iter().any(|a| a.time_slot_id == slot.id && a.volunteer_ids.contains(&vol.id));
-                                    let is_available = vol.availabilities.contains(&slot.id);
-                                    
-                                    let (bg, text) = if is_assigned {
-                                        day_total += 1;
-                                        (theme::accent_strong(), theme::on_accent())
-                                    } else if is_available {
-                                        (theme::surface(), theme::text_faint())
-                                    } else {
-                                        (theme::bg_base(), theme::border())
-                                    };
+            // The bar fills the space left after the fixed columns.
+            let bar_w = (ui.available_width() - NAME_W - TOTAL_W - RANGES_W - 24.0).clamp(220.0, 900.0);
 
-                                    let (rect, _resp) = ui.allocate_at_least(egui::vec2(35.0, 18.0), egui::Sense::hover());
-                                    ui.painter().rect_filled(rect, 2.0, bg);
-                                    if is_assigned {
-                                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "ON", egui::FontId::proportional(9.0), text);
-                                    }
-                                }
-                                
-                                ui.label(RichText::new(day_total.to_string()).strong().color(if day_total > 5 { theme::danger() } else { theme::text() }));
-                                ui.end_row();
-                            }
-                        });
+            // Hour-tick axis aligned with the bars below.
+            ui.horizontal(|ui| {
+                ui.add_space(NAME_W);
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, 14.0), egui::Sense::hover());
+                let painter = ui.painter();
+                let span = day_end.saturating_sub(day_start).max(1) as f32;
+                let mut h = (day_start / 60 + 1) * 60;
+                while h < day_end {
+                    let x = rect.left() + rect.width() * ((h - day_start) as f32 / span);
+                    painter.text(
+                        egui::pos2(x, rect.center().y),
+                        egui::Align2::CENTER_CENTER,
+                        fmt_minutes(h),
+                        egui::FontId::proportional(9.0),
+                        theme::text_muted(),
+                    );
+                    h += 60;
+                }
+            });
+
+            for vol in volunteers {
+                // Spans of the slots this volunteer is actually assigned to today.
+                let mut spans: Vec<(u32, u32)> = day_slots.iter()
+                    .filter(|s| sched.assignments.iter()
+                        .any(|a| a.time_slot_id == s.id && a.volunteer_ids.contains(&vol.id)))
+                    .map(|s| slot_span(s))
+                    .collect();
+                let day_total = spans.len();
+                spans.sort_by_key(|(s, _)| *s);
+                // Merge runs separated by no more than a short changeover gap into
+                // one block, so back-to-back shifts read as a continuous period
+                // while genuine idle stretches and lunch stay visible as gaps.
+                let blocks = merge_work_blocks(&spans, 5);
+
+                ui.horizontal(|ui| {
+                    ui.add_sized([NAME_W, 22.0], egui::Label::new(RichText::new(&vol.name).size(11.0)).truncate(true));
+                    draw_work_timeline(ui, &blocks, day_start, day_end, bar_w);
+
+                    let color = if day_total == 0 { theme::text_faint() } else { theme::text() };
+                    ui.add_sized([TOTAL_W, 22.0], egui::Label::new(RichText::new(day_total.to_string()).strong().color(color)));
+
+                    let summary = if blocks.is_empty() {
+                        "—".to_string()
+                    } else {
+                        blocks.iter()
+                            .map(|(s, e)| format!("{}–{}", fmt_minutes(*s), fmt_minutes(*e)))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    ui.add_sized([RANGES_W, 22.0], egui::Label::new(RichText::new(summary).size(10.0).color(theme::text_muted())).truncate(true));
                 });
+            }
         }
     }
+}
+
+/// Merges sorted assigned spans into working blocks, bridging gaps of at most
+/// `bridge` minutes (a changeover between back-to-back shifts) so consecutive
+/// shifts render as one block while real idle gaps remain visible.
+fn merge_work_blocks(spans: &[(u32, u32)], bridge: u32) -> Vec<(u32, u32)> {
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    for &(s, e) in spans {
+        match out.last_mut() {
+            Some(last) if s <= last.1 + bridge => last.1 = last.1.max(e),
+            _ => out.push((s, e)),
+        }
+    }
+    out
+}
+
+/// Horizontal bar of working blocks across the day span, with faint hour
+/// gridlines. Idle time shows as the bar's background between blocks.
+fn draw_work_timeline(ui: &mut egui::Ui, blocks: &[(u32, u32)], day_start: u32, day_end: u32, width: f32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 22.0), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 3.0, theme::surface());
+
+    let span = day_end.saturating_sub(day_start).max(1) as f32;
+
+    let mut h = (day_start / 60 + 1) * 60;
+    while h < day_end {
+        let x = rect.left() + rect.width() * ((h - day_start) as f32 / span);
+        painter.line_segment(
+            [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+            egui::Stroke::new(1.0, theme::border()),
+        );
+        h += 60;
+    }
+
+    for (s, e) in blocks {
+        let x0 = rect.left() + rect.width() * (s.saturating_sub(day_start) as f32 / span);
+        let x1 = rect.left() + rect.width() * (e.saturating_sub(day_start) as f32 / span);
+        let seg = egui::Rect::from_min_max(
+            egui::pos2(x0, rect.top() + 2.0),
+            egui::pos2(x1.max(x0 + 2.0), rect.bottom() - 2.0),
+        );
+        painter.rect_filled(seg, 2.0, theme::accent_strong());
+    }
+    painter.rect_stroke(rect, 3.0, egui::Stroke::new(1.0, theme::border()));
 }
 
 // ── Availability range helpers ────────────────────────────────────────────--

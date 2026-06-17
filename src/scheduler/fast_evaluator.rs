@@ -388,10 +388,13 @@ impl<'a> FastEvaluator<'a> {
             }
         }
 
-        // Variance soft penalties
-        sink.report(CostClass::Soft, calculate_variance(&self.field_match_counts) * self.params.field_balance_weight, ConflictKind::FieldBalance, &[]);
-        sink.report(CostClass::Soft, calculate_variance(&self.field_interview_counts) * self.params.field_balance_weight, ConflictKind::FieldBalance, &[]);
-        sink.report(CostClass::Soft, calculate_variance(&self.field_total_counts) * (self.params.field_balance_weight * 0.5), ConflictKind::FieldBalance, &[]);
+        // Variance soft penalties. Scored per balance pool (fields serving the
+        // same division(s)) and summed, so the solver evens out interchangeable
+        // fields without trying to equalise divisions that can never match.
+        let groups = &self.config.field_balance_groups;
+        sink.report(CostClass::Soft, grouped_variance(&self.field_match_counts, groups) * self.params.field_balance_weight, ConflictKind::FieldBalance, &[]);
+        sink.report(CostClass::Soft, grouped_variance(&self.field_interview_counts, groups) * self.params.field_balance_weight, ConflictKind::FieldBalance, &[]);
+        sink.report(CostClass::Soft, grouped_variance(&self.field_total_counts, groups) * (self.params.field_balance_weight * 0.5), ConflictKind::FieldBalance, &[]);
 
         // Volunteer Fairness
         let fairness_mode = self.params.fairness_mode;
@@ -484,6 +487,14 @@ impl<'a> FastEvaluator<'a> {
         let mut sink = RecordSink::default();
         self.evaluate(schedule, &mut sink);
         sink.records
+    }
+
+    /// Current per-field total placement counts (matches + interviews). The move
+    /// generator reads this to bias relocations toward the least-loaded field, so
+    /// per-field workload evens out structurally rather than only via the soft
+    /// balance penalty. Valid once incremental state is initialised.
+    pub fn field_total_loads(&self) -> &[u32] {
+        &self.field_total_counts
     }
 
     /// Emits double-booking and daily-shift-cap hard conflicts from the
@@ -831,9 +842,10 @@ impl<'a> FastEvaluator<'a> {
         }
 
         let w = self.params.field_balance_weight;
-        soft += calculate_variance(&self.field_match_counts) * w;
-        soft += calculate_variance(&self.field_interview_counts) * w;
-        soft += calculate_variance(&self.field_total_counts) * (w * 0.5);
+        let groups = &self.config.field_balance_groups;
+        soft += grouped_variance(&self.field_match_counts, groups) * w;
+        soft += grouped_variance(&self.field_interview_counts, groups) * w;
+        soft += grouped_variance(&self.field_total_counts, groups) * (w * 0.5);
 
         let active_vols: Vec<f64> = self.volunteer_shift_counts.iter().enumerate().filter_map(|(v, &count)| {
             let vol = &self.config.volunteers[v];
@@ -1164,11 +1176,17 @@ fn remove_val(v: &mut Vec<usize>, val: usize) {
     }
 }
 
-fn calculate_variance(counts: &[u32]) -> f64 {
-    if counts.is_empty() { return 0.0; }
-    let sum: u32 = counts.iter().sum();
-    let mean = sum as f64 / counts.len() as f64;
-    counts.iter().map(|&c| (c as f64 - mean).powi(2)).sum::<f64>() / counts.len() as f64
+/// Sum of per-pool population variances of `counts`. Each group lists the field
+/// indices that should be balanced against each other; variance is computed
+/// within a group and the groups are summed, so loads are only equalised between
+/// genuinely interchangeable fields.
+fn grouped_variance(counts: &[u32], groups: &[Vec<usize>]) -> f64 {
+    groups.iter().map(|g| {
+        if g.is_empty() { return 0.0; }
+        let sum: u32 = g.iter().map(|&f| counts[f]).sum();
+        let mean = sum as f64 / g.len() as f64;
+        g.iter().map(|&f| (counts[f] as f64 - mean).powi(2)).sum::<f64>() / g.len() as f64
+    }).sum()
 }
 
 fn calculate_variance_f64(values: &[f64]) -> f64 {
