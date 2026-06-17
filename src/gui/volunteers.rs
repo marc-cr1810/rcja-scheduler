@@ -47,6 +47,18 @@ impl AppState {
         all_orgs.sort();
         all_orgs.dedup();
 
+        let division_names_map: HashMap<String, String> = divisions_list.iter().cloned().collect();
+
+        let truncate_list = |items: &[String], default: &str| -> String {
+            if items.is_empty() {
+                default.to_string()
+            } else if items.len() <= 2 {
+                items.join(", ")
+            } else {
+                format!("{}, +{} more", items[..2].join(", "), items.len() - 2)
+            }
+        };
+
         // Add Volunteer
         egui::Frame::none()
             .fill(theme::card_bg())
@@ -58,93 +70,155 @@ impl AppState {
                     ui.add_space(5.0);
 
                     ui.horizontal(|ui| {
+                        // 1. Name Input
                         ui.vertical(|ui| {
-                            ui.label("Name:");
-                            ui.text_edit_singleline(&mut self.new_vol_name);
+                            ui.label(RichText::new("Name:").size(11.0).color(theme::text_muted()));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.new_vol_name)
+                                    .desired_width(140.0)
+                                    .hint_text("Volunteer Name"),
+                            );
                         });
-                    });
 
-                    ui.add_space(5.0);
-                    ui.label(RichText::new("Conflict Organizations:").strong().color(theme::text()));
-                    ui.label(RichText::new("Select any organizations this volunteer belongs to (e.g. their school or club)").size(11.0).color(theme::text_muted()));
-                    
-                    ui.horizontal_wrapped(|ui| {
-                        for org in &all_orgs {
-                            let mut is_conflict = self.new_vol_conflicts_list.contains(org);
-                            if ui.checkbox(&mut is_conflict, org).changed() {
-                                if is_conflict {
-                                    self.new_vol_conflicts_list.push(org.clone());
-                                } else {
-                                    self.new_vol_conflicts_list.retain(|x| x != org);
-                                }
-                            }
-                        }
-                    });
-
-                    ui.add_space(5.0);
-                    ui.label("Qualified Divisions (Capabilities):");
-                    ui.horizontal(|ui| {
-                        for (div_id, div_name) in &divisions_list {
-                            let mut checked = self.new_vol_caps.contains(div_id);
-                            if ui.checkbox(&mut checked, div_name).changed() {
-                                if checked {
-                                    self.new_vol_caps.push(div_id.clone());
-                                } else {
-                                    self.new_vol_caps.retain(|x| x != div_id);
-                                }
-                            }
-                        }
-                        let mut has_interview = self.new_vol_caps.contains(&"Interview".to_string());
-                        if ui.checkbox(&mut has_interview, "🎤 Interviews").changed() {
-                            if has_interview {
-                                self.new_vol_caps.push("Interview".to_string());
+                        // 2. Qualified Divisions (Capabilities) Dropdown
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new("Qualified Divisions:").size(11.0).color(theme::text_muted()));
+                            let display_caps = if self.new_vol_caps.is_empty() {
+                                "Any Division".to_string()
                             } else {
-                                self.new_vol_caps.retain(|x| x != "Interview");
-                            }
-                        }
-                    });
+                                let names: Vec<String> = self.new_vol_caps
+                                    .iter()
+                                    .map(|d_id| {
+                                        if d_id == "Interview" {
+                                            "🎤 Interviews".to_string()
+                                        } else {
+                                            division_names_map
+                                                .get(d_id).cloned()
+                                                .unwrap_or_else(|| d_id.clone())
+                                        }
+                                    })
+                                    .collect();
+                                truncate_list(&names, "Any Division")
+                            };
 
-                    if !fields_list.is_empty() {
-                        ui.add_space(5.0);
-                        ui.label("Lock to Fields / Interview Tables (optional):");
-                        ui.label(RichText::new("If any are selected, this volunteer will only be rostered on those fields.").size(11.0).color(theme::text_muted()));
-                        ui.horizontal_wrapped(|ui| {
-                            for (fid, fname) in &fields_list {
-                                let mut locked = self.new_vol_locked_fields.contains(fid);
-                                if ui.checkbox(&mut locked, fname).changed() {
-                                    if locked {
-                                        self.new_vol_locked_fields.push(fid.clone());
-                                    } else {
-                                        self.new_vol_locked_fields.retain(|x| x != fid);
+                            egui::ComboBox::from_id_source("new_vol_cap_edit")
+                                .selected_text(display_caps)
+                                .width(150.0)
+                                .show_ui(ui, |ui| {
+                                    for (div_id, div_name) in &divisions_list {
+                                        let mut checked = self.new_vol_caps.contains(div_id);
+                                        if ui.checkbox(&mut checked, div_name).changed() {
+                                            if checked {
+                                                self.new_vol_caps.push(div_id.clone());
+                                            } else {
+                                                self.new_vol_caps.retain(|x| x != div_id);
+                                            }
+                                        }
                                     }
-                                }
-                            }
+                                    let mut has_interview = self.new_vol_caps.contains(&"Interview".to_string());
+                                    if ui.checkbox(&mut has_interview, "🎤 Interviews").changed() {
+                                        if has_interview {
+                                            self.new_vol_caps.push("Interview".to_string());
+                                        } else {
+                                            self.new_vol_caps.retain(|x| x != "Interview");
+                                        }
+                                    }
+                                });
                         });
-                    }
 
-                    ui.add_space(8.0);
-                    if ui.button(RichText::new("+ Register Volunteer").strong().color(theme::text())).clicked()
-                        && !self.new_vol_name.trim().is_empty() {
-                            let id = sanitize_name(&self.new_vol_name);
+                        // 3. Conflict Organizations Dropdown
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new("Conflict Organizations:").size(11.0).color(theme::text_muted()))
+                                .on_hover_text("Select any organizations this volunteer belongs to (e.g. their school or club)");
+                            
+                            let display_conflicts = truncate_list(&self.new_vol_conflicts_list, "No Conflicts");
+                            
+                            egui::ComboBox::from_id_source("new_vol_org_edit")
+                                .selected_text(display_conflicts)
+                                .width(150.0)
+                                .show_ui(ui, |ui| {
+                                    if all_orgs.is_empty() {
+                                        ui.label("No organizations defined");
+                                    }
+                                    for org in &all_orgs {
+                                        let mut is_conflict = self.new_vol_conflicts_list.contains(org);
+                                        if ui.checkbox(&mut is_conflict, org).changed() {
+                                            if is_conflict {
+                                                self.new_vol_conflicts_list.push(org.clone());
+                                            } else {
+                                                self.new_vol_conflicts_list.retain(|x| x != org);
+                                            }
+                                        }
+                                    }
+                                });
+                        });
 
-                            self.config.volunteers.push(Volunteer {
-                                id,
-                                name: self.new_vol_name.clone(),
-                                availabilities: Vec::new(),
-                                capabilities: if self.new_vol_caps.is_empty() { None } else { Some(self.new_vol_caps.clone()) },
-                                conflict_organizations: self.new_vol_conflicts_list.clone(),
-                                attendance_status: std::collections::HashMap::new(),
-                                locked_field_ids: if self.new_vol_locked_fields.is_empty() { None } else { Some(self.new_vol_locked_fields.clone()) },
+                        // 4. Lock to Fields (Optional Dropdown)
+                        if !fields_list.is_empty() {
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new("Lock to Fields:").size(11.0).color(theme::text_muted()))
+                                    .on_hover_text("If any are selected, this volunteer will only be rostered on those fields.");
+                                
+                                let display_locks = if self.new_vol_locked_fields.is_empty() {
+                                    "Any Field".to_string()
+                                } else {
+                                    let names: Vec<String> = self.new_vol_locked_fields.iter()
+                                        .map(|fid| fields_list.iter().find(|(id, _)| id == fid)
+                                            .map(|(_, n)| n.clone())
+                                            .unwrap_or_else(|| fid.clone()))
+                                        .collect();
+                                    truncate_list(&names, "Any Field")
+                                };
+
+                                egui::ComboBox::from_id_source("new_vol_lock_edit")
+                                    .selected_text(display_locks)
+                                    .width(150.0)
+                                    .show_ui(ui, |ui| {
+                                        for (fid, fname) in &fields_list {
+                                            let mut locked = self.new_vol_locked_fields.contains(fid);
+                                            if ui.checkbox(&mut locked, fname).changed() {
+                                                if locked {
+                                                    self.new_vol_locked_fields.push(fid.clone());
+                                                } else {
+                                                    self.new_vol_locked_fields.retain(|x| x != fid);
+                                                }
+                                            }
+                                        }
+                                    });
                             });
-
-                            self.new_vol_name.clear();
-                            self.new_vol_conflicts_list.clear();
-                            self.new_vol_caps.clear();
-                            self.new_vol_locked_fields.clear();
-                            self.clear_schedule();
-                            self.update_diagnostics();
-                            self.status_message = "Volunteer registered!".to_string();
                         }
+
+                        // 5. Register Button
+                        ui.vertical(|ui| {
+                            ui.label(""); // Spacing label to align button with inputs
+                            let register_btn = egui::Button::new(RichText::new("➕ Register Volunteer").strong().color(theme::on_accent()))
+                                .fill(theme::accent_strong())
+                                .rounding(6.0);
+                            
+                            if ui.add(register_btn).clicked()
+                                && !self.new_vol_name.trim().is_empty() {
+                                    let id = sanitize_name(&self.new_vol_name);
+
+                                    self.config.volunteers.push(Volunteer {
+                                        id,
+                                        name: self.new_vol_name.clone(),
+                                        availabilities: Vec::new(),
+                                        capabilities: if self.new_vol_caps.is_empty() { None } else { Some(self.new_vol_caps.clone()) },
+                                        conflict_organizations: self.new_vol_conflicts_list.clone(),
+                                        attendance_status: std::collections::HashMap::new(),
+                                        locked_field_ids: if self.new_vol_locked_fields.is_empty() { None } else { Some(self.new_vol_locked_fields.clone()) },
+                                    });
+
+                                    self.new_vol_name.clear();
+                                    self.new_vol_conflicts_list.clear();
+                                    self.new_vol_caps.clear();
+                                    self.new_vol_locked_fields.clear();
+                                    self.clear_schedule();
+                                    self.update_diagnostics();
+                                    self.status_message = "Volunteer registered!".to_string();
+                                }
+                        });
+                    });
                 });
             });
 
@@ -216,7 +290,6 @@ impl AppState {
         // (a Vec) so checkbox order stays stable across frames. Iterating a
         // freshly-built HashMap each frame reshuffles entries (per-instance hash
         // seed) and makes the capability dropdown flicker.
-        let division_names_map: HashMap<String, String> = divisions_list.iter().cloned().collect();
 
         egui::ScrollArea::horizontal()
             .id_source("volunteers_avail_scroll")
